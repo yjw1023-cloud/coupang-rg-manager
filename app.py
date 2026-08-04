@@ -36,8 +36,40 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 purchase_v06 = importlib.import_module("purchase_v06")
 
-# v0.6 loader: preserve the known-good v0.4 application source, then apply
-# the cumulative dashboard + purchase-management patches in memory.
+ERP_MODULE_PATH = ROOT / "erp_import_v07.py"
+ERP_MODULE_SHA256 = "fecb16ff82d65ae9326aae62c18cb7dc8627a3da4684da19362e97ce0f57ddbc"
+ERP_MODULE_URL = "https://raw.githubusercontent.com/yjw1023-cloud/coupang-rg-manager/main/erp_import_v07.py"
+ERP_MODULE_ERROR = None
+
+def _load_erp_import_module():
+    global ERP_MODULE_ERROR
+    try:
+        valid = False
+        if ERP_MODULE_PATH.exists():
+            try:
+                valid = hashlib.sha256(ERP_MODULE_PATH.read_bytes()).hexdigest() == ERP_MODULE_SHA256
+            except Exception:
+                valid = False
+        if not valid:
+            req = urllib.request.Request(ERP_MODULE_URL, headers={"User-Agent":"RG-Manager/0.7.0"})
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                module_bytes = resp.read()
+            if hashlib.sha256(module_bytes).hexdigest() != ERP_MODULE_SHA256:
+                raise RuntimeError("기존 ERP 이관 모듈의 무결성 검증에 실패했습니다.")
+            tmp = ERP_MODULE_PATH.with_suffix(".tmp")
+            tmp.write_bytes(module_bytes)
+            tmp.replace(ERP_MODULE_PATH)
+        if str(ROOT) not in sys.path:
+            sys.path.insert(0, str(ROOT))
+        return importlib.import_module("erp_import_v07")
+    except Exception as e:
+        ERP_MODULE_ERROR = str(e)
+        return None
+
+erp_import_v07 = _load_erp_import_module()
+
+# v0.7 loader: preserve the known-good v0.4 application source, then apply
+# the cumulative dashboard + purchase-management + legacy-ERP migration patches in memory.
 BASE_DIR = ROOT / "_code_base"
 BASE_APP = BASE_DIR / "app_v0.4.py"
 BACKUP_APP = ROOT / "_code_backup" / "app.py"
@@ -62,7 +94,7 @@ if old_monthly not in source:
 source = source.replace(old_monthly, new_monthly, 1)
 
 menu_old = '        "📈  판매·손익",\n        "📦  재고관리",\n        "🏷️  상품·원가",\n'
-menu_new = '        "📈  판매·손익",\n        "🧾  매입관리",\n        "📦  재고관리",\n        "🏷️  상품·원가",\n'
+menu_new = '        "📈  판매·손익",\n        "🧾  매입관리",\n        "📥  기존ERP 이관",\n        "📦  재고관리",\n        "🏷️  상품·원가",\n'
 if menu_old not in source:
     raise RuntimeError("v0.6 매입관리 메뉴를 추가할 위치를 찾지 못했습니다.")
 source = source.replace(menu_old, menu_new, 1)
@@ -70,11 +102,30 @@ source = source.replace(menu_old, menu_new, 1)
 purchase_marker = '# ------------------------------\n# Inventory\n# ------------------------------\nelif page == "📦  재고관리":\n'
 purchase_insert = '# ------------------------------\n# Purchase import / matching\n# ------------------------------\nelif page == "🧾  매입관리":\n    purchase_v06.render_purchase_page(\n        st=st, pd=pd, date=date, core=core,\n        page_header=page_header, section=section, kpi=kpi, money=money,\n        fmt_date=fmt_date, latest_updated_text=latest_updated_text,\n    )\n\n\n# ------------------------------\n# Inventory\n# ------------------------------\nelif page == "📦  재고관리":\n'
 if purchase_marker not in source:
-    raise RuntimeError("v0.6 매입관리 화면을 추가할 위치를 찾지 못했습니다.")
+    raise RuntimeError("v0.7 매입관리 화면을 추가할 위치를 찾지 못했습니다.")
 source = source.replace(purchase_marker, purchase_insert, 1)
 
-source = source.replace('st.sidebar.caption("v0.4 · auto updater")', 'st.sidebar.caption("v0.6.1 · purchase matcher")', 1)
+legacy_marker = '# ------------------------------\n# Inventory\n# ------------------------------\nelif page == "📦  재고관리":\n'
+legacy_insert = '# ------------------------------\n# Legacy ERP migration\n# ------------------------------\nelif page == "📥  기존ERP 이관":\n    if erp_import_v07 is None:\n        page_header("기존 ERP 가져오기", "이관 모듈을 불러오지 못했습니다.", eyebrow="LEGACY ERP IMPORT")\n        st.error(f"기존 ERP 이관 모듈 오류: {ERP_MODULE_ERROR or \'알 수 없는 오류\'}")\n        st.info("인터넷 연결을 확인한 뒤 프로그램을 다시 실행하거나 프로그램 업데이트를 다시 적용하세요.")\n    else:\n        erp_import_v07.render_legacy_erp_page(\n            st=st, pd=pd, date=date, core=core, purchase_module=purchase_v06,\n            page_header=page_header, section=section, kpi=kpi, money=money,\n            fmt_date=fmt_date, latest_updated_text=latest_updated_text,\n        )\n\n\n# ------------------------------\n# Inventory\n# ------------------------------\nelif page == "📦  재고관리":\n'
+if legacy_marker not in source:
+    raise RuntimeError("v0.7 기존ERP 이관 화면을 추가할 위치를 찾지 못했습니다.")
+source = source.replace(legacy_marker, legacy_insert, 1)
 
-# Make the added module visible inside the executed base application.
+# v0.7부터는 이후 업데이트에서 app/core 이외의 Python 모듈도 자동 교체한다.
+copy_anchor = '        fr\'if exist "{sn}\\core.py" copy /Y "{sn}\\core.py" "core.py" >nul\','
+copy_extra = copy_anchor + '\n        fr\'for %%F in ("{sn}\\*.py") do if exist "%%F" copy /Y "%%F" "." >nul\','
+if copy_anchor in source:
+    source = source.replace(copy_anchor, copy_extra, 1)
+
+backup_anchor = '        \'if not exist "_code_backup" mkdir "_code_backup"\','
+backup_extra = backup_anchor + '\n        r\'for %%F in (*.py) do copy /Y "%%F" "_code_backup\\%%~nxF" >nul\','
+if backup_anchor in source:
+    source = source.replace(backup_anchor, backup_extra, 1)
+
+source = source.replace('st.sidebar.caption("v0.4 · auto updater")', 'st.sidebar.caption("v0.7 · legacy ERP import")', 1)
+
+# Make the added modules visible inside the executed base application.
 globals()["purchase_v06"] = purchase_v06
+globals()["erp_import_v07"] = erp_import_v07
+globals()["ERP_MODULE_ERROR"] = ERP_MODULE_ERROR
 exec(compile(source, str(BASE_APP), "exec"), globals(), globals())
