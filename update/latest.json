@@ -1,15 +1,8 @@
 {
-  "version": "0.4.0",
-  "message": "자동 업데이트 서버 초기화",
+  "version": "0.5.0",
+  "message": "대시보드 월별 실적 개편: 상품원가·광고비·최종이익 포함, 최근 12개월 비교 추가",
   "files": [
     "app.py",
-    "core.py",
-    "requirements.txt",
-    "VERSION.txt",
-    ".streamlit/config.toml",
-    "README.txt",
-    "START_HERE.txt",
-    "run.bat",
-    "diagnose.bat"
+    "VERSION.txt"
   ]
 }
