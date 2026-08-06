@@ -1,8 +1,10 @@
 {
-  "version": "0.7.0",
-  "message": "기존 ERP 이관: 상품 자동매칭, 매입·BOM·생산·재고 이관, 애매한 상품만 직접 선택",
+  "version": "0.8.0",
+  "message": "매입관리: 자체창고 상품만 매칭, W열 매입원가·AB열 수량 고정",
   "files": [
     "app.py",
-    "VERSION.txt"
+    "VERSION.txt",
+    "purchase_v08.py",
+    "sitecustomize.py"
   ]
 }
