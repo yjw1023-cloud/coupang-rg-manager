@@ -1,10 +1,9 @@
 {
-  "version": "0.8.0",
-  "message": "매입관리: 자체창고 상품만 매칭, W열 매입원가·AB열 수량 고정",
+  "version": "0.8.1",
+  "message": "매입관리 로딩 수정: 자체창고 전용 매칭과 W열 원가·AB열 수량 규칙을 app.py에서 직접 적용",
   "files": [
     "app.py",
     "VERSION.txt",
-    "purchase_v08.py",
-    "sitecustomize.py"
+    "purchase_v08.py"
   ]
 }
