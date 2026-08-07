@@ -44,6 +44,10 @@ importlib.import_module = _rg_import_module
 repair = _original_import_module("legacy_repair_v082")
 LEGACY_REPAIR_RESULT = repair.apply(core.DEFAULT_DB)
 
+# v0.8.4 inventory presentation: warehouse tabs + user-facing Coupang code.
+inventory_ui = _original_import_module("inventory_ui_v084")
+inventory_ui.apply()
+
 # Keep a stable copy of the known-good v0.7 loader.
 LOADER_DIR = ROOT / "_code_base"
 LOADER_DIR.mkdir(parents=True, exist_ok=True)
@@ -65,7 +69,7 @@ def _ensure_loader():
                 return
         except Exception:
             pass
-    req = urllib.request.Request(LOADER_URL, headers={"User-Agent": "RG-Manager/0.8.3"})
+    req = urllib.request.Request(LOADER_URL, headers={"User-Agent": "RG-Manager/0.8.4"})
     with urllib.request.urlopen(req, timeout=20) as resp:
         data = resp.read()
     if _git_blob_sha(data) != LOADER_BLOB_SHA:
@@ -78,7 +82,7 @@ _ensure_loader()
 source = LOADER.read_text(encoding="utf-8")
 source = source.replace(
     'st.sidebar.caption("v0.7 · legacy ERP import")',
-    'st.sidebar.caption("v0.8.3 · repair concurrency fix + purchase W/AB")',
+    'st.sidebar.caption("v0.8.4 · warehouse inventory tabs + purchase W/AB")',
 )
 globals()["LEGACY_REPAIR_RESULT"] = LEGACY_REPAIR_RESULT
 exec(compile(source, str(LOADER), "exec"), globals(), globals())
