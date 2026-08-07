@@ -56,6 +56,11 @@ production_patch.apply(core)
 # v0.8.6 dedicated item master page.
 item_ui_v086 = _original_import_module("item_ui_v086")
 
+# v0.8.7 sales-stat upload period: default to the most recently completed
+# Monday-Sunday week while keeping start/end freely editable.
+sales_period_v087 = _original_import_module("sales_period_v087")
+sales_period_v087.apply(core)
+
 # Keep a stable copy of the known-good v0.7 loader.
 LOADER_DIR = ROOT / "_code_base"
 LOADER_DIR.mkdir(parents=True, exist_ok=True)
@@ -77,7 +82,7 @@ def _ensure_loader():
                 return
         except Exception:
             pass
-    req = urllib.request.Request(LOADER_URL, headers={"User-Agent": "RG-Manager/0.8.6"})
+    req = urllib.request.Request(LOADER_URL, headers={"User-Agent": "RG-Manager/0.8.7"})
     with urllib.request.urlopen(req, timeout=20) as resp:
         data = resp.read()
     if _git_blob_sha(data) != LOADER_BLOB_SHA:
@@ -90,7 +95,7 @@ _ensure_loader()
 source = LOADER.read_text(encoding="utf-8")
 source = source.replace(
     'st.sidebar.caption("v0.7 · legacy ERP import")',
-    'st.sidebar.caption("v0.8.6 · item master + production to RG")',
+    'st.sidebar.caption("v0.8.7 · weekly sales period + item master")',
 )
 loader_exec = 'exec(compile(source, str(BASE_APP), "exec"), globals(), globals())'
 if loader_exec not in source:
