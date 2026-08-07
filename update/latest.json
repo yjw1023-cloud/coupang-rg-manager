@@ -1,6 +1,6 @@
 {
-  "version": "0.8.7",
-  "message": "재고현황 판매통계: 직전 완료 월~일을 기본 조회기간으로 설정, 날짜 자유수정 및 동일기간 교체확인 추가",
+  "version": "0.8.8",
+  "message": "재고 부족 허용: 생산은 BOM대로 자체창고를 마이너스까지 차감하고 RG 즉시입고, 판매통계 업로드는 RG 재고를 순판매수량만큼 차감",
   "files": [
     "app.py",
     "VERSION.txt",
@@ -10,6 +10,7 @@
     "inventory_ui_v084.py",
     "production_v085.py",
     "item_ui_v086.py",
-    "sales_period_v087.py"
+    "sales_period_v087.py",
+    "inventory_flow_v088.py"
   ]
 }
