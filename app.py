@@ -29,6 +29,13 @@ def _apply_purchase_batch_v089(module):
     patch.apply(module, core)
     return module
 
+def _apply_purchase_match_v090(module):
+    if module is None or getattr(module, "_rg_purchase_match_ui_v090_applied", False):
+        return module
+    patch = _original_import_module("purchase_match_ui_v090")
+    patch.apply(module, core)
+    return module
+
 def _apply_erp_guard(module):
     if module is None or getattr(module, "_rg_v082_guard_applied", False):
         return module
@@ -41,6 +48,7 @@ def _rg_import_module(name, package=None):
     if name == "purchase_v06":
         _apply_purchase_v08(module)
         _apply_purchase_batch_v089(module)
+        _apply_purchase_match_v090(module)
     elif name == "erp_import_v07":
         _apply_erp_guard(module)
     return module
@@ -94,7 +102,7 @@ def _ensure_loader():
                 return
         except Exception:
             pass
-    req = urllib.request.Request(LOADER_URL, headers={"User-Agent": "RG-Manager/0.8.9"})
+    req = urllib.request.Request(LOADER_URL, headers={"User-Agent": "RG-Manager/0.9.0"})
     with urllib.request.urlopen(req, timeout=20) as resp:
         data = resp.read()
     if _git_blob_sha(data) != LOADER_BLOB_SHA:
@@ -107,7 +115,7 @@ _ensure_loader()
 source = LOADER.read_text(encoding="utf-8")
 source = source.replace(
     'st.sidebar.caption("v0.7 · legacy ERP import")',
-    'st.sidebar.caption("v0.8.9 · purchase batch + negative inventory")',
+    'st.sidebar.caption("v0.9.0 · purchase match review table")',
 )
 loader_exec = 'exec(compile(source, str(BASE_APP), "exec"), globals(), globals())'
 if loader_exec not in source:
