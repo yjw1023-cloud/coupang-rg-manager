@@ -1,6 +1,6 @@
 {
-  "version": "0.8.6",
-  "message": "품목관리 메뉴 추가: 신규 자체창고 품목/쿠팡RG 상품 등록, 기존 품목 검색·이름·원가·사용여부 수정",
+  "version": "0.8.7",
+  "message": "재고현황 판매통계: 직전 완료 월~일을 기본 조회기간으로 설정, 날짜 자유수정 및 동일기간 교체확인 추가",
   "files": [
     "app.py",
     "VERSION.txt",
@@ -9,6 +9,7 @@
     "erp_import_guard_v082.py",
     "inventory_ui_v084.py",
     "production_v085.py",
-    "item_ui_v086.py"
+    "item_ui_v086.py",
+    "sales_period_v087.py"
   ]
 }
