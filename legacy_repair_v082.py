@@ -13,7 +13,7 @@ def _now(): return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 def _backup(db_path):
     out=Path(db_path).parent/"backups"; out.mkdir(parents=True,exist_ok=True)
-    target=out/("rocketgrowth-pre-v0.8.2-"+datetime.now().strftime("%Y%m%d-%H%M%S")+".db")
+    target=out/("rocketgrowth-pre-v0.8.2-"+datetime.now().strftime("%Y%m%d-%H%M%S-%f")+".db")
     src=sqlite3.connect(str(db_path)); dst=sqlite3.connect(str(target))
     try: src.backup(dst)
     finally: dst.close(); src.close()
@@ -36,7 +36,7 @@ def apply(db_path):
         if not need.issubset(tables): return {"status":"not_applicable"}
         con.execute("create table if not exists repair_history(repair_key text primary key,applied_at text not null,backup_path text,summary text)")
         done=con.execute("select * from repair_history where repair_key=?",(REPAIR_KEY,)).fetchone()
-        if done: return {"status":"already_repaired","backup_path":done["backup_path"]}
+        if done: return {"status":"already_repaired","backup_path":done["backup_path"],"summary":done["summary"]}
         if not con.execute("select 1 from legacy_v07_runs where source_hash=?",(SOURCE_HASH,)).fetchone():
             return {"status":"not_target_db"}
         mapped=[r[0] for r in con.execute("select legacy_item_code from legacy_v07_mappings where source_system='claude_erp'")]
@@ -46,7 +46,15 @@ def apply(db_path):
             raise RuntimeError(f"복구용 원본 상품명 검증 실패: 매핑 {len(mapped)}개, 이름 누락 {missing}")
 
         con.commit(); con.close(); backup=_backup(db_path)
-        con=sqlite3.connect(str(db_path)); con.row_factory=sqlite3.Row; con.execute("begin immediate")
+        con=sqlite3.connect(str(db_path),timeout=30); con.row_factory=sqlite3.Row; con.execute("begin immediate")
+
+        # Streamlit can execute startup code concurrently. Re-check only after
+        # obtaining the write lock so a second runner cannot repeat the repair.
+        done=con.execute("select * from repair_history where repair_key=?",(REPAIR_KEY,)).fetchone()
+        if done:
+            con.rollback()
+            return {"status":"already_repaired","backup_path":done["backup_path"],"summary":done["summary"]}
+
         now=_now(); own=con.execute("select id from warehouses where name='자체창고'").fetchone()
         if not own: raise RuntimeError("자체창고를 찾지 못했습니다.")
         own_id=int(own["id"]); split_created=moved_purchase=moved_inventory=fixed_bom=0
@@ -100,7 +108,7 @@ def apply(db_path):
         summary=(f"상품명 {product_names}개 복구, 매핑명 {mapping_names}개 복구, JDS {split_created}개 분리, "
                  f"매입 {moved_purchase}건 이동, 재고 {moved_inventory}건 이동, BOM {fixed_bom}건 수정, "
                  f"잘못된 alias {aliases_deleted}개 삭제")
-        con.execute("insert into repair_history(repair_key,applied_at,backup_path,summary) values(?,?,?,?)",(REPAIR_KEY,now,str(backup),summary))
+        con.execute("insert or ignore into repair_history(repair_key,applied_at,backup_path,summary) values(?,?,?,?)",(REPAIR_KEY,now,str(backup),summary))
         con.commit(); return {"status":"repaired","backup_path":str(backup),"summary":summary}
     except Exception:
         try: con.rollback()
