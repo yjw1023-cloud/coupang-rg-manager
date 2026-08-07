@@ -1,12 +1,13 @@
 {
-  "version": "0.8.4",
-  "message": "재고 화면 개선: 전체/자체창고/쿠팡RG/반품창고 탭 분리, 사용자 화면에서 CP- 접두사 숨김",
+  "version": "0.8.5",
+  "message": "생산 흐름 변경: BOM 구성품은 자체창고에서 차감하고 완제품은 생산과 동시에 쿠팡RG에 입고",
   "files": [
     "app.py",
     "VERSION.txt",
     "purchase_v08.py",
     "legacy_repair_v082.py",
     "erp_import_guard_v082.py",
-    "inventory_ui_v084.py"
+    "inventory_ui_v084.py",
+    "production_v085.py"
   ]
 }
