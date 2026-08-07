@@ -53,6 +53,9 @@ inventory_ui.apply()
 production_patch = _original_import_module("production_v085")
 production_patch.apply(core)
 
+# v0.8.6 dedicated item master page.
+item_ui_v086 = _original_import_module("item_ui_v086")
+
 # Keep a stable copy of the known-good v0.7 loader.
 LOADER_DIR = ROOT / "_code_base"
 LOADER_DIR.mkdir(parents=True, exist_ok=True)
@@ -74,7 +77,7 @@ def _ensure_loader():
                 return
         except Exception:
             pass
-    req = urllib.request.Request(LOADER_URL, headers={"User-Agent": "RG-Manager/0.8.5"})
+    req = urllib.request.Request(LOADER_URL, headers={"User-Agent": "RG-Manager/0.8.6"})
     with urllib.request.urlopen(req, timeout=20) as resp:
         data = resp.read()
     if _git_blob_sha(data) != LOADER_BLOB_SHA:
@@ -87,7 +90,16 @@ _ensure_loader()
 source = LOADER.read_text(encoding="utf-8")
 source = source.replace(
     'st.sidebar.caption("v0.7 · legacy ERP import")',
-    'st.sidebar.caption("v0.8.5 · production to RG + warehouse tabs")',
+    'st.sidebar.caption("v0.8.6 · item master + production to RG")',
+)
+loader_exec = 'exec(compile(source, str(BASE_APP), "exec"), globals(), globals())'
+if loader_exec not in source:
+    raise RuntimeError("기본 실행 모듈의 최종 실행 위치를 찾지 못했습니다.")
+source = source.replace(
+    loader_exec,
+    'source = item_ui_v086.patch_source(source)\n' + loader_exec,
+    1,
 )
 globals()["LEGACY_REPAIR_RESULT"] = LEGACY_REPAIR_RESULT
+globals()["item_ui_v086"] = item_ui_v086
 exec(compile(source, str(LOADER), "exec"), globals(), globals())
