@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-# Apply v0.8 purchase rules and v0.8.2 legacy-import guards whenever
+# Apply v0.8 purchase rules and legacy-import guards whenever
 # the pinned v0.7 loader imports those modules.
 _original_import_module = importlib.import_module
 
@@ -39,13 +39,12 @@ def _rg_import_module(name, package=None):
 
 importlib.import_module = _rg_import_module
 
-# One-time audited repair. It is transaction-safe, creates a DB backup first,
-# and does nothing on databases that do not contain the affected legacy run.
+# One-time audited repair. v0.8.3 makes this safe against concurrent
+# Streamlit startup/rerun execution.
 repair = _original_import_module("legacy_repair_v082")
 LEGACY_REPAIR_RESULT = repair.apply(core.DEFAULT_DB)
 
-# Keep a stable copy of the known-good v0.7 loader. Do not rely on
-# _code_backup/app.py because the updater overwrites that backup on each version.
+# Keep a stable copy of the known-good v0.7 loader.
 LOADER_DIR = ROOT / "_code_base"
 LOADER_DIR.mkdir(parents=True, exist_ok=True)
 LOADER = LOADER_DIR / "app_loader_v07.py"
@@ -66,7 +65,7 @@ def _ensure_loader():
                 return
         except Exception:
             pass
-    req = urllib.request.Request(LOADER_URL, headers={"User-Agent": "RG-Manager/0.8.2"})
+    req = urllib.request.Request(LOADER_URL, headers={"User-Agent": "RG-Manager/0.8.3"})
     with urllib.request.urlopen(req, timeout=20) as resp:
         data = resp.read()
     if _git_blob_sha(data) != LOADER_BLOB_SHA:
@@ -79,7 +78,7 @@ _ensure_loader()
 source = LOADER.read_text(encoding="utf-8")
 source = source.replace(
     'st.sidebar.caption("v0.7 · legacy ERP import")',
-    'st.sidebar.caption("v0.8.2 · legacy repair + purchase W/AB")',
+    'st.sidebar.caption("v0.8.3 · repair concurrency fix + purchase W/AB")',
 )
 globals()["LEGACY_REPAIR_RESULT"] = LEGACY_REPAIR_RESULT
 exec(compile(source, str(LOADER), "exec"), globals(), globals())
