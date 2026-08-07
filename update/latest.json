@@ -1,6 +1,6 @@
 {
-  "version": "0.8.5",
-  "message": "생산 흐름 변경: BOM 구성품은 자체창고에서 차감하고 완제품은 생산과 동시에 쿠팡RG에 입고",
+  "version": "0.8.6",
+  "message": "품목관리 메뉴 추가: 신규 자체창고 품목/쿠팡RG 상품 등록, 기존 품목 검색·이름·원가·사용여부 수정",
   "files": [
     "app.py",
     "VERSION.txt",
@@ -8,6 +8,7 @@
     "legacy_repair_v082.py",
     "erp_import_guard_v082.py",
     "inventory_ui_v084.py",
-    "production_v085.py"
+    "production_v085.py",
+    "item_ui_v086.py"
   ]
 }
