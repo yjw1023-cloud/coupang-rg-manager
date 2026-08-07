@@ -1,15 +1,17 @@
 from pathlib import Path
+import hashlib
 import importlib
 import sys
 import urllib.request
+
+import core
 
 ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-# v0.8.1: apply the purchase rules explicitly from app.py.
-# Do not rely on sitecustomize.py because the project directory is not
-# guaranteed to be on sys.path during Python interpreter startup.
+# Apply v0.8 purchase rules and v0.8.2 legacy-import guards whenever
+# the pinned v0.7 loader imports those modules.
 _original_import_module = importlib.import_module
 
 def _apply_purchase_v08(module):
@@ -20,40 +22,64 @@ def _apply_purchase_v08(module):
     module._rg_purchase_v08_applied = True
     return module
 
+def _apply_erp_guard(module):
+    if module is None or getattr(module, "_rg_v082_guard_applied", False):
+        return module
+    guard = _original_import_module("erp_import_guard_v082")
+    guard.apply(module)
+    return module
+
 def _rg_import_module(name, package=None):
     module = _original_import_module(name, package)
     if name == "purchase_v06":
         _apply_purchase_v08(module)
+    elif name == "erp_import_v07":
+        _apply_erp_guard(module)
     return module
 
 importlib.import_module = _rg_import_module
 
-# The updater keeps the previous app.py in _code_backup before replacing it.
-# Prefer that local copy so normal startup does not depend on the network.
-BACKUP_LOADER = ROOT / "_code_backup" / "app.py"
-if BACKUP_LOADER.exists():
-    source = BACKUP_LOADER.read_text(encoding="utf-8")
-else:
-    # Recovery path for installations without a backup.
-    BASE_URL = (
-        "https://raw.githubusercontent.com/yjw1023-cloud/"
-        "coupang-rg-manager/f93d2b0576e4f67a250bd3a98af0d439f11541ec/app.py"
-    )
-    req = urllib.request.Request(BASE_URL, headers={"User-Agent": "RG-Manager/0.8.1"})
-    with urllib.request.urlopen(req, timeout=20) as resp:
-        source = resp.read().decode("utf-8")
+# One-time audited repair. It is transaction-safe, creates a DB backup first,
+# and does nothing on databases that do not contain the affected legacy run.
+repair = _original_import_module("legacy_repair_v082")
+LEGACY_REPAIR_RESULT = repair.apply(core.DEFAULT_DB)
 
-# Avoid accidental recursive execution if an unusual backup already contains
-# this v0.8.1 bootstrap.
-if "v0.8.1: apply the purchase rules explicitly from app.py" in source:
-    raise RuntimeError(
-        "이전 app.py 백업이 올바르지 않습니다. 프로그램 업데이트를 다시 실행해 주세요."
-    )
-
-source = source.replace(
-    'st.sidebar.caption("v0.7 · legacy ERP import")',
-    'st.sidebar.caption("v0.8.1 · purchase W/AB + own warehouse")',
+# Keep a stable copy of the known-good v0.7 loader. Do not rely on
+# _code_backup/app.py because the updater overwrites that backup on each version.
+LOADER_DIR = ROOT / "_code_base"
+LOADER_DIR.mkdir(parents=True, exist_ok=True)
+LOADER = LOADER_DIR / "app_loader_v07.py"
+LOADER_BLOB_SHA = "4f0032c0a3475711453b541123bf6220d1cd2bb0"
+LOADER_URL = (
+    "https://raw.githubusercontent.com/yjw1023-cloud/coupang-rg-manager/"
+    "f93d2b0576e4f67a250bd3a98af0d439f11541ec/app.py"
 )
 
-globals()["_rg_purchase_v08_apply"] = _apply_purchase_v08
-exec(compile(source, str(BACKUP_LOADER if BACKUP_LOADER.exists() else ROOT / "app_v07_remote.py"), "exec"), globals(), globals())
+def _git_blob_sha(data: bytes) -> str:
+    return hashlib.sha1(b"blob " + str(len(data)).encode("ascii") + b"\0" + data).hexdigest()
+
+def _ensure_loader():
+    if LOADER.exists():
+        try:
+            data = LOADER.read_bytes()
+            if _git_blob_sha(data) == LOADER_BLOB_SHA:
+                return
+        except Exception:
+            pass
+    req = urllib.request.Request(LOADER_URL, headers={"User-Agent": "RG-Manager/0.8.2"})
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        data = resp.read()
+    if _git_blob_sha(data) != LOADER_BLOB_SHA:
+        raise RuntimeError("기본 실행 모듈 검증에 실패했습니다. 업데이트 파일을 다시 확인해 주세요.")
+    tmp = LOADER.with_suffix(".tmp")
+    tmp.write_bytes(data)
+    tmp.replace(LOADER)
+
+_ensure_loader()
+source = LOADER.read_text(encoding="utf-8")
+source = source.replace(
+    'st.sidebar.caption("v0.7 · legacy ERP import")',
+    'st.sidebar.caption("v0.8.2 · legacy repair + purchase W/AB")',
+)
+globals()["LEGACY_REPAIR_RESULT"] = LEGACY_REPAIR_RESULT
+exec(compile(source, str(LOADER), "exec"), globals(), globals())
