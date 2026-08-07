@@ -1,6 +1,6 @@
 {
-  "version": "0.8.2",
-  "message": "기존 ERP 이관 오류 자동복구: 숫자 상품명 140개 복원, JDS 4개 오매칭 분리, 매입/재고/BOM 연결 수정",
+  "version": "0.8.3",
+  "message": "기존 ERP 자동복구 동시실행 오류 수정: Streamlit 재실행이 겹쳐도 repair_history 중복 오류 없이 안전하게 처리",
   "files": [
     "app.py",
     "VERSION.txt",
