@@ -1,6 +1,6 @@
 {
-  "version": "0.8.9",
-  "message": "매입 차수 관리: Excel 업로드에 16차 같은 차수 입력칸 추가, 기존 Claude ERP의 9~15차 차수자료 복구",
+  "version": "0.9.0",
+  "message": "매입 매칭 검토 개선: 업로드 상품과 자체창고 매칭상품을 1개 표에서 비교하고, 잘못된 매칭은 표에서 직접 수정",
   "files": [
     "app.py",
     "VERSION.txt",
@@ -12,6 +12,7 @@
     "item_ui_v086.py",
     "sales_period_v087.py",
     "inventory_flow_v088.py",
-    "purchase_batch_v089.py"
+    "purchase_batch_v089.py",
+    "purchase_match_ui_v090.py"
   ]
 }
