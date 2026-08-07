@@ -1,11 +1,12 @@
 {
-  "version": "0.8.3",
-  "message": "기존 ERP 자동복구 동시실행 오류 수정: Streamlit 재실행이 겹쳐도 repair_history 중복 오류 없이 안전하게 처리",
+  "version": "0.8.4",
+  "message": "재고 화면 개선: 전체/자체창고/쿠팡RG/반품창고 탭 분리, 사용자 화면에서 CP- 접두사 숨김",
   "files": [
     "app.py",
     "VERSION.txt",
     "purchase_v08.py",
     "legacy_repair_v082.py",
-    "erp_import_guard_v082.py"
+    "erp_import_guard_v082.py",
+    "inventory_ui_v084.py"
   ]
 }
