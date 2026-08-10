@@ -1,6 +1,6 @@
 {
-  "version": "0.9.5",
-  "message": "생산자료 Excel 일괄생산 추가: G열 옵션ID와 V열 생산수량 사용, 전 품목 BOM 사전검사, BOM 하나라도 없으면 전체 생산 중단, 동일 파일 중복생산 차단",
+  "version": "0.9.6",
+  "message": "목록형 메뉴 공통 검색 추가: 재고관리·상품원가·품목관리·반품관리·매입이력 등에서 상품명·품목코드·쿠팡 옵션ID와 표의 표시값 검색",
   "files": [
     "app.py",
     "VERSION.txt",
@@ -18,6 +18,7 @@
     "purchase_history_v092.py",
     "return_management_v093.py",
     "purchase_history_v094.py",
-    "production_batch_v095.py"
+    "production_batch_v095.py",
+    "search_ui_v096.py"
   ]
 }
