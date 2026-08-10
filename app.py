@@ -105,29 +105,30 @@ production_batch_v095 = _original_import_module("production_batch_v095")
 search_ui_v096 = _original_import_module("search_ui_v096")
 search_ui_v096.apply()
 
-# v0.9.12 P&L menu separation + provisional snapshot capture. Apply capture
-# before later dataframe wrappers so it receives their fully adjusted table.
+# v0.9.12 P&L menu separation + provisional snapshot capture.
 pnl_views_v0912 = _original_import_module("pnl_views_v0912")
 pnl_views_v0912.apply(core)
 
-# v0.9.8 sales P&L presentation: hide zero-sales rows and flag missing links.
+# v0.9.8 sales P&L presentation cleanup.
 sales_pnl_ui_v098 = _original_import_module("sales_pnl_ui_v098")
 sales_pnl_ui_v098.apply()
 
-# v0.9.9 returned-item discount resale: link unmanaged discount options to the
-# original product, use original cost, and consume from the return warehouse.
+# v0.9.9 returned-item discount resale.
 return_discount_v099 = _original_import_module("return_discount_v099")
 return_discount_v099.apply(core)
 
-# v0.9.11 P&L rules: moving weighted-average inventory cost and 10.8%
-# commission fallback only when commission information is absent.
+# v0.9.11 moving weighted-average cost + 10.8% commission fallback.
 pnl_cost_commission_v0911 = _original_import_module("pnl_cost_commission_v0911")
 pnl_cost_commission_v0911.apply(core)
 
-# v0.9.10 final sales/P&L output guard remains LAST so zero-quantity rows
-# cannot be reintroduced by any later P&L dataframe wrapper.
+# v0.9.10 zero-quantity display guard.
 sales_pnl_zero_v0910 = _original_import_module("sales_pnl_zero_v0910")
 sales_pnl_zero_v0910.apply()
+
+# v0.9.13 final consolidated provisional P&L output. This must remain LAST:
+# it reapplies cost/profit rules, removes zero-sales rows and controls final styling.
+provisional_pnl_ui_v0913 = _original_import_module("provisional_pnl_ui_v0913")
+provisional_pnl_ui_v0913.apply(core)
 
 # Keep a stable copy of the known-good v0.7 loader.
 LOADER_DIR = ROOT / "_code_base"
@@ -150,7 +151,7 @@ def _ensure_loader():
                 return
         except Exception:
             pass
-    req = urllib.request.Request(LOADER_URL, headers={"User-Agent": "RG-Manager/0.9.12"})
+    req = urllib.request.Request(LOADER_URL, headers={"User-Agent": "RG-Manager/0.9.13"})
     with urllib.request.urlopen(req, timeout=20) as resp:
         data = resp.read()
     if _git_blob_sha(data) != LOADER_BLOB_SHA:
@@ -163,7 +164,7 @@ _ensure_loader()
 source = LOADER.read_text(encoding="utf-8")
 source = source.replace(
     'st.sidebar.caption("v0.7 · legacy ERP import")',
-    'st.sidebar.caption("v0.9.12 · provisional vs confirmed P&L")',
+    'st.sidebar.caption("v0.9.13 · polished provisional P&L")',
 )
 loader_exec = 'exec(compile(source, str(BASE_APP), "exec"), globals(), globals())'
 if loader_exec not in source:
@@ -174,7 +175,8 @@ source = source.replace(
     'source = purchase_history_v092.patch_source(source)\n'
     'source = return_management_v093.patch_source(source)\n'
     'source = production_batch_v095.patch_source(source)\n'
-    'source = pnl_views_v0912.patch_source(source)\n' + loader_exec,
+    'source = pnl_views_v0912.patch_source(source)\n'
+    'source = provisional_pnl_ui_v0913.patch_source(source)\n' + loader_exec,
     1,
 )
 globals()["LEGACY_REPAIR_RESULT"] = LEGACY_REPAIR_RESULT
@@ -189,4 +191,5 @@ globals()["sales_pnl_ui_v098"] = sales_pnl_ui_v098
 globals()["return_discount_v099"] = return_discount_v099
 globals()["pnl_cost_commission_v0911"] = pnl_cost_commission_v0911
 globals()["sales_pnl_zero_v0910"] = sales_pnl_zero_v0910
+globals()["provisional_pnl_ui_v0913"] = provisional_pnl_ui_v0913
 exec(compile(source, str(LOADER), "exec"), globals(), globals())
