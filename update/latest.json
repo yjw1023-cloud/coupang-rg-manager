@@ -1,6 +1,6 @@
 {
-  "version": "0.9.4",
-  "message": "매입이력 UX 개선: 상품을 드롭다운으로 고르지 않고 전체 상품목록에서 클릭하면 과거 매입일·차수·수량·매입가·매입금액 표시, 반품관리 포함",
+  "version": "0.9.5",
+  "message": "생산자료 Excel 일괄생산 추가: G열 옵션ID와 V열 생산수량 사용, 전 품목 BOM 사전검사, BOM 하나라도 없으면 전체 생산 중단, 동일 파일 중복생산 차단",
   "files": [
     "app.py",
     "VERSION.txt",
@@ -17,6 +17,7 @@
     "purchase_match_ui_v091.py",
     "purchase_history_v092.py",
     "return_management_v093.py",
-    "purchase_history_v094.py"
+    "purchase_history_v094.py",
+    "production_batch_v095.py"
   ]
 }
