@@ -1,6 +1,6 @@
 {
-  "version": "0.9.9",
-  "message": "쿠팡 반품 할인판매 처리 추가: 품목에 없는 할인 옵션ID를 원상품에 안전하게 연결, 원상품 원가 사용, 쿠팡RG가 아닌 반품창고 재고 차감, 판매통계 순판매금액으로 할인판매 손익 반영",
+  "version": "0.9.10",
+  "message": "판매·손익 0수량 행 제거 재수정: 판매·손익 최종 출력단에서 판매수량이 정확히 0인 상품을 강제 제거하고 음수 판매수량은 유지",
   "files": [
     "app.py",
     "VERSION.txt",
@@ -21,6 +21,7 @@
     "production_batch_v095.py",
     "search_ui_v096.py",
     "sales_pnl_ui_v098.py",
-    "return_discount_v099.py"
+    "return_discount_v099.py",
+    "sales_pnl_zero_v0910.py"
   ]
 }
