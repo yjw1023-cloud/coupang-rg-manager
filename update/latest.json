@@ -1,6 +1,6 @@
 {
-  "version": "0.9.2",
-  "message": "상품별 매입이력 메뉴 추가: 과거 매입일·차수·수량·개당 매입가·매입금액과 매입단가 추이를 한눈에 확인",
+  "version": "0.9.3",
+  "message": "반품관리 메뉴 추가: 반품창고 현재수량, 상품별 누적 반품/취소수량, 반품률, 반품비용, 월별 반품률 추이 확인",
   "files": [
     "app.py",
     "VERSION.txt",
@@ -15,6 +15,7 @@
     "purchase_batch_v089.py",
     "purchase_match_ui_v090.py",
     "purchase_match_ui_v091.py",
-    "purchase_history_v092.py"
+    "purchase_history_v092.py",
+    "return_management_v093.py"
   ]
 }
