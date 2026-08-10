@@ -92,6 +92,9 @@ inventory_flow_v088.apply(core)
 # v0.9.2 item-by-item purchase history.
 purchase_history_v092 = _original_import_module("purchase_history_v092")
 
+# v0.9.3 return management dashboard.
+return_management_v093 = _original_import_module("return_management_v093")
+
 # Keep a stable copy of the known-good v0.7 loader.
 LOADER_DIR = ROOT / "_code_base"
 LOADER_DIR.mkdir(parents=True, exist_ok=True)
@@ -113,7 +116,7 @@ def _ensure_loader():
                 return
         except Exception:
             pass
-    req = urllib.request.Request(LOADER_URL, headers={"User-Agent": "RG-Manager/0.9.2"})
+    req = urllib.request.Request(LOADER_URL, headers={"User-Agent": "RG-Manager/0.9.3"})
     with urllib.request.urlopen(req, timeout=20) as resp:
         data = resp.read()
     if _git_blob_sha(data) != LOADER_BLOB_SHA:
@@ -126,7 +129,7 @@ _ensure_loader()
 source = LOADER.read_text(encoding="utf-8")
 source = source.replace(
     'st.sidebar.caption("v0.7 · legacy ERP import")',
-    'st.sidebar.caption("v0.9.2 · purchase history")',
+    'st.sidebar.caption("v0.9.3 · return management")',
 )
 loader_exec = 'exec(compile(source, str(BASE_APP), "exec"), globals(), globals())'
 if loader_exec not in source:
@@ -134,10 +137,12 @@ if loader_exec not in source:
 source = source.replace(
     loader_exec,
     'source = item_ui_v086.patch_source(source)\n'
-    'source = purchase_history_v092.patch_source(source)\n' + loader_exec,
+    'source = purchase_history_v092.patch_source(source)\n'
+    'source = return_management_v093.patch_source(source)\n' + loader_exec,
     1,
 )
 globals()["LEGACY_REPAIR_RESULT"] = LEGACY_REPAIR_RESULT
 globals()["item_ui_v086"] = item_ui_v086
 globals()["purchase_history_v092"] = purchase_history_v092
+globals()["return_management_v093"] = return_management_v093
 exec(compile(source, str(LOADER), "exec"), globals(), globals())
