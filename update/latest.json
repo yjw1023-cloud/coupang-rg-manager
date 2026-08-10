@@ -1,6 +1,6 @@
 {
-  "version": "0.9.8",
-  "message": "판매·손익 화면 개선: 판매수량 0인 상품 숨김, 판매수량은 있으나 예상 실현단가와 원가가 모두 0인 상품은 옵션ID/상품마스터·정산 연결 확인 경고",
+  "version": "0.9.9",
+  "message": "쿠팡 반품 할인판매 처리 추가: 품목에 없는 할인 옵션ID를 원상품에 안전하게 연결, 원상품 원가 사용, 쿠팡RG가 아닌 반품창고 재고 차감, 판매통계 순판매금액으로 할인판매 손익 반영",
   "files": [
     "app.py",
     "VERSION.txt",
@@ -20,6 +20,7 @@
     "purchase_history_v094.py",
     "production_batch_v095.py",
     "search_ui_v096.py",
-    "sales_pnl_ui_v098.py"
+    "sales_pnl_ui_v098.py",
+    "return_discount_v099.py"
   ]
 }
