@@ -1,6 +1,6 @@
 {
-  "version": "0.9.10",
-  "message": "판매·손익 0수량 행 제거 재수정: 판매·손익 최종 출력단에서 판매수량이 정확히 0인 상품을 강제 제거하고 음수 판매수량은 유지",
+  "version": "0.9.11",
+  "message": "판매·손익 원가/수수료 개선: 원가는 재고 입출고 흐름을 반영한 이동가중평균원가 사용, 판매수수료 정보가 전혀 없을 때만 매출의 10.8% 적용(부가세 별도 가산 없음)",
   "files": [
     "app.py",
     "VERSION.txt",
@@ -22,6 +22,7 @@
     "search_ui_v096.py",
     "sales_pnl_ui_v098.py",
     "return_discount_v099.py",
-    "sales_pnl_zero_v0910.py"
+    "sales_pnl_zero_v0910.py",
+    "pnl_cost_commission_v0911.py"
   ]
 }
