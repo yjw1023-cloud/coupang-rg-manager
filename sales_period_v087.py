@@ -5,6 +5,8 @@ Rules:
 - Default period is the most recently completed Monday-Sunday week.
 - Start/end remain freely editable; month boundaries do not force a seven-day range.
 - If a different file already exists for the same period, require explicit replacement confirmation.
+- v0.9.7: render the existing-period notice only after the end date widget, so the
+  replacement checkbox is created exactly once per rerun.
 """
 from __future__ import annotations
 
@@ -171,11 +173,11 @@ def apply(core_module) -> None:
                 st.session_state["_rg_sales_period_end_value"] = end_value
                 _render_period_notice(core_module, start_value, end_value)
         elif target == "start":
+            # Store only. Rendering here used the previous end-date state and then
+            # rendered again when the end widget ran, creating the same checkbox
+            # key twice in one Streamlit rerun.
             start_value = _as_date(result)
             st.session_state["_rg_sales_period_start_value"] = start_value
-            end_value = _as_date(st.session_state.get("_rg_sales_period_end_value"))
-            if end_value is not None:
-                _render_period_notice(core_module, start_value, end_value)
         else:
             end_value = _as_date(result)
             st.session_state["_rg_sales_period_end_value"] = end_value
