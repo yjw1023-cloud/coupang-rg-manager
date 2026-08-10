@@ -114,8 +114,13 @@ sales_pnl_ui_v098.apply()
 return_discount_v099 = _original_import_module("return_discount_v099")
 return_discount_v099.apply(core)
 
-# v0.9.10 final sales/P&L output guard. Apply this LAST so zero-quantity rows
-# cannot be reintroduced by search/discount-sale dataframe wrappers.
+# v0.9.11 P&L rules: moving weighted-average inventory cost and 10.8%
+# commission fallback only when commission information is absent.
+pnl_cost_commission_v0911 = _original_import_module("pnl_cost_commission_v0911")
+pnl_cost_commission_v0911.apply(core)
+
+# v0.9.10 final sales/P&L output guard remains LAST so zero-quantity rows
+# cannot be reintroduced by any later P&L dataframe wrapper.
 sales_pnl_zero_v0910 = _original_import_module("sales_pnl_zero_v0910")
 sales_pnl_zero_v0910.apply()
 
@@ -140,7 +145,7 @@ def _ensure_loader():
                 return
         except Exception:
             pass
-    req = urllib.request.Request(LOADER_URL, headers={"User-Agent": "RG-Manager/0.9.10"})
+    req = urllib.request.Request(LOADER_URL, headers={"User-Agent": "RG-Manager/0.9.11"})
     with urllib.request.urlopen(req, timeout=20) as resp:
         data = resp.read()
     if _git_blob_sha(data) != LOADER_BLOB_SHA:
@@ -153,7 +158,7 @@ _ensure_loader()
 source = LOADER.read_text(encoding="utf-8")
 source = source.replace(
     'st.sidebar.caption("v0.7 · legacy ERP import")',
-    'st.sidebar.caption("v0.9.10 · final zero-sales filter")',
+    'st.sidebar.caption("v0.9.11 · moving average cost")',
 )
 loader_exec = 'exec(compile(source, str(BASE_APP), "exec"), globals(), globals())'
 if loader_exec not in source:
@@ -175,5 +180,6 @@ globals()["production_batch_v095"] = production_batch_v095
 globals()["search_ui_v096"] = search_ui_v096
 globals()["sales_pnl_ui_v098"] = sales_pnl_ui_v098
 globals()["return_discount_v099"] = return_discount_v099
+globals()["pnl_cost_commission_v0911"] = pnl_cost_commission_v0911
 globals()["sales_pnl_zero_v0910"] = sales_pnl_zero_v0910
 exec(compile(source, str(LOADER), "exec"), globals(), globals())
