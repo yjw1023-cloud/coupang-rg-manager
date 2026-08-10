@@ -105,6 +105,10 @@ production_batch_v095 = _original_import_module("production_batch_v095")
 search_ui_v096 = _original_import_module("search_ui_v096")
 search_ui_v096.apply()
 
+# v0.9.8 sales P&L presentation: hide zero-sales rows and flag missing links.
+sales_pnl_ui_v098 = _original_import_module("sales_pnl_ui_v098")
+sales_pnl_ui_v098.apply()
+
 # Keep a stable copy of the known-good v0.7 loader.
 LOADER_DIR = ROOT / "_code_base"
 LOADER_DIR.mkdir(parents=True, exist_ok=True)
@@ -126,7 +130,7 @@ def _ensure_loader():
                 return
         except Exception:
             pass
-    req = urllib.request.Request(LOADER_URL, headers={"User-Agent": "RG-Manager/0.9.7"})
+    req = urllib.request.Request(LOADER_URL, headers={"User-Agent": "RG-Manager/0.9.8"})
     with urllib.request.urlopen(req, timeout=20) as resp:
         data = resp.read()
     if _git_blob_sha(data) != LOADER_BLOB_SHA:
@@ -139,7 +143,7 @@ _ensure_loader()
 source = LOADER.read_text(encoding="utf-8")
 source = source.replace(
     'st.sidebar.caption("v0.7 · legacy ERP import")',
-    'st.sidebar.caption("v0.9.7 · sales period fix")',
+    'st.sidebar.caption("v0.9.8 · sales P&L cleanup")',
 )
 loader_exec = 'exec(compile(source, str(BASE_APP), "exec"), globals(), globals())'
 if loader_exec not in source:
@@ -159,4 +163,5 @@ globals()["purchase_history_v094"] = purchase_history_v094
 globals()["return_management_v093"] = return_management_v093
 globals()["production_batch_v095"] = production_batch_v095
 globals()["search_ui_v096"] = search_ui_v096
+globals()["sales_pnl_ui_v098"] = sales_pnl_ui_v098
 exec(compile(source, str(LOADER), "exec"), globals(), globals())
