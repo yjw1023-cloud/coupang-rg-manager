@@ -1,6 +1,6 @@
 {
-  "version": "0.9.14",
-  "message": "손익 기본 조회기간 월 단위 통일: 잠정손익은 선택월 1일~말일 월간 누계가 기본 화면, 개별 판매자료는 보조 탭 유지, 확정손익과 차이분석도 선택월 1일~말일을 명확히 표시",
+  "version": "0.9.15",
+  "message": "긴급 수정: v0.9.14 잠정손익 월간 화면의 SyntaxError 제거. 기존 자료별 잠정손익 코드는 그대로 유지하고 새 월간 잠정손익 메뉴를 안전하게 분리. 잠정/확정손익 기본 조회기간은 선택월 1일~말일 유지",
   "files": [
     "app.py",
     "VERSION.txt",
@@ -26,6 +26,7 @@
     "pnl_cost_commission_v0911.py",
     "pnl_views_v0912.py",
     "provisional_pnl_ui_v0913.py",
-    "pnl_month_default_v0914.py"
+    "pnl_month_default_v0914.py",
+    "pnl_month_default_v0915.py"
   ]
 }
