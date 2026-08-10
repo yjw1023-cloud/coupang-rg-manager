@@ -1,6 +1,6 @@
 {
-  "version": "0.9.13",
-  "message": "잠정손익 화면 개선: 판매수량 0 완전 제거, 이동가중평균 상품원가를 손익에 최종 반영, 음수 판매의 원가 환입 처리, 광고비 비용방향 통일, 잠정 손익 요약 카드와 중앙정렬·디자인 개선",
+  "version": "0.9.14",
+  "message": "손익 기본 조회기간 월 단위 통일: 잠정손익은 선택월 1일~말일 월간 누계가 기본 화면, 개별 판매자료는 보조 탭 유지, 확정손익과 차이분석도 선택월 1일~말일을 명확히 표시",
   "files": [
     "app.py",
     "VERSION.txt",
@@ -25,6 +25,7 @@
     "sales_pnl_zero_v0910.py",
     "pnl_cost_commission_v0911.py",
     "pnl_views_v0912.py",
-    "provisional_pnl_ui_v0913.py"
+    "provisional_pnl_ui_v0913.py",
+    "pnl_month_default_v0914.py"
   ]
 }
