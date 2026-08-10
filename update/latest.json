@@ -1,6 +1,6 @@
 {
-  "version": "0.9.12",
-  "message": "손익 메뉴 분리 및 차이분석: 기존 판매·손익을 잠정손익으로 분리, 월 정산자료 기반 확정손익 메뉴 추가, 잠정 스냅샷과 확정손익의 매출·원가·수수료·RG/반품비·광고비·이익 차이 분석",
+  "version": "0.9.13",
+  "message": "잠정손익 화면 개선: 판매수량 0 완전 제거, 이동가중평균 상품원가를 손익에 최종 반영, 음수 판매의 원가 환입 처리, 광고비 비용방향 통일, 잠정 손익 요약 카드와 중앙정렬·디자인 개선",
   "files": [
     "app.py",
     "VERSION.txt",
@@ -24,6 +24,7 @@
     "return_discount_v099.py",
     "sales_pnl_zero_v0910.py",
     "pnl_cost_commission_v0911.py",
-    "pnl_views_v0912.py"
+    "pnl_views_v0912.py",
+    "provisional_pnl_ui_v0913.py"
   ]
 }
