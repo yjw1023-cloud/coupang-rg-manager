@@ -1,6 +1,6 @@
 {
-  "version": "0.9.6",
-  "message": "목록형 메뉴 공통 검색 추가: 재고관리·상품원가·품목관리·반품관리·매입이력 등에서 상품명·품목코드·쿠팡 옵션ID와 표의 표시값 검색",
+  "version": "0.9.7",
+  "message": "판매자료 동일기간 교체 화면 오류 수정: 교체 체크박스 중복 생성으로 발생하던 StreamlitDuplicateElementKey 문제 해결",
   "files": [
     "app.py",
     "VERSION.txt",
