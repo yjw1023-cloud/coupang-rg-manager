@@ -129,10 +129,12 @@ sales_pnl_zero_v0910.apply()
 provisional_pnl_ui_v0913 = _original_import_module("provisional_pnl_ui_v0913")
 provisional_pnl_ui_v0913.apply(core)
 
-# v0.9.14 monthly-default P&L periods. This only wraps month selectors and
-# source dispatch; v0.9.13 remains the final dataframe transform.
+# v0.9.14 month helpers remain valid; only its old source-moving patch was unsafe.
 pnl_month_default_v0914 = _original_import_module("pnl_month_default_v0914")
 pnl_month_default_v0914.apply()
+
+# v0.9.15 safe monthly routing: never copies/re-indents legacy source blocks.
+pnl_month_default_v0915 = _original_import_module("pnl_month_default_v0915")
 
 # Keep a stable copy of the known-good v0.7 loader.
 LOADER_DIR = ROOT / "_code_base"
@@ -155,7 +157,7 @@ def _ensure_loader():
                 return
         except Exception:
             pass
-    req = urllib.request.Request(LOADER_URL, headers={"User-Agent": "RG-Manager/0.9.14"})
+    req = urllib.request.Request(LOADER_URL, headers={"User-Agent": "RG-Manager/0.9.15"})
     with urllib.request.urlopen(req, timeout=20) as resp:
         data = resp.read()
     if _git_blob_sha(data) != LOADER_BLOB_SHA:
@@ -168,7 +170,7 @@ _ensure_loader()
 source = LOADER.read_text(encoding="utf-8")
 source = source.replace(
     'st.sidebar.caption("v0.7 · legacy ERP import")',
-    'st.sidebar.caption("v0.9.14 · monthly P&L default")',
+    'st.sidebar.caption("v0.9.15 · safe monthly P&L")',
 )
 loader_exec = 'exec(compile(source, str(BASE_APP), "exec"), globals(), globals())'
 if loader_exec not in source:
@@ -181,7 +183,7 @@ source = source.replace(
     'source = production_batch_v095.patch_source(source)\n'
     'source = pnl_views_v0912.patch_source(source)\n'
     'source = provisional_pnl_ui_v0913.patch_source(source)\n'
-    'source = pnl_month_default_v0914.patch_source(source)\n' + loader_exec,
+    'source = pnl_month_default_v0915.patch_source(source)\n' + loader_exec,
     1,
 )
 globals()["LEGACY_REPAIR_RESULT"] = LEGACY_REPAIR_RESULT
@@ -198,4 +200,5 @@ globals()["pnl_cost_commission_v0911"] = pnl_cost_commission_v0911
 globals()["sales_pnl_zero_v0910"] = sales_pnl_zero_v0910
 globals()["provisional_pnl_ui_v0913"] = provisional_pnl_ui_v0913
 globals()["pnl_month_default_v0914"] = pnl_month_default_v0914
+globals()["pnl_month_default_v0915"] = pnl_month_default_v0915
 exec(compile(source, str(LOADER), "exec"), globals(), globals())
