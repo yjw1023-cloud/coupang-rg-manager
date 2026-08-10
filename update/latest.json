@@ -1,6 +1,6 @@
 {
-  "version": "0.9.7",
-  "message": "판매자료 동일기간 교체 화면 오류 수정: 교체 체크박스 중복 생성으로 발생하던 StreamlitDuplicateElementKey 문제 해결",
+  "version": "0.9.8",
+  "message": "판매·손익 화면 개선: 판매수량 0인 상품 숨김, 판매수량은 있으나 예상 실현단가와 원가가 모두 0인 상품은 옵션ID/상품마스터·정산 연결 확인 경고",
   "files": [
     "app.py",
     "VERSION.txt",
@@ -19,6 +19,7 @@
     "return_management_v093.py",
     "purchase_history_v094.py",
     "production_batch_v095.py",
-    "search_ui_v096.py"
+    "search_ui_v096.py",
+    "sales_pnl_ui_v098.py"
   ]
 }
