@@ -202,7 +202,11 @@ def apply(return_discount_module, core_module) -> None:
     import canonical_rg_cleanup_v0947
     canonical_rg_cleanup_v0947.apply(core_module, rd)
 
-    # v0.9.48: canonical IDs are authoritative originals. Restore any canonical
-    # product hidden/aliased by older return heuristics and repair its sales posting.
+    # v0.9.48+: restore canonical originals and apply v0.9.49 baseline costs.
     import canonical_rg_restore_v0948
     canonical_rg_restore_v0948.apply(core_module, rd, canonical_rg_cleanup_v0947)
+
+    # v0.9.50: repair already-captured August provisional P&L rows whose unit cost
+    # was zero before the user-supplied baseline costs were entered.
+    import august_cost_backfill_v0950
+    august_cost_backfill_v0950.apply(core_module)
