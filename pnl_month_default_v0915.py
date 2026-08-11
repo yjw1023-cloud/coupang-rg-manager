@@ -1,11 +1,12 @@
 """v0.9.15 safe monthly-default P&L routing.
 
-v0.9.27 compatibility:
+v0.9.28 compatibility:
 - keep v0.9.15's safe provisional routing
 - lazily load monthly_closing_v0916
 - route product confirmed P&L and whole-business monthly closing
 - apply grouped sidebar navigation and permanently lock the sidebar expanded
-- apply Production/BOM finished/component candidate filtering as the final source patch
+- apply Production/BOM finished/component candidate filtering
+- add a dedicated BOM delete tab after the candidate-filter patch
 """
 from __future__ import annotations
 
@@ -110,7 +111,7 @@ def render_grouped_sidebar(st_obj, options, default_page=None):
 
 
 def patch_source(source: str) -> str:
-    """Route P&L pages, monthly closing, navigation, then BOM selector filtering."""
+    """Route P&L pages, monthly closing, navigation, then BOM UI patches."""
     legacy_branch = 'elif page == "📈  잠정손익":'
     if legacy_branch not in source:
         raise RuntimeError("v0.9.15 기존 잠정손익 분기를 찾지 못했습니다.")
@@ -149,4 +150,7 @@ def patch_source(source: str) -> str:
     core_module = importlib.import_module("core")
     bom.apply(core_module)
     source = bom.patch_source(source)
+
+    bom_delete = importlib.import_module("bom_delete_v0928")
+    source = bom_delete.patch_source(source)
     return source
