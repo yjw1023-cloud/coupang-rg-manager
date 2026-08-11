@@ -136,6 +136,10 @@ pnl_month_default_v0914.apply()
 # v0.9.15 safe monthly routing: never copies/re-indents legacy source blocks.
 pnl_month_default_v0915 = _original_import_module("pnl_month_default_v0915")
 
+# v0.9.31: the patched legacy BOM UI contains direct references to this module.
+# Export it into the globals used by exec() so BOM selectors can resolve it.
+bom_candidate_filter_v0927 = _original_import_module("bom_candidate_filter_v0927")
+
 # Keep a stable copy of the known-good v0.7 loader.
 LOADER_DIR = ROOT / "_code_base"
 LOADER_DIR.mkdir(parents=True, exist_ok=True)
@@ -201,4 +205,5 @@ globals()["sales_pnl_zero_v0910"] = sales_pnl_zero_v0910
 globals()["provisional_pnl_ui_v0913"] = provisional_pnl_ui_v0913
 globals()["pnl_month_default_v0914"] = pnl_month_default_v0914
 globals()["pnl_month_default_v0915"] = pnl_month_default_v0915
+globals()["bom_candidate_filter_v0927"] = bom_candidate_filter_v0927
 exec(compile(source, str(LOADER), "exec"), globals(), globals())
