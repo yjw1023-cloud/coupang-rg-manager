@@ -1,12 +1,13 @@
 """v0.9.15 safe monthly-default P&L routing.
 
-v0.9.32 compatibility:
+v0.9.33 compatibility:
 - keep v0.9.15's safe provisional routing
 - lazily load monthly_closing_v0916
 - route product confirmed P&L and whole-business monthly closing
 - apply grouped sidebar navigation and permanently lock the sidebar expanded
 - apply Production/BOM finished/component candidate filtering
 - add a dedicated BOM delete tab after the candidate-filter patch
+- simplify BOM delete into whole-finished-product cleanup with search
 - activate the v0.9.29 provisional snapshot import-id binding fix
 - auto-calculate missing monthly provisional snapshots directly from DB
 """
@@ -174,5 +175,7 @@ def patch_source(source: str) -> str:
     source = bom.patch_source(source)
 
     bom_delete = importlib.import_module("bom_delete_v0928")
+    cleanup = importlib.import_module("bom_delete_cleanup_v0933")
+    cleanup.apply(bom_delete)
     source = bom_delete.patch_source(source)
     return source
