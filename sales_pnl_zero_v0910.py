@@ -9,6 +9,10 @@ Rules:
 - hide sales quantity == 0
 - keep negative quantities (net cancellations / returns)
 - presentation only; persisted sales and inventory data are untouched
+
+v0.9.41 also activates the sales-stat managed-product guard after
+return_discount_v099 has been loaded.  This prevents active zero-cost ERP products
+from being mistaken for auto-created return-discount placeholders.
 """
 from __future__ import annotations
 
@@ -52,6 +56,14 @@ def _filter_zero_qty(data: pd.DataFrame) -> pd.DataFrame:
 
 def apply() -> None:
     global _APPLIED
+
+    # v0.9.41: return_discount_v099 is already imported/applied before this module
+    # in app.py.  Its import wrapper resolves _resolve at runtime, so replacing the
+    # module resolver here immediately affects subsequent 판매통계 uploads.
+    import return_discount_v099
+    import sales_import_guard_v0941
+    sales_import_guard_v0941.apply(return_discount_v099)
+
     if _APPLIED or getattr(st, "_rg_sales_pnl_zero_v0910", False):
         return
 
