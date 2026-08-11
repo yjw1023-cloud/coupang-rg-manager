@@ -1,4 +1,4 @@
-"""RG Manager v0.9.19 grouped sidebar navigation + branding fix.
+"""RG Manager v0.9.23 grouped sidebar navigation + branding.
 
 Replaces the long flat sidebar radio with:
 - standalone dashboard button
@@ -221,9 +221,9 @@ def _render_branding(st_obj):
 def _current_version() -> str:
     try:
         value = (Path(__file__).resolve().parent / "VERSION.txt").read_text(encoding="utf-8").strip()
-        return value or "0.9.19"
+        return value or "0.9.23"
     except Exception:
-        return "0.9.19"
+        return "0.9.23"
 
 
 def render_sidebar(st_obj, options: list[str], default_page: str | None = None) -> str:
@@ -243,11 +243,13 @@ def render_sidebar(st_obj, options: list[str], default_page: str | None = None) 
     _render_branding(st_obj)
 
     if dashboard:
+        # Dashboard is a fixed top-level entry. Keep it visually integrated with
+        # the navy sidebar instead of using the red active-menu highlight.
         if st_obj.sidebar.button(
             dashboard,
             key="rg_nav_dashboard_v0917",
             use_container_width=True,
-            type="primary" if current == dashboard else "secondary",
+            type="secondary",
         ):
             st_obj.session_state[state_key] = dashboard
             current = dashboard
@@ -277,7 +279,7 @@ def _find_menu_assignment(source: str):
     try:
         tree = ast.parse(source)
     except SyntaxError as exc:
-        raise RuntimeError(f"v0.9.19 메뉴 적용 전 소스 문법 오류: {exc}") from exc
+        raise RuntimeError(f"v0.9.23 메뉴 적용 전 소스 문법 오류: {exc}") from exc
 
     candidates = []
     for node in ast.walk(tree):
@@ -393,12 +395,12 @@ def patch_source(source: str) -> str:
 
     found = _find_menu_assignment(source)
     if not found:
-        raise RuntimeError("v0.9.19 사이드바 radio 메뉴 목록을 찾지 못했습니다.")
+        raise RuntimeError("v0.9.23 사이드바 radio 메뉴 목록을 찾지 못했습니다.")
     node, labels = found
     source = _remove_legacy_sidebar_branding(source)
     found = _find_menu_assignment(source)
     if not found:
-        raise RuntimeError("v0.9.19 기존 버전표시 제거 후 메뉴를 다시 찾지 못했습니다.")
+        raise RuntimeError("v0.9.23 기존 버전표시 제거 후 메뉴를 다시 찾지 못했습니다.")
     node, labels = found
 
     lines = source.splitlines(keepends=True)
