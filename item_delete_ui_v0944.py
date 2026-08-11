@@ -1,4 +1,10 @@
-"""RG Manager v0.9.44 item deletion and manual return-option cleanup."""
+"""RG Manager v0.9.46 item deletion and manual return-option cleanup.
+
+All deletion/restoration targets are shown as checkbox tables instead of a
+search/selectbox picker. Return-option cleanup supports multi-select and keeps the
+explicit child -> original mapping because that mapping is required for future
+return-stock deduction, original cost attribution and P&L classification.
+"""
 from __future__ import annotations
 
 from difflib import SequenceMatcher
@@ -63,51 +69,68 @@ def _blockers(core, pid):
                 "SELECT COUNT(*) n FROM bom_items WHERE parent_product_id=? OR component_product_id=?",
                 (int(pid), int(pid)),
             ).fetchone()["n"] or 0)
-            if n: out.append(f"BOM 연결 {n:,}건")
+            if n:
+                out.append(f"BOM 연결 {n:,}건")
         if _exists(con, "production_orders"):
             n = int(con.execute(
                 "SELECT COUNT(*) n FROM production_orders WHERE parent_product_id=?", (int(pid),)
             ).fetchone()["n"] or 0)
-            if n: out.append(f"생산이력 {n:,}건")
+            if n:
+                out.append(f"생산이력 {n:,}건")
         if _exists(con, "purchase_lines"):
             cols = {str(r["name"]) for r in con.execute("PRAGMA table_info(purchase_lines)")}
             if "product_id" in cols:
                 n = int(con.execute(
                     "SELECT COUNT(*) n FROM purchase_lines WHERE product_id=?", (int(pid),)
                 ).fetchone()["n"] or 0)
-                if n: out.append(f"매입이력 {n:,}건")
+                if n:
+                    out.append(f"매입이력 {n:,}건")
         if _exists(con, "inventory_txns"):
             n = int(con.execute(
                 """SELECT COUNT(*) n FROM inventory_txns
                    WHERE product_id=? AND COALESCE(txn_type,'') NOT IN ('판매차감','반품할인판매차감')""",
                 (int(pid),),
             ).fetchone()["n"] or 0)
-            if n: out.append(f"판매 외 재고이력 {n:,}건")
+            if n:
+                out.append(f"판매 외 재고이력 {n:,}건")
     return out
 
 
 def _archive(core, pid):
     bal = _balances(core, pid)
     if bal:
-        raise ValueError("현재고가 0이 아니므로 일반 삭제할 수 없습니다: " + ", ".join(f"{w} {q:g}" for w, q in bal))
+        raise ValueError(
+            "현재고가 0이 아니므로 일반 삭제할 수 없습니다: "
+            + ", ".join(f"{w} {q:g}" for w, q in bal)
+        )
     with _conn(core) as con:
-        con.execute("UPDATE products SET active=0,updated_at=? WHERE id=?", (core.now_iso(), int(pid)))
+        con.execute(
+            "UPDATE products SET active=0,updated_at=? WHERE id=?",
+            (core.now_iso(), int(pid)),
+        )
 
 
 def _is_alias(core, oid):
     if not oid:
         return False
     with _conn(core) as con:
-        return bool(_exists(con, "return_discount_aliases") and con.execute(
-            "SELECT 1 FROM return_discount_aliases WHERE discount_option_id=?", (str(oid),)
-        ).fetchone())
+        return bool(
+            _exists(con, "return_discount_aliases")
+            and con.execute(
+                "SELECT 1 FROM return_discount_aliases WHERE discount_option_id=?",
+                (str(oid),),
+            ).fetchone()
+        )
 
 
 def _restore(core, pid, oid):
     if _is_alias(core, oid):
         raise ValueError("반품 할인판매 alias로 등록된 옵션ID는 정상 품목으로 복원할 수 없습니다.")
     with _conn(core) as con:
-        con.execute("UPDATE products SET active=1,updated_at=? WHERE id=?", (core.now_iso(), int(pid)))
+        con.execute(
+            "UPDATE products SET active=1,updated_at=? WHERE id=?",
+            (core.now_iso(), int(pid)),
+        )
 
 
 def _score(a, b):
@@ -125,14 +148,22 @@ def _manual_return(core, child_id, parent_id):
         raise ValueError("반품코드와 정상 원상품은 서로 달라야 합니다.")
     blockers = _blockers(core, child_id)
     if blockers:
-        raise ValueError("정상 관리상품일 가능성이 있는 이력이 있어 반품코드로 정리하지 않았습니다: " + " / ".join(blockers))
+        raise ValueError(
+            "정상 관리상품일 가능성이 있는 이력이 있어 반품코드로 정리하지 않았습니다: "
+            + " / ".join(blockers)
+        )
 
     import return_discount_v099 as rd
+
     db = core.DEFAULT_DB
     rd._ensure_schema(core, db)
     with _conn(core) as con:
-        child = con.execute("SELECT id,item_code,option_id,name FROM products WHERE id=?", (int(child_id),)).fetchone()
-        parent = con.execute("SELECT id,item_code,option_id,name,active FROM products WHERE id=?", (int(parent_id),)).fetchone()
+        child = con.execute(
+            "SELECT id,item_code,option_id,name FROM products WHERE id=?", (int(child_id),)
+        ).fetchone()
+        parent = con.execute(
+            "SELECT id,item_code,option_id,name,active FROM products WHERE id=?", (int(parent_id),)
+        ).fetchone()
     if not child or not parent:
         raise ValueError("대상 품목을 찾지 못했습니다.")
     oid = str(child["option_id"] or "").strip()
@@ -152,7 +183,7 @@ def _manual_return(core, child_id, parent_id):
                  discount_name=excluded.discount_name,
                  match_method=excluded.match_method,
                  updated_at=excluded.updated_at""",
-            (oid, int(parent_id), str(child["name"] or ""), "manual_item_delete_v0944", now, now),
+            (oid, int(parent_id), str(child["name"] or ""), "manual_item_delete_v0946", now, now),
         )
 
     amount_col = rd._amount_column(core, db)
@@ -185,107 +216,283 @@ def _manual_return(core, child_id, parent_id):
         converted += 1
 
     with _conn(core) as con:
-        con.execute("UPDATE products SET active=0,updated_at=? WHERE id=?", (core.now_iso(), int(child_id)))
+        con.execute(
+            "UPDATE products SET active=0,updated_at=? WHERE id=?",
+            (core.now_iso(), int(child_id)),
+        )
     return converted, str(parent["name"] or "")
 
 
-def _pick(st, df, label, key, qkey):
-    q = st.text_input("검색", key=qkey, placeholder="품목코드·옵션ID·상품명").strip().lower()
-    work = df.copy()
-    if q:
-        mask = (
-            work["name"].fillna("").astype(str).str.lower().str.contains(q, regex=False)
-            | work["item_code"].fillna("").astype(str).str.lower().str.contains(q, regex=False)
-            | work["option_id"].fillna("").astype(str).str.lower().str.contains(q, regex=False)
-        )
-        work = work.loc[mask]
-    if work.empty:
-        st.info("검색 조건에 맞는 품목이 없습니다.")
-        return None
-    labels = {
-        int(r.id): f"{_code(r.item_code, r.option_id)} | {r.name} | {'사용' if int(r.active or 0) else '삭제됨'}"
-        for r in work.itertuples()
-    }
-    return int(st.selectbox(label, list(labels), format_func=lambda x: labels[int(x)], key=key))
+def _selection_editor(st, df, key, include_reason=False):
+    view = pd.DataFrame({
+        "선택": False,
+        "_id": df["id"].astype(int),
+        "품목코드": [_code(r.item_code, r.option_id) for r in df.itertuples()],
+        "상품명": df["name"].fillna(""),
+        "쿠팡 옵션ID": df["option_id"].fillna(""),
+        "자체창고": df["own_stock"].fillna(0),
+        "쿠팡RG": df["rg_stock"].fillna(0),
+        "반품창고": df["return_stock"].fillna(0),
+    })
+    if include_reason:
+        reasons = []
+        for pid in view["_id"]:
+            blockers = _blockers(st.session_state.get("_rg_core_for_delete", None), pid) if False else []
+            reasons.append("")
+        view["안전확인"] = reasons
+
+    edited = st.data_editor(
+        view,
+        key=key,
+        hide_index=True,
+        use_container_width=True,
+        height=min(650, max(220, 38 * (len(view) + 1))),
+        disabled=[c for c in view.columns if c not in {"선택"}],
+        column_config={"_id": None},
+    )
+    if edited is None or edited.empty:
+        return []
+    return [int(x) for x in edited.loc[edited["선택"] == True, "_id"].tolist()]
+
+
+def _return_list(st, pd, core, all_df):
+    children = all_df[(all_df["active"] == 1) & all_df["option_id"].notna()].copy()
+    if children.empty:
+        st.info("정리할 쿠팡RG 품목이 없습니다.")
+        return
+
+    # Put likely return children near the top: no protected management history and
+    # negative/zero RG balance first. User still explicitly checks the target.
+    children["_blocked"] = children["id"].map(lambda x: bool(_blockers(core, int(x))))
+    children["_suspect"] = (
+        (~children["_blocked"])
+        & (pd.to_numeric(children["rg_stock"], errors="coerce").fillna(0) <= 0)
+    )
+    children = children.sort_values(["_suspect", "name", "item_code"], ascending=[False, True, True])
+
+    table = pd.DataFrame({
+        "선택": False,
+        "_id": children["id"].astype(int),
+        "품목코드": [_code(r.item_code, r.option_id) for r in children.itertuples()],
+        "상품명": children["name"].fillna(""),
+        "옵션ID": children["option_id"].fillna(""),
+        "자체창고": children["own_stock"].fillna(0),
+        "쿠팡RG": children["rg_stock"].fillna(0),
+        "반품창고": children["return_stock"].fillna(0),
+        "정리상태": [
+            ("정리 가능" if not _blockers(core, int(pid)) else "보호 이력 있음")
+            for pid in children["id"]
+        ],
+    })
+    edited = st.data_editor(
+        table,
+        key="return_cleanup_list_v0946",
+        hide_index=True,
+        use_container_width=True,
+        height=min(650, max(260, 38 * (len(table) + 1))),
+        disabled=[c for c in table.columns if c != "선택"],
+        column_config={"_id": None},
+    )
+    selected_ids = [int(x) for x in edited.loc[edited["선택"] == True, "_id"].tolist()]
+    if not selected_ids:
+        st.caption("정리할 반품 품목의 체크박스를 선택하세요.")
+        return
+
+    st.markdown("### 선택한 반품코드의 정상 원상품 확인")
+    parent_map = {}
+    blocked_selected = []
+    for child_id in selected_ids:
+        child = children[children["id"] == child_id].iloc[0]
+        blockers = _blockers(core, child_id)
+        title = f"{_code(child['item_code'], child['option_id'])} · {child['name']}"
+        with st.expander(title, expanded=True):
+            if blockers:
+                blocked_selected.append(child_id)
+                st.error("안전상 정리할 수 없습니다: " + " / ".join(blockers))
+                continue
+
+            parents = all_df[
+                (all_df["active"] == 1)
+                & all_df["option_id"].notna()
+                & (all_df["id"] != child_id)
+            ].copy()
+            parents["score"] = parents["name"].map(lambda x: _score(child["name"], x))
+            parents = parents.sort_values(["score", "name"], ascending=[False, True])
+            if parents.empty:
+                blocked_selected.append(child_id)
+                st.error("연결할 정상 원상품 후보가 없습니다.")
+                continue
+            labels = {
+                int(r.id): f"{_code(r.item_code, r.option_id)} | {r.name} | 유사도 {float(r.score):.0%}"
+                for r in parents.itertuples()
+            }
+            parent_id = int(st.selectbox(
+                "정상 원상품",
+                list(labels),
+                format_func=lambda x, labels=labels: labels[int(x)],
+                key=f"ret_parent_v0946_{child_id}",
+            ))
+            parent_map[child_id] = parent_id
+
+    ready_ids = [pid for pid in selected_ids if pid in parent_map and pid not in blocked_selected]
+    confirm = st.checkbox(
+        f"선택한 반품코드 {len(ready_ids):,}개를 위 정상 원상품에 연결하고 품목목록에서 삭제합니다.",
+        key="ret_bulk_confirm_v0946",
+        disabled=not ready_ids,
+    )
+    if st.button(
+        "선택 반품코드 일괄 정리",
+        type="primary",
+        disabled=not ready_ids or not confirm or bool(blocked_selected),
+        key="ret_bulk_submit_v0946",
+    ):
+        try:
+            converted = 0
+            for child_id in ready_ids:
+                n, _ = _manual_return(core, child_id, parent_map[child_id])
+                converted += int(n or 0)
+            st.success(
+                f"반품코드 {len(ready_ids):,}개를 정리했습니다. 기존 판매자료 {converted:,}개 import도 반품판매로 재분류했습니다."
+            )
+            st.rerun()
+        except Exception as exc:
+            st.error(str(exc))
+
+
+def _general_delete_list(st, core):
+    active = _products(core)
+    active = active[active["active"] == 1].copy()
+    if active.empty:
+        st.info("삭제할 품목이 없습니다.")
+        return
+    table = pd.DataFrame({
+        "선택": False,
+        "_id": active["id"].astype(int),
+        "품목코드": [_code(r.item_code, r.option_id) for r in active.itertuples()],
+        "상품명": active["name"].fillna(""),
+        "자체창고": active["own_stock"].fillna(0),
+        "쿠팡RG": active["rg_stock"].fillna(0),
+        "반품창고": active["return_stock"].fillna(0),
+    })
+    table["삭제가능"] = [
+        "가능" if not _balances(core, int(pid)) else "재고 있음"
+        for pid in table["_id"]
+    ]
+    edited = st.data_editor(
+        table,
+        key="general_delete_list_v0946",
+        hide_index=True,
+        use_container_width=True,
+        height=min(650, max(260, 38 * (len(table) + 1))),
+        disabled=[c for c in table.columns if c != "선택"],
+        column_config={"_id": None},
+    )
+    selected = [int(x) for x in edited.loc[edited["선택"] == True, "_id"].tolist()]
+    if not selected:
+        st.caption("삭제할 품목의 체크박스를 선택하세요.")
+        return
+    blocked = [pid for pid in selected if _balances(core, pid)]
+    if blocked:
+        st.error("선택 품목 중 현재고가 남아 있는 품목이 있어 일반 삭제할 수 없습니다.")
+    confirm = st.checkbox(
+        f"선택한 품목 {len(selected):,}개를 삭제(보관처리)합니다.",
+        key="general_bulk_confirm_v0946",
+        disabled=bool(blocked),
+    )
+    if st.button(
+        "선택 품목 일괄 삭제",
+        type="primary",
+        disabled=bool(blocked) or not confirm,
+        key="general_bulk_submit_v0946",
+    ):
+        try:
+            for pid in selected:
+                _archive(core, pid)
+            st.success(f"품목 {len(selected):,}개를 삭제(보관처리)했습니다.")
+            st.rerun()
+        except Exception as exc:
+            st.error(str(exc))
+
+
+def _restore_list(st, core):
+    archived = _products(core)
+    archived = archived[archived["active"] == 0].copy()
+    if archived.empty:
+        st.info("삭제된 품목이 없습니다.")
+        return
+    table = pd.DataFrame({
+        "선택": False,
+        "_id": archived["id"].astype(int),
+        "품목코드": [_code(r.item_code, r.option_id) for r in archived.itertuples()],
+        "상품명": archived["name"].fillna(""),
+        "옵션ID": archived["option_id"].fillna(""),
+        "복원가능": [
+            "반품 alias" if _is_alias(core, oid) else "가능"
+            for oid in archived["option_id"]
+        ],
+    })
+    edited = st.data_editor(
+        table,
+        key="restore_list_v0946",
+        hide_index=True,
+        use_container_width=True,
+        height=min(650, max(260, 38 * (len(table) + 1))),
+        disabled=[c for c in table.columns if c != "선택"],
+        column_config={"_id": None},
+    )
+    selected = [int(x) for x in edited.loc[edited["선택"] == True, "_id"].tolist()]
+    if not selected:
+        st.caption("복원할 품목의 체크박스를 선택하세요.")
+        return
+    bad = []
+    for pid in selected:
+        row = archived[archived["id"] == pid].iloc[0]
+        if _is_alias(core, row["option_id"]):
+            bad.append(pid)
+    if bad:
+        st.error("선택 품목 중 반품 할인판매 alias가 있어 복원할 수 없습니다.")
+    if st.button(
+        "선택 품목 일괄 복원",
+        type="primary",
+        disabled=bool(bad),
+        key="restore_bulk_submit_v0946",
+    ):
+        try:
+            for pid in selected:
+                row = archived[archived["id"] == pid].iloc[0]
+                _restore(core, pid, row["option_id"])
+            st.success(f"품목 {len(selected):,}개를 복원했습니다.")
+            st.rerun()
+        except Exception as exc:
+            st.error(str(exc))
 
 
 def render_item_delete_page(st, pd, core, page_header, section, **_kwargs):
-    page_header("품목 삭제", "잘못 등록된 품목과 쿠팡 반품 할인판매 옵션을 정리합니다.", eyebrow="ITEM CLEANUP")
-    st.info("삭제는 물리 삭제가 아니라 보관처리입니다. 과거 판매·재고·손익 기록은 유지됩니다.")
+    page_header(
+        "품목 삭제",
+        "잘못 등록된 품목과 쿠팡 반품 할인판매 옵션을 정리합니다.",
+        eyebrow="ITEM CLEANUP",
+    )
+    st.info(
+        "삭제는 물리 삭제가 아니라 보관처리입니다. 과거 판매·재고·손익 기록은 유지됩니다. "
+        "목록에서 체크한 품목만 처리합니다."
+    )
     tabs = st.tabs(["반품코드 정리", "일반 품목 삭제", "삭제품목 복원"])
 
     with tabs[0]:
-        section("반품 할인판매 코드 정리", "쿠팡이 반품 할인판매에 부여한 별도 옵션ID를 실제 정상 원상품에 연결합니다.")
-        all_df = _products(core)
-        children = all_df[(all_df["active"] == 1) & all_df["option_id"].notna()].copy()
-        child_id = _pick(st, children, "삭제할 반품 품목", "ret_child", "ret_child_q")
-        if child_id is not None:
-            child = children[children["id"] == child_id].iloc[0]
-            bal = _balances(core, child_id)
-            if bal:
-                st.caption("현재 표시 재고: " + " · ".join(f"{w} {q:g}" for w, q in bal))
-            parents = all_df[(all_df["active"] == 1) & all_df["option_id"].notna() & (all_df["id"] != child_id)].copy()
-            parents["score"] = parents["name"].map(lambda x: _score(child["name"], x))
-            parents = parents.sort_values(["score", "name"], ascending=[False, True])
-            labels = {}
-            for _, r in parents.iterrows():
-                labels[int(r["id"])] = f"{_code(r['item_code'], r['option_id'])} | {r['name']} | 유사도 {float(r['score']):.0%}"
-            if labels:
-                parent_id = int(st.selectbox("정상 원상품", list(labels), format_func=lambda x: labels[int(x)], key="ret_parent"))
-                parent = parents[parents["id"] == parent_id].iloc[0]
-                st.write(
-                    f"**반품코드:** {_code(child['item_code'], child['option_id'])} · {child['name']}  \n"
-                    f"**정상 원상품:** {_code(parent['item_code'], parent['option_id'])} · {parent['name']}"
-                )
-                blockers = _blockers(core, child_id)
-                if blockers:
-                    st.error("안전상 정리할 수 없습니다: " + " / ".join(blockers))
-                confirm = st.checkbox("이 옵션ID가 반품 할인판매용 코드이고 위 정상 원상품에 연결되는 것이 맞습니다.", key="ret_confirm")
-                if st.button("반품코드 정리 및 품목 삭제", type="primary", disabled=bool(blockers) or not confirm, key="ret_submit"):
-                    try:
-                        n, parent_name = _manual_return(core, child_id, parent_id)
-                        st.success(f"반품 옵션을 {parent_name}에 연결하고 삭제했습니다. 기존 판매자료 {n:,}개 import도 반품판매로 재분류했습니다.")
-                        st.rerun()
-                    except Exception as exc:
-                        st.error(str(exc))
+        section(
+            "반품 할인판매 코드 정리",
+            "목록에서 반품용 옵션ID를 체크한 뒤 실제 정상 원상품을 확인합니다. 연결 정보는 이후 반품재고·원가·손익 처리에 사용합니다.",
+        )
+        _return_list(st, pd, core, _products(core))
 
     with tabs[1]:
-        section("일반 품목 삭제", "현재고가 0인 일반 품목을 업무 목록에서 제외합니다.")
-        active = _products(core)
-        active = active[active["active"] == 1].copy()
-        pid = _pick(st, active, "삭제할 품목", "del_pid", "del_q")
-        if pid is not None:
-            row = active[active["id"] == pid].iloc[0]
-            bal = _balances(core, pid)
-            if bal:
-                st.error("현재고가 남아 있어 일반 삭제할 수 없습니다.")
-                st.caption(" · ".join(f"{w}: {q:g}" for w, q in bal))
-            confirm = st.checkbox(f"{_code(row['item_code'], row['option_id'])} · {row['name']} 품목을 삭제합니다.", key="del_confirm")
-            if st.button("선택 품목 삭제", type="primary", disabled=bool(bal) or not confirm, key="del_submit"):
-                try:
-                    _archive(core, pid)
-                    st.success("품목을 삭제(보관처리)했습니다.")
-                    st.rerun()
-                except Exception as exc:
-                    st.error(str(exc))
+        section("일반 품목 삭제", "목록에서 현재고가 0인 일반 품목을 체크해 업무 목록에서 제외합니다.")
+        _general_delete_list(st, core)
 
     with tabs[2]:
-        section("삭제품목 복원", "일반 삭제한 품목을 다시 사용 상태로 돌립니다. 반품 alias는 복원할 수 없습니다.")
-        archived = _products(core)
-        archived = archived[archived["active"] == 0].copy()
-        pid = _pick(st, archived, "복원할 품목", "restore_pid", "restore_q")
-        if pid is not None:
-            row = archived[archived["id"] == pid].iloc[0]
-            alias = _is_alias(core, row["option_id"])
-            if alias:
-                st.warning("이 옵션ID는 반품 할인판매 alias이므로 정상 품목으로 복원할 수 없습니다.")
-            if st.button("선택 품목 복원", type="primary", disabled=alias, key="restore_submit"):
-                try:
-                    _restore(core, pid, row["option_id"])
-                    st.success("품목을 복원했습니다.")
-                    st.rerun()
-                except Exception as exc:
-                    st.error(str(exc))
+        section("삭제품목 복원", "삭제된 품목을 목록에서 체크해 다시 사용 상태로 돌립니다. 반품 alias는 복원할 수 없습니다.")
+        _restore_list(st, core)
 
 
 def patch_source(source: str) -> str:
