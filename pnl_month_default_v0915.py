@@ -1,13 +1,14 @@
 """v0.9.15 safe monthly-default P&L routing.
 
-v0.9.30 compatibility:
+v0.9.32 compatibility:
 - keep v0.9.15's safe provisional routing
 - lazily load monthly_closing_v0916
 - route product confirmed P&L and whole-business monthly closing
 - apply grouped sidebar navigation and permanently lock the sidebar expanded
 - apply Production/BOM finished/component candidate filtering
 - add a dedicated BOM delete tab after the candidate-filter patch
-- actually activate the v0.9.29 provisional snapshot import-id binding fix
+- activate the v0.9.29 provisional snapshot import-id binding fix
+- auto-calculate missing monthly provisional snapshots directly from DB
 """
 from __future__ import annotations
 
@@ -26,15 +27,31 @@ def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
     default_idx = months.index(cur) if cur in months else 0
     month = st_obj.selectbox("조회 월", months, index=default_idx, key="provisional_month_v0915")
 
+    # v0.9.32: monthly P&L no longer depends on the user opening the per-file
+    # provisional page. Missing snapshots are calculated from DB immediately.
+    backfill = {"attempted": 0, "saved": 0, "failed": []}
+    try:
+        autobackfill = importlib.import_module("pnl_month_autobackfill_v0932")
+        backfill = autobackfill.backfill_month(core, month, db)
+    except Exception as exc:
+        backfill = {"attempted": 0, "saved": 0, "failed": [{"error": str(exc)}]}
+
     cov = m._coverage(core, db, month)
     m._period_strip(st_obj, month, cov)
     rows, excluded = m._snapshot_rows_for_month(core, db, month)
     view = m._aggregate(rows)
 
+    if backfill.get("failed"):
+        details = "; ".join(str(x.get("error") or "알 수 없는 오류") for x in backfill["failed"][:3])
+        st_obj.warning(
+            "일부 판매자료의 잠정손익 자동 계산에 실패했습니다. "
+            f"오류: {details}"
+        )
+
     if cov.get("missing_snapshots", 0):
         st_obj.warning(
-            f"이 달의 판매자료 중 잠정손익 계산값이 아직 저장되지 않은 자료가 {cov['missing_snapshots']:,}개 있습니다. "
-            "왼쪽 메뉴의 '자료별 잠정손익'에서 해당 판매자료를 한 번 열면 월간 잠정손익에 포함됩니다."
+            f"이 달의 판매자료 중 잠정손익 계산값을 아직 만들지 못한 자료가 {cov['missing_snapshots']:,}개 있습니다. "
+            "월 잠정손익 화면에서 자동 계산을 시도했지만 완료되지 않은 자료입니다. 위 오류 내용을 확인해 주세요."
         )
     if excluded:
         st_obj.warning(
@@ -44,8 +61,8 @@ def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
 
     if view.empty:
         st_obj.info(
-            f"{month}에 저장된 잠정손익 자료가 아직 없습니다. "
-            "왼쪽 메뉴의 '자료별 잠정손익'에서 해당 월 판매자료를 한 번 열면 월간 합계가 생성됩니다."
+            f"{month}의 잠정손익을 생성하지 못했습니다. "
+            "판매자료는 존재하지만 자동 계산 과정에서 오류가 발생했는지 위 안내를 확인해 주세요."
         )
         return
 
@@ -113,10 +130,6 @@ def render_grouped_sidebar(st_obj, options, default_page=None):
 
 def patch_source(source: str) -> str:
     """Route P&L pages, monthly closing, navigation, BOM UI, and snapshot binding."""
-    # v0.9.29 shipped the binding module but did not execute it. Activate it
-    # here after pnl_views_v0912 and provisional_pnl_ui_v0913 have already been
-    # initialized by app.py, so the final displayed P&L is saved against the
-    # exact sales import selected in 자료별 잠정손익.
     snapshot_fix = importlib.import_module("pnl_snapshot_fix_v0929")
     core_module = importlib.import_module("core")
     views_module = importlib.import_module("pnl_views_v0912")
