@@ -1,6 +1,6 @@
 {
-  "version": "0.9.34",
-  "message": "BOM 삭제 화면을 목록형 선택 방식으로 개선: 삭제할 BOM을 드롭다운에서 고르는 대신 등록된 완제품 BOM을 표로 쭉 표시하고 왼쪽 선택 체크박스로 고르게 변경. 검색 기능과 보관/판매중지 완제품 우선 정렬 유지, 선택한 BOM의 현재 구성 확인 후 전체 BOM 삭제. 실수 방지를 위해 한 번에 1개만 삭제 가능. 과거 생산수량·생산원가·재고 차감 이력 및 bom_change_log 보호 유지. v0.9.33 및 기존 기능 유지",
+  "version": "0.9.35",
+  "message": "생산·BOM의 현재 BOM 목록 개선: 소요수량을 50.00/2.00 형식이 아닌 50/2 정수로 표시하고, 현재 BOM 표 바로 위에 검색창을 추가하여 완제품명 또는 구성품명으로 즉시 필터링. DB의 실제 BOM 수량 값은 변경하지 않고 화면 표시만 정수화. BOM 삭제 목록형 선택 기능(v0.9.34), 월 잠정손익 자동생성 및 기존 기능 유지",
   "files": [
     "app.py",
     "VERSION.txt",
@@ -36,6 +36,7 @@
     "bom_candidate_filter_v0927.py",
     "bom_delete_v0928.py",
     "bom_delete_cleanup_v0933.py",
+    "bom_current_list_ui_v0935.py",
     "pnl_snapshot_fix_v0929.py",
     "jd_systems_logo.b64"
   ]
