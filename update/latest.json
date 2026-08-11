@@ -1,6 +1,6 @@
 {
-  "version": "0.9.28",
-  "message": "생산·BOM에 BOM 삭제 탭 추가: 완제품별 현재 BOM을 조회하고 구성품 1개만 삭제하거나 해당 완제품의 BOM 전체를 삭제할 수 있음. 삭제 전 확인 체크 필수. 삭제되는 것은 앞으로 생산에 사용할 bom_items 현재 구성표뿐이며 과거 production_orders·inventory_txns 생산/재고 이력은 유지. 삭제 직전 구성정보를 bom_change_log에 기록해 변경 추적 가능. v0.9.27 완제품/구성품 후보 필터와 CP- 표시 제거, v0.9.26 품목 안전삭제/복원 기능 유지",
+  "version": "0.9.29",
+  "message": "잠정손익 월간 합계 스냅샷 저장 오류 수정: 자료별 잠정손익을 열었는데도 월 잠정손익이 비어 보이던 문제를 해결. 기존에는 최종 화면의 옵션ID별 판매수량과 원본 판매통계가 완전히 같아야 판매자료 import_id를 역추적할 수 있었으나, 반품 할인판매 행 통합/숨김·0판매 행 제외 등 최근 손익 보정 후에는 표 구성이 달라져 스냅샷 저장이 실패할 수 있었음. 이제 core.estimated_pnl 호출 시 선택한 sales_import_id를 직접 기억하고, 최종 표시 손익표를 해당 import_id에 바로 저장. 기존 signature 매칭은 fallback으로 유지. v0.9.28 BOM 삭제, v0.9.27 BOM 후보 필터, v0.9.26 품목 안전삭제/복원 기능 유지",
   "files": [
     "app.py",
     "VERSION.txt",
@@ -34,6 +34,7 @@
     "sidebar_lock_v0921.py",
     "bom_candidate_filter_v0927.py",
     "bom_delete_v0928.py",
+    "pnl_snapshot_fix_v0929.py",
     "jd_systems_logo.b64"
   ]
 }
