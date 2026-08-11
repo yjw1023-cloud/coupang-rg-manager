@@ -1,10 +1,10 @@
 """v0.9.15 safe monthly-default P&L routing.
 
-v0.9.16 compatibility:
+v0.9.17 compatibility:
 - keep v0.9.15's safe provisional routing
 - lazily load monthly_closing_v0916
-- route product confirmed P&L and whole-business monthly closing without
-  requiring a bootstrap app.py replacement
+- route product confirmed P&L and whole-business monthly closing
+- apply v0.9.17 grouped sidebar navigation after all page labels are finalized
 """
 from __future__ import annotations
 
@@ -101,8 +101,13 @@ def render_monthly_closing_page(st_obj, pd_obj, core, db_path=None):
     return m.render_monthly_closing_page(st_obj, pd_obj, core, db_path)
 
 
+def render_grouped_sidebar(st_obj, options, default_page=None):
+    m = importlib.import_module("sidebar_groups_v0917")
+    return m.render_sidebar(st_obj, options, default_page)
+
+
 def patch_source(source: str) -> str:
-    """Route monthly/source provisional P&L plus v0.9.16 closing safely."""
+    """Route P&L pages, monthly closing, then grouped navigation safely."""
     legacy_branch = 'elif page == "📈  잠정손익":'
     if legacy_branch not in source:
         raise RuntimeError("v0.9.15 기존 잠정손익 분기를 찾지 못했습니다.")
@@ -131,4 +136,7 @@ def patch_source(source: str) -> str:
         'pnl_month_default_v0915.render_monthly_closing_page(st, pd, core)',
         1,
     )
+
+    sidebar = importlib.import_module("sidebar_groups_v0917")
+    source = sidebar.patch_source(source)
     return source
