@@ -1,6 +1,6 @@
 {
-  "version": "0.9.27",
-  "message": "생산·BOM 후보 범위 수정: 완제품 선택/검색은 사용중인 완제품(item_type=finished)만 추천하고 자체창고 원재료·반품 관련 품목·삭제품목은 제외. 구성품 선택/검색은 사용중인 자체창고 관리품목(item_type=raw)만 추천해 쿠팡RG 완제품과 반품창고 상품이 섞이지 않도록 제한. 선택창의 legacy CP- 접두사는 화면에서만 제거해 쿠팡 옵션ID 숫자로 표시하고 DB 연결키는 변경하지 않음. core.add_bom에도 완제품→자체창고 구성품 조합 검증을 추가해 오래된 세션값으로 잘못된 BOM이 저장되는 것을 차단. v0.9.26 안전삭제/복원, v0.9.25 입력칸 고대비, 사이드바/월 결산 기능 유지",
+  "version": "0.9.28",
+  "message": "생산·BOM에 BOM 삭제 탭 추가: 완제품별 현재 BOM을 조회하고 구성품 1개만 삭제하거나 해당 완제품의 BOM 전체를 삭제할 수 있음. 삭제 전 확인 체크 필수. 삭제되는 것은 앞으로 생산에 사용할 bom_items 현재 구성표뿐이며 과거 production_orders·inventory_txns 생산/재고 이력은 유지. 삭제 직전 구성정보를 bom_change_log에 기록해 변경 추적 가능. v0.9.27 완제품/구성품 후보 필터와 CP- 표시 제거, v0.9.26 품목 안전삭제/복원 기능 유지",
   "files": [
     "app.py",
     "VERSION.txt",
@@ -33,6 +33,7 @@
     "sidebar_reopen_v0920.py",
     "sidebar_lock_v0921.py",
     "bom_candidate_filter_v0927.py",
+    "bom_delete_v0928.py",
     "jd_systems_logo.b64"
   ]
 }
