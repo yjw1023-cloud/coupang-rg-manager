@@ -1,6 +1,6 @@
 {
-  "version": "0.9.21",
-  "message": "사이드바 영구 펼침 고정: ERP 재시작 시 사이드바를 항상 expanded 상태로 시작하도록 page config를 강제하고, 사이드바 접기 버튼 자체를 숨겨 다시 메뉴가 사라지는 상황을 차단. 기존 v0.9.19 브랜딩/그룹형 메뉴와 v0.9.16 월 결산 기능 유지",
+  "version": "0.9.22",
+  "message": "사이드바 강제 표시 보강: 브라우저가 접힘 상태를 기억해도 Streamlit stSidebar DOM 자체의 display/visibility/transform/width를 강제로 펼친 상태로 고정. 접기 버튼은 계속 숨겨 메뉴 접근이 끊기지 않도록 처리. v0.9.21 영구 펼침 설정, v0.9.19 브랜딩/그룹형 메뉴, v0.9.16 월 결산 기능 포함",
   "files": [
     "app.py",
     "VERSION.txt",
