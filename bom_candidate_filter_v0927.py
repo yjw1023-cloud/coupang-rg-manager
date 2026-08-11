@@ -36,6 +36,31 @@ def _load_products(core_module, db_path=None):
                ORDER BY name,item_code"""
         ).fetchall()
 
+        # Return-discount child options are transient resale/return records, not
+        # managed finished products. Exclude them from BOM candidate selectors.
+        discount_child_ids = set()
+        has_sales = con.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='return_discount_sales'"
+        ).fetchone()
+        if has_sales:
+            for r in con.execute(
+                "SELECT DISTINCT child_product_id FROM return_discount_sales WHERE child_product_id IS NOT NULL"
+            ).fetchall():
+                discount_child_ids.add(int(r["child_product_id"]))
+
+        has_aliases = con.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='return_discount_aliases'"
+        ).fetchone()
+        if has_aliases:
+            for r in con.execute(
+                """SELECT p.id
+                   FROM products p
+                   JOIN return_discount_aliases a
+                     ON CAST(p.option_id AS TEXT)=CAST(a.discount_option_id AS TEXT)
+                   WHERE p.id<>a.parent_product_id"""
+            ).fetchall():
+                discount_child_ids.add(int(r["id"]))
+
     by_id = {}
     by_code = {}
     by_option = {}
@@ -43,6 +68,7 @@ def _load_products(core_module, db_path=None):
     for row in rows:
         d = dict(row)
         pid = int(d["id"])
+        d["_return_discount_child"] = pid in discount_child_ids
         by_id[pid] = d
 
         code = str(d.get("item_code") or "").strip()
@@ -158,6 +184,8 @@ def _candidate_pid(value: Any, maps) -> int | None:
 
 def _allowed(row, kind: str) -> bool:
     if row is None or int(row.get("active") or 0) != 1:
+        return False
+    if bool(row.get("_return_discount_child")):
         return False
     item_type = str(row.get("item_type") or "").strip().lower()
     if kind == "finished":
