@@ -82,6 +82,11 @@ item_ui_v086 = _original_import_module("item_ui_v086")
 # v0.9.44 dedicated item deletion / manual return-option cleanup page.
 item_delete_ui_v0944 = _original_import_module("item_delete_ui_v0944")
 
+# v0.9.45: remove obsolete Item Master delete footer and allow sales-only
+# negative stock on a user-confirmed return child to be cleaned automatically.
+item_delete_fix_v0945 = _original_import_module("item_delete_fix_v0945")
+item_delete_fix_v0945.apply(item_ui_v086, item_delete_ui_v0944, core)
+
 # v0.8.7 sales-stat upload period. v0.9.7 fixes duplicate replacement widget rendering.
 sales_period_v087 = _original_import_module("sales_period_v087")
 sales_period_v087.apply(core)
@@ -210,6 +215,7 @@ source = source.replace(
 globals()["LEGACY_REPAIR_RESULT"] = LEGACY_REPAIR_RESULT
 globals()["item_ui_v086"] = item_ui_v086
 globals()["item_delete_ui_v0944"] = item_delete_ui_v0944
+globals()["item_delete_fix_v0945"] = item_delete_fix_v0945
 globals()["purchase_history_v092"] = purchase_history_v092
 globals()["purchase_history_v094"] = purchase_history_v094
 globals()["return_management_v093"] = return_management_v093
