@@ -1,223 +1,95 @@
 # ERP SESSION HANDOFF — latest working context
 
-이 문서는 새 ChatGPT 세션에서 `yjw1023-cloud/coupang-rg-manager` 작업을 즉시 이어가기 위한 최신 기준 문서다.
+이 문서는 `yjw1023-cloud/coupang-rg-manager`의 최신 작업 기준이다.
 
-## 새 세션 시작 시 확인
-1. `PROJECT_CONTEXT.md`
-2. `SESSION_HANDOFF.md`
-3. `VERSION.txt`
-4. `update/latest.json`
-5. 최신 patch module
-
-현재 작업 기준 버전: **v0.9.5**
-현재 작업 브랜치: **`feature/v0.9.3-return-management`**
-현재 main은 이 작업 브랜치보다 이전 버전일 수 있으므로 배포 전 반드시 비교한다.
-
----
+## 현재 기준
+- main 배포 버전: **v0.9.15**
+- 현재 개발 버전: **v0.9.16**
+- 현재 개발 브랜치: **`feature/v0.9.16-monthly-closing`**
+- v0.9.16은 아직 main 배포 전 단계다.
+- 새 세션은 `PROJECT_CONTEXT.md` → `SESSION_HANDOFF.md` → `VERSION.txt` → `update/latest.json` → 최신 patch module 순서로 확인한다.
 
 ## 프로젝트 기본 구조
-- Windows 로컬 ERP
-- Streamlit UI
-- SQLite DB: `data/rocketgrowth.db`
-- 실행: `run.bat`
-- 자동 업데이트: GitHub `yjw1023-cloud/coupang-rg-manager`
-- 업데이트 후 ERP와 검은 명령창을 완전히 종료 후 재실행.
-- 사용자 데이터 DB는 업데이트로 덮어쓰지 않는다.
+- Windows 로컬 ERP / Streamlit / SQLite `data/rocketgrowth.db`
+- 실행 `run.bat`
+- 자동 업데이트 GitHub `yjw1023-cloud/coupang-rg-manager`
+- 업데이트에서 사용자 DB/data 폴더를 덮어쓰지 않는다.
+- 쿠팡 연결키는 가능한 경우 옵션ID 우선.
+- 마이너스 재고 허용: 실제 생산/판매 기록을 재고부족 때문에 막지 않는다.
 
-## 공통 데이터 원칙
-- 쿠팡 자료 연결은 가능한 경우 **옵션ID 우선**.
-- 내부 `CP-<옵션ID>` 코드는 사용자 화면에서 `CP-`를 숨긴다.
-- 개발자용 내부 ID는 화면 노출 최소화.
-- 재고 부족이 실제 생산/판매 기록을 막지 않도록 마이너스 재고 허용.
+## 현재 주요 기능
+- 기존 Claude ERP 이관/복구: `legacy_repair_v082.py`, `erp_import_guard_v082.py`
+- 재고 창고: 자체창고 / 쿠팡RG / 반품창고 / 불량·폐기
+- 생산/BOM: `production_v085.py`, `inventory_flow_v088.py`
+- 판매통계 기간/재고차감: `sales_period_v087.py`, `inventory_flow_v088.py`
+- 매입 Excel W열 원가 / AB열 수량 / 자체창고 고정: `purchase_v08.py`
+- 매입차수: `purchase_batch_v089.py`
+- 품목관리: `item_ui_v086.py`
+- 매입 매칭: `purchase_match_ui_v090.py`, `purchase_match_ui_v091.py`
+- 매입이력: `purchase_history_v092.py`, `purchase_history_v094.py`
+- 반품관리: `return_management_v093.py`
+- 생산자료 일괄생산: `production_batch_v095.py`
+- 검색 UI: `search_ui_v096.py`
+- 반품 할인판매: `return_discount_v099.py`
+- 이동평균원가/수수료 fallback: `pnl_cost_commission_v0911.py`
+- 손익 메뉴 분리/차이분석: `pnl_views_v0912.py`
+- 잠정손익 UI: `provisional_pnl_ui_v0913.py`
+- 월간 잠정손익: `pnl_month_default_v0914.py`, `pnl_month_default_v0915.py`
 
----
+## v0.9.15 기준 손익 구조
+- `📈 잠정손익`: 월간 잠정 관리손익.
+- `📄 자료별 잠정손익`: 판매통계 파일별 잠정손익.
+- `✅ 확정손익`: 쿠팡 월 정산 + ERP 상품원가를 섞어 상품 수익성을 보는 관리손익.
+- `🔍 손익차이분석`: 잠정↔확정 차이.
+- v0.9.14의 source 이동 방식에서 SyntaxError가 발생하여 v0.9.15에서 안전한 라우팅으로 교체했다.
 
-# 1. 기존 Claude ERP 이관/복구
-- 원본 기준: 품목 199, 매입 528, BOM 41, 생산 97, 재고 233, 판매 737, 광고 13.
-- 과거 이관 버그의 숫자형 상품명/잘못된 alias/mapping/잘못 합쳐진 JDS 품목/self-BOM을 `legacy_repair_v082.py` 계열로 복구.
-- 원본 Claude ERP DB 자체가 손상된 것이 아니라 이전 이관 코드가 잘못됐던 것.
-- 반복 실행에 안전해야 한다.
+## v0.9.16 월 결산 — 현재 개발 내용
+사용자 요구에 따라 손익 성격을 명확히 분리한다.
 
-# 2. 재고/BOM/생산 기본 원칙
-창고:
-- 자체창고
-- 쿠팡RG
-- 반품창고
-- 불량·폐기
+### 메뉴 변경
+- `✅ 확정손익` → **`✅ 상품 확정손익`**
+- 신규 **`📒 월 결산`** 추가
+- `📈 잠정손익`, `📄 자료별 잠정손익`, `🔍 손익차이분석`은 유지
 
-생산 기본 흐름:
-- `자체창고 BOM 구성품 차감 -> 완제품 쿠팡RG 즉시 입고`
-- BOM 구성품 필요수량 = `qty_per × 생산수량`
-- 완제품 생산원가 = BOM 구성품 원가 합계
-- self-BOM은 생산 차단
-- 구성품 재고가 부족해도 생산은 기록하고 부족분은 음수 재고
-- 관련 코드: `production_v085.py`, `inventory_flow_v088.py`
+### 상품 확정손익
+- 기존 확정손익 계산을 유지하되 이름과 설명을 상품별 확정 관리손익으로 명확히 한다.
+- 실제 쿠팡 실현매출/수수료/RG/반품/광고비 + ERP 상품원가 구조다.
+- 사업 전체 결산과 혼동하지 않는다.
 
-# 3. 판매통계
-- `재고현황 판매통계`는 판매수량/취소수량 및 재고흐름용.
-- 신규 업로드 시 옵션별 `net_qty`만큼 쿠팡RG 재고 차감.
-- 동일 파일 중복 차감 금지.
-- 동일 기간 다른 파일 교체 시 기존 기간 판매차감 제거 후 새 파일 반영.
-- 기간 기본값은 최근 완료된 월~일, 시작/종료일 자유 수정.
-- 관련 코드: `sales_period_v087.py`, `inventory_flow_v088.py`.
+### 월 결산
+관련 모듈: `monthly_closing_v0916.py`
+문서: `MONTHLY_CLOSING.md`
 
-# 4. 매입 Excel
-업무 흐름:
-- `매입 -> 자체창고 -> 생산/BOM -> 쿠팡RG`
+핵심 원칙:
+- 한 달 매입액 전체를 비용으로 처리하지 않는다.
+- `재고식 매출원가 = 월초재고 + 당월매입 - 월말재고`
+- `결산이익 = 실현매출 - 재고식 매출원가 - 수수료 - RG비용 - 반품비 - 광고비 - 기타비용`
+- 월초/월말 재고는 `inventory_txns`를 시간순으로 재생해 수량/이동평균원가로 평가한다.
+- 불량·폐기 창고는 재고자산 제외.
+- 마이너스 재고는 자산금액 0으로 평가하고 경고.
+- 당월 매입은 `purchase_lines`의 선택월 `purchase_date` 기준.
+- 기타비용을 월 결산 화면에서 직접 추가/삭제 가능.
+- 새 테이블: `monthly_closing_expenses`.
+- 상품 확정손익의 매출원가와 재고식 매출원가 차이를 같이 표시해 데이터 누락을 찾는다.
+- 실제 은행 입출금이 아닌 `발생기준 자금수지`를 참고치로 별도 표시한다.
 
-규칙:
-- 매입상품은 자체창고 상품하고만 매칭.
-- W열 = 1개당 매입원가 KRW.
-- AB열 = 매입/입고수량.
-- 매입금액 = W×AB.
-- 환율 재계산하지 않음.
-- 입고창고 자체창고 고정.
-- 관련: `PURCHASE_IMPORT.md`, `purchase_v08.py`.
+### v0.9.16 연결 방식
+- 기존 `app.py` 부트스트랩은 v0.9.15 그대로 유지한다.
+- 이미 로드되는 `pnl_month_default_v0915.py`가 `monthly_closing_v0916.py`를 지연 import하고 메뉴/화면 라우팅을 추가한다.
+- 이렇게 하면 v0.9.15에서 검증된 안전한 source-routing 구조를 유지하면서 새 결산 기능만 추가할 수 있다.
 
-# 5. 매입 차수
-- 기존 ERP 차수 9~15차 복구.
-- 신규 Excel 업로드 시 `매입 차수` 입력.
-- 숫자 `16` 입력 시 `16차` 정규화.
-- `purchase_lines.purchase_batch`에 저장.
-- 관련: `PURCHASE_BATCH.md`, `purchase_batch_v089.py`.
+### v0.9.16 검증
+임시 SQLite 테스트:
+- 월초재고 100개×1,000원
+- 당월매입 50개×1,200원
+- 80개 판매
+- 월말 70개×이동평균 1,066.67원
+- 재고식 매출원가 약 85,333원 계산 확인.
+- `monthly_closing_v0916.py`, 수정 `pnl_month_default_v0915.py` Python syntax compile 확인.
 
-# 6. 품목관리
-메뉴: `📋 품목관리`
-- 품목목록 / 신규등록 / 수정 / 기준원가 / 사용중지.
-- 자체창고 품목: 품목코드 + 상품명 + 원가.
-- 쿠팡RG 상품: 상품명 + 옵션ID + 원가.
-- 품목코드/옵션ID는 연결키라 일반 수정 금지.
-- 관련: `item_ui_v086.py`.
-
-# 7. 매입 매칭 UI v0.9.1
-매입 검토표:
-- No. / 매입상품 / 품목코드 / 상품명 / 현재재고 / 매입수량 / 매입원가 / 상태 / 매칭 수정.
-- 품목코드·상품명·현재재고 각각 별도 칸.
-- 맨 오른쪽에서 잘못된 매칭 수정 가능.
-- 관련: `purchase_match_ui_v090.py`, `purchase_match_ui_v091.py`.
-
-# 8. 매입이력 v0.9.4
-메뉴: `🗂️ 매입이력`
-
-사용자 요구:
-- 드롭다운으로 상품을 고르지 않는다.
-- 매입이력 있는 상품이 화면에 쭉 나열된다.
-- 상품 행을 클릭하면 아래에 과거 매입이력이 표시된다.
-
-상품 목록:
-- 품목코드 / 상품명 / 최근매입일 / 최근매입가 / 누적매입수량 / 누적매입액 / 매입횟수.
-
-상세 핵심표:
-- 매입일 / 차수 / 매입수량 / 개당 매입가 / 매입금액.
-
-검색창은 목록 필터용.
-관련: `purchase_history_v092.py`, `purchase_history_v094.py`, `PURCHASE_HISTORY.md`.
-
-# 9. 반품관리 v0.9.3
-메뉴: `↩️ 반품관리`
-- 전체 / 이번 달 / 최근30일 / 최근90일.
-- 반품창고 현재수량 / 반품 보유상품 / 누적 반품수 / 반품률 / 반품비용.
-- 상품별 판매수량 / 반품 또는 취소·반품수량 / 반품률 / 현재 반품창고 / 반품비용.
-- 반품회수비 정산 행 개수를 반품건수로 사용하지 않는다.
-- 판매통계에 필요한 반품수량 신호가 없으면 임의 추정하지 않는다.
-- 관련: `return_management_v093.py`, `RETURN_MANAGEMENT.md`.
-
----
-
-# 10. 생산자료 Excel 일괄생산 — 최신 v0.9.5
-
-## 사용자 입력 양식
-앞으로 사용자가 쿠팡 로켓그로스 입고요청 Excel을 생산자료로 사용한다.
-기준 시트: `로켓그로스 입고`
-
-사용 열:
-- B열 등록상품명: 화면 확인용
-- C열 옵션명: 화면 확인용
-- **G열 옵션 ID: ERP 완제품 연결키**
-- **V열 입고 수량 입력: ERP 생산수량**
-
-V열이 빈 상품은 생산대상에서 제외.
-V열은 1~5,000 정수만 허용.
-상품명이 아니라 옵션ID를 우선 매칭한다.
-
-## 가장 중요한 전 품목 검사 규칙
-**Excel 업로드만으로는 생산하지 않는다.**
-먼저 파일 전체 생산대상을 검사한다.
-
-검사항목:
-- 생산수량 유효성
-- 옵션ID 존재
-- ERP 상품 등록 여부
-- 중복 옵션ID 여부
-- BOM 존재 여부
-- self-BOM 오류 여부
-
-**생산대상 중 BOM이 없는 상품이 하나라도 있으면 전체 생산을 중단한다.**
-- BOM 정상인 다른 상품도 생산하지 않는다.
-- 재고 차감 0건.
-- 완제품 입고 0건.
-- production_orders 생성 0건.
-- BOM 없는 상품 목록을 사용자에게 보여준다.
-- `BOM을 등록한 뒤 생산자료를 다시 업로드`하라고 안내한다.
-
-옵션ID 미등록/수량 오류/중복 옵션ID 등 다른 차단 오류가 하나라도 있어도 전체 생산 중단.
-
-## 실제 실행
-모든 행이 정상일 때만 확인 체크 후 `전체 생산 실행` 버튼 활성화.
-실행 시 **전체 파일을 하나의 SQLite 트랜잭션**으로 처리한다.
-중간 오류가 발생하면 앞에서 처리한 상품까지 전부 롤백한다.
-
-상품별 실제 처리:
-1. BOM 구성품을 자체창고에서 `생산소모` 차감.
-2. 완제품을 쿠팡RG에 `생산RG입고`.
-3. BOM 원가로 완제품 unit_cost 갱신.
-4. `production_orders` 기록.
-5. 배치 감사 테이블 기록.
-
-현재 마이너스 재고 규칙 유지: 구성품 재고가 부족해도 생산 기록 가능.
-
-## 중복 생산 방지
-성공적으로 생산된 파일의 SHA-256 해시를 UNIQUE 저장.
-동일 파일 두 번째 생산 차단.
-
-새 감사 테이블:
-- `production_batch_imports`
-- `production_batch_lines`
-
-새 메뉴:
-- `🏭 생산자료`
-
-관련 코드/문서:
-- `production_batch_v095.py`
-- `PRODUCTION_BATCH.md`
-
-## 2026-08-10 첨부 양식 확인
-첨부파일 `A00577001_20260805.xlsx`를 **양식 검증에만 사용**했다.
-- V열 실제 입력 생산대상 8개 행 인식.
-- 생산수량 합계 190개 인식.
-- G열 옵션ID 정상 인식.
-- 사용자의 지시에 따라 이 파일로 실제 생산은 하지 않았다.
-- 실제 ERP DB 재고/생산이력에는 반영하지 않았다.
-
-테스트용 임시 DB에서 확인:
-- 2개 대상 중 1개 BOM 누락 → inventory_txns 0건, production_orders 0건.
-- 누락 BOM 추가 후 전체 정상 → 전 상품 일괄생산 정상.
-- 같은 파일 해시 재실행 → 중복생산 차단.
-
----
-
-# 11. 업데이트/배포
-- `VERSION.txt`와 `update/latest.json` 동기화.
-- 새 patch module을 manifest files에 포함.
-- 사용자 DB는 업데이트로 덮어쓰지 않음.
-- 현재 작업 브랜치 버전: **0.9.5**.
-- `main` 배포 여부는 별도로 확인 후 진행.
-
-# 12. 다음 세션 작업 방법
-사용자가 “ERP 계속 개발하자”라고 하면:
-1. GitHub repo 확인.
-2. `PROJECT_CONTEXT.md`, `SESSION_HANDOFF.md` 읽기.
-3. `VERSION.txt`, `update/latest.json` 확인.
-4. 최신 patch module 확인.
-5. main과 작업브랜치 차이 확인.
-6. 중요한 업무 규칙은 문서에 반영.
+## 배포 규칙
+1. feature branch에서 코드/문서/manifest 검증.
+2. `VERSION.txt`와 `update/latest.json` 버전 일치.
+3. 새 모듈을 manifest files에 포함.
+4. main 반영은 별도 배포 단계에서 수행.
+5. 사용자 DB는 절대 배포파일로 덮어쓰지 않는다.
