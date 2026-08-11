@@ -117,19 +117,4 @@ def patch_source(source: str) -> str:
         return source
 
     source = _force_page_config(source)
-
-    marker = "_rg_sidebar_locked_v0921 = True\n"
-    try:
-        tree = ast.parse(source)
-        insert_line = 0
-        for node in getattr(tree, "body", []):
-            if isinstance(node, (ast.Import, ast.ImportFrom)):
-                insert_line = max(insert_line, int(getattr(node, "end_lineno", node.lineno)))
-            else:
-                break
-        lines = source.splitlines(keepends=True)
-        lines.insert(insert_line, marker)
-        source = "".join(lines)
-    except Exception:
-        source += "\n" + marker
-    return source
+    return "# _rg_sidebar_locked_v0921\n" + source
