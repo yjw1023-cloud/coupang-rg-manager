@@ -1,20 +1,8 @@
-"""RG Manager v0.9.52 manual provisional P&L product overrides.
+"""RG Manager v0.9.54 reliable manual provisional P&L product overrides.
 
-User-entered monthly overrides for launch/promotion periods where automatic estimates
-can be materially wrong.  Overrides are keyed by selected month + Coupang option ID.
-
-Editable fields:
-- expected realized unit price
-- inbound/outbound fee total
-- delivery fee total
-
-Blank override cells keep the automatic estimate.  Fee inputs are entered as
-positive costs in the editor and stored as positive values; P&L applies them as
-negative expenses.  Reset removes all overrides for that product/month.
-
-When realized unit price is overridden, expected revenue is recalculated and the
-existing effective commission rate is preserved so commission scales with revenue.
-All downstream profit fields are recalculated immediately.
+Monthly overrides are keyed by month + Coupang option ID.  Instead of relying on
+editable dataframe cells, the UI uses ordinary Streamlit inputs for one selected
+product at a time, which is reliable across Streamlit/browser versions.
 """
 from __future__ import annotations
 
@@ -92,8 +80,7 @@ def load(core, month: str, db_path=None) -> dict[str, dict]:
         rows = c.execute(
             """SELECT month,option_id,unit_price_override,inout_cost_override,
                       delivery_cost_override,updated_at
-               FROM provisional_manual_adjustments
-               WHERE month=?""",
+               FROM provisional_manual_adjustments WHERE month=?""",
             (str(month),),
         ).fetchall()
     return {str(r["option_id"]): dict(r) for r in rows}
@@ -134,111 +121,142 @@ def _delete_one(core, month: str, oid: str, db):
         )
 
 
+def _filtered_products(auto_view: pd.DataFrame, q: str):
+    work = auto_view.copy()
+    q = str(q or "").strip().lower()
+    if q:
+        words = [x for x in re.split(r"\s+", q) if x]
+        hay = work.fillna("").astype(str).agg(" ".join, axis=1).str.lower()
+        mask = pd.Series(True, index=work.index)
+        for word in words:
+            mask &= hay.str.contains(word, regex=False, na=False)
+        work = work.loc[mask].copy()
+    result = []
+    for _, r in work.iterrows():
+        oid = _oid(r.get("옵션ID"))
+        if not oid:
+            continue
+        result.append(
+            {
+                "oid": oid,
+                "name": str(r.get("상품명") or ""),
+                "unit": max(0.0, _num(r.get("예상 실현단가"))),
+                "inout": abs(_num(r.get("입출고비"))),
+                "delivery": abs(_num(r.get("배송비"))),
+            }
+        )
+    return result
+
+
 def render_editor(st, core, month: str, auto_view: pd.DataFrame, db_path=None):
     db = db_path or core.DEFAULT_DB
     current = load(core, month, db)
-    count = len(current)
 
-    title = "예상값 수동조정 · 실현단가 / 입출고비 / 배송비"
-    if count:
-        title += f" · {count}개 상품 적용중"
+    if auto_view is None or auto_view.empty:
+        return current
 
-    with st.expander(title, expanded=False):
-        st.caption(
-            "런칭 쿠폰·프로모션 등으로 자동 추정이 맞지 않을 때 사용합니다. "
-            "수동값이 있는 항목만 자동값을 덮어씁니다. 입출고비와 배송비는 비용 총액을 양수로 입력하세요."
+    st.markdown("### 예상값 수동조정")
+    st.caption(
+        "런칭 쿠폰·프로모션 때문에 자동 추정이 크게 빗나갈 때 상품별로 직접 수정합니다. "
+        "체크한 항목만 수동값을 적용하며, 비용은 양수로 입력하세요."
+    )
+
+    q = st.text_input(
+        "조정할 상품 검색",
+        placeholder="상품명 또는 옵션ID 입력",
+        key=f"manual_pnl_adjust_search_{month}",
+    )
+    products = _filtered_products(auto_view, q)
+    if not products:
+        st.info("검색 결과가 없습니다.")
+        return current
+
+    labels = [f"{p['name']} [{p['oid']}]" for p in products]
+    selected_label = st.selectbox(
+        "수정할 상품",
+        labels,
+        key=f"manual_pnl_adjust_product_{month}",
+    )
+    p = products[labels.index(selected_label)]
+    oid = p["oid"]
+    saved = current.get(oid, {})
+
+    saved_unit = _nullable(saved.get("unit_price_override"))
+    saved_inout = _nullable(saved.get("inout_cost_override"))
+    saved_delivery = _nullable(saved.get("delivery_cost_override"))
+
+    st.caption(
+        f"자동값 · 실현단가 {int(round(p['unit'])):,}원 · "
+        f"입출고비 {int(round(p['inout'])):,}원 · 배송비 {int(round(p['delivery'])):,}원"
+    )
+
+    c1, c2, c3 = st.columns(3)
+    use_unit = c1.checkbox(
+        "실현단가 수동적용",
+        value=saved_unit is not None,
+        key=f"manual_use_unit_{month}_{oid}",
+    )
+    unit_value = c1.number_input(
+        "예상 실현단가",
+        min_value=0,
+        value=int(round(saved_unit if saved_unit is not None else p["unit"])),
+        step=100,
+        format="%d",
+        disabled=not use_unit,
+        key=f"manual_unit_{month}_{oid}",
+    )
+
+    use_inout = c2.checkbox(
+        "입출고비 수동적용",
+        value=saved_inout is not None,
+        key=f"manual_use_inout_{month}_{oid}",
+    )
+    inout_value = c2.number_input(
+        "입출고비 총액",
+        min_value=0,
+        value=int(round(saved_inout if saved_inout is not None else p["inout"])),
+        step=100,
+        format="%d",
+        disabled=not use_inout,
+        key=f"manual_inout_{month}_{oid}",
+    )
+
+    use_delivery = c3.checkbox(
+        "배송비 수동적용",
+        value=saved_delivery is not None,
+        key=f"manual_use_delivery_{month}_{oid}",
+    )
+    delivery_value = c3.number_input(
+        "배송비 총액",
+        min_value=0,
+        value=int(round(saved_delivery if saved_delivery is not None else p["delivery"])),
+        step=100,
+        format="%d",
+        disabled=not use_delivery,
+        key=f"manual_delivery_{month}_{oid}",
+    )
+
+    b1, b2 = st.columns([1, 1])
+    if b1.button("이 상품 수동값 저장", type="primary", key=f"manual_save_{month}_{oid}"):
+        _save_one(
+            core,
+            month,
+            oid,
+            float(unit_value) if use_unit else None,
+            float(inout_value) if use_inout else None,
+            float(delivery_value) if use_delivery else None,
+            db,
         )
+        st.success(f"{p['name']}의 수동값을 저장했습니다.")
+        st.rerun()
 
-        if auto_view is None or auto_view.empty:
-            st.info("조정할 잠정손익 상품이 없습니다.")
-            return current
+    if oid in current and b2.button("이 상품 자동값으로 복원", key=f"manual_reset_{month}_{oid}"):
+        _delete_one(core, month, oid, db)
+        st.success(f"{p['name']}의 수동값을 삭제하고 자동값으로 복원했습니다.")
+        st.rerun()
 
-        q = st.text_input(
-            "조정할 상품 검색",
-            placeholder="상품명 또는 옵션ID 입력",
-            key=f"manual_pnl_adjust_search_{month}",
-        )
-        work = auto_view.copy()
-        if q.strip():
-            words = [x for x in re.split(r"\s+", q.strip().lower()) if x]
-            hay = work.fillna("").astype(str).agg(" ".join, axis=1).str.lower()
-            mask = pd.Series(True, index=work.index)
-            for word in words:
-                mask &= hay.str.contains(word, regex=False, na=False)
-            work = work.loc[mask].copy()
-
-        rows = []
-        for _, r in work.iterrows():
-            oid = _oid(r.get("옵션ID"))
-            if not oid:
-                continue
-            saved = current.get(oid, {})
-            rows.append(
-                {
-                    "옵션ID": oid,
-                    "상품명": str(r.get("상품명") or ""),
-                    "자동 실현단가": int(round(_num(r.get("예상 실현단가")))),
-                    "수동 실현단가": saved.get("unit_price_override"),
-                    "자동 입출고비": int(round(abs(_num(r.get("입출고비"))))),
-                    "수동 입출고비": saved.get("inout_cost_override"),
-                    "자동 배송비": int(round(abs(_num(r.get("배송비"))))),
-                    "수동 배송비": saved.get("delivery_cost_override"),
-                    "자동값 복원": False,
-                }
-            )
-
-        if not rows:
-            st.info("검색 결과가 없습니다.")
-            return current
-
-        edit_df = pd.DataFrame(rows)
-        column_config = {
-            "옵션ID": st.column_config.TextColumn("옵션ID", disabled=True),
-            "상품명": st.column_config.TextColumn("상품명", disabled=True, width="large"),
-            "자동 실현단가": st.column_config.NumberColumn("자동 실현단가", disabled=True, format="%d"),
-            "수동 실현단가": st.column_config.NumberColumn("수동 실현단가", min_value=0, step=100, format="%d"),
-            "자동 입출고비": st.column_config.NumberColumn("자동 입출고비", disabled=True, format="%d"),
-            "수동 입출고비": st.column_config.NumberColumn("수동 입출고비", min_value=0, step=100, format="%d"),
-            "자동 배송비": st.column_config.NumberColumn("자동 배송비", disabled=True, format="%d"),
-            "수동 배송비": st.column_config.NumberColumn("수동 배송비", min_value=0, step=100, format="%d"),
-            "자동값 복원": st.column_config.CheckboxColumn("자동값 복원"),
-        }
-        edited = st.data_editor(
-            edit_df,
-            use_container_width=True,
-            hide_index=True,
-            column_config=column_config,
-            disabled=["옵션ID", "상품명", "자동 실현단가", "자동 입출고비", "자동 배송비"],
-            key=f"manual_pnl_adjust_editor_{month}",
-        )
-
-        if st.button("수동조정 저장", type="primary", key=f"manual_pnl_adjust_save_{month}"):
-            changed = 0
-            reset = 0
-            for _, r in edited.iterrows():
-                oid = _oid(r.get("옵션ID"))
-                if not oid:
-                    continue
-                if bool(r.get("자동값 복원")):
-                    _delete_one(core, month, oid, db)
-                    reset += 1
-                    continue
-                unit_price = _nullable(r.get("수동 실현단가"))
-                inout_cost = _nullable(r.get("수동 입출고비"))
-                delivery_cost = _nullable(r.get("수동 배송비"))
-                if unit_price is not None and unit_price < 0:
-                    unit_price = 0.0
-                if inout_cost is not None:
-                    inout_cost = abs(inout_cost)
-                if delivery_cost is not None:
-                    delivery_cost = abs(delivery_cost)
-                _save_one(core, month, oid, unit_price, inout_cost, delivery_cost, db)
-                changed += 1
-            st.success(f"수동조정 {changed:,}개 저장 · 자동값 복원 {reset:,}개")
-            st.rerun()
-
-        if current:
-            st.caption("수동값을 비우고 저장하면 해당 항목은 자동추정값으로 돌아갑니다. 세 항목 모두 비우면 그 상품의 수동조정 기록이 삭제됩니다.")
+    if current:
+        st.caption(f"현재 {len(current):,}개 상품에 수동조정값이 저장되어 있습니다.")
 
     return load(core, month, db)
 
@@ -266,7 +284,6 @@ def apply_to_view(view: pd.DataFrame, adjustments: dict[str, dict]):
                 out.at[idx, "예상 실현단가"] = max(0.0, unit_override)
             if "예상매출" in out.columns:
                 out.at[idx, "예상매출"] = new_revenue
-            # Preserve the automatic effective commission rate when sales value changes.
             if "판매수수료" in out.columns and abs(old_revenue) > 1e-12:
                 out.at[idx, "판매수수료"] = old_commission * (new_revenue / old_revenue)
 
