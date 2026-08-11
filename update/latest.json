@@ -1,6 +1,6 @@
 {
-  "version": "0.9.39",
-  "message": "생산자료 Excel에서 정상 옵션ID 94351150317 글러브 상품에 BOM이 없다고 나오던 원인 보강 수정. v0.9.38은 과거 반품/오염 옵션에 생산·재고 이력이 있으면 안전상 BOM 이전을 거부했는데, 실제 94351200362가 기존 ERP 이관 상품코드로 남아 BOM/이력을 가진 사례를 확인. v0.9.39는 생산 Excel의 정확한 쿠팡 옵션ID를 현재 생산대상의 기준으로 삼고, 그 상품에 BOM이 없을 때 이름과 2개/2P 같은 구성수량이 일치하며 후보가 유일한 경우에만 기존 ERP 매핑된 옛 코드 또는 보관된 반품코드의 현재 bom_items를 정상 옵션ID 상품으로 이동. 과거 판매/생산/재고 이력은 유지하고 옛 코드는 보관 처리. v0.9.38 이하 기존 기능 유지",
+  "version": "0.9.40",
+  "message": "생산자료 Excel의 정확한 쿠팡 옵션ID를 현재 생산대상의 최우선 기준으로 하도록 BOM 교정 로직을 직접 연결. v0.9.38~0.9.39는 반품 alias/기존 ERP 매핑 증거를 선행조건으로 사용해 실제 DB에서 글러브 BOM 이전을 건너뛸 수 있었음. v0.9.40은 정확 옵션ID 상품에 BOM이 없을 때 현재 BOM 보유 완제품 중 상품명과 2개/2P 같은 구성수량이 강하게 일치하는 후보가 정확히 1개이면 현재 bom_items.parent_product_id만 정상 옵션ID 상품으로 이동. 과거 판매/생산/재고 이력은 유지하고 이전 상품행은 보관 처리. production_bom_link_v0940을 app.py에서 production_batch_v095 로드 직후 직접 적용해 생산화면에서 패치 누락 가능성도 제거. 기존 반품코드 추천 제외, 현재 BOM 검색/정수표시 및 기존 기능 유지",
   "files": [
     "app.py",
     "VERSION.txt",
@@ -40,6 +40,7 @@
     "return_product_guard_v0937.py",
     "bom_parent_repair_v0938.py",
     "production_bom_repair_v0939.py",
+    "production_bom_link_v0940.py",
     "pnl_snapshot_fix_v0929.py",
     "jd_systems_logo.b64"
   ]
