@@ -1,6 +1,6 @@
 {
-  "version": "0.9.15",
-  "message": "긴급 수정: v0.9.14 잠정손익 월간 화면의 SyntaxError 제거. 기존 자료별 잠정손익 코드는 그대로 유지하고 새 월간 잠정손익 메뉴를 안전하게 분리. 잠정/확정손익 기본 조회기간은 선택월 1일~말일 유지",
+  "version": "0.9.16",
+  "message": "손익 구조 분리: 기존 확정손익을 상품 확정손익으로 명확화하고 월 전체 매출·재고식 매출원가·쿠팡비용·광고비·기타비용을 정산하는 월 결산 메뉴 추가. 월초재고+당월매입-월말재고 방식의 재고식 매출원가, 기타비용 입력/삭제, 상품원가와 재고식 원가 비교, 발생기준 자금수지 참고 제공",
   "files": [
     "app.py",
     "VERSION.txt",
@@ -27,6 +27,7 @@
     "pnl_views_v0912.py",
     "provisional_pnl_ui_v0913.py",
     "pnl_month_default_v0914.py",
-    "pnl_month_default_v0915.py"
+    "pnl_month_default_v0915.py",
+    "monthly_closing_v0916.py"
   ]
 }
