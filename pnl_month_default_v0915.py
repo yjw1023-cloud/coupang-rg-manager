@@ -136,6 +136,11 @@ def patch_source(source: str) -> str:
         'pnl_month_default_v0915.render_monthly_closing_page(st, pd, core)',
         1,
     )
+    source = source.replace(
+        'st.sidebar.caption("v0.9.15 · safe monthly P&L")',
+        'st.sidebar.caption("v0.9.17 · grouped navigation")',
+        1,
+    )
 
     sidebar = importlib.import_module("sidebar_groups_v0917")
     source = sidebar.patch_source(source)
