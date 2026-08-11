@@ -1,4 +1,4 @@
-"""Dedicated item master UI for RG Manager v0.9.24."""
+"""Dedicated item master UI for RG Manager v0.9.25."""
 from __future__ import annotations
 
 import re
@@ -72,43 +72,77 @@ def _inject_item_form_css(st):
     st.markdown(
         """
 <style>
-/* v0.9.24 item master: make labels and editable controls visually distinct. */
+/* v0.9.25 item master: strong visual separation between labels and editable fields. */
 [data-testid="stMain"] [data-testid="stWidgetLabel"] p {
-    color: #17233b !important;
-    font-weight: 700 !important;
+    color: #10213a !important;
+    font-weight: 800 !important;
 }
-[data-testid="stMain"] div[data-baseweb="input"] {
-    background: #f7faff !important;
-    border: 1.5px solid #9cafc5 !important;
-    border-radius: 8px !important;
-    box-shadow: 0 1px 2px rgba(15, 35, 65, 0.08) !important;
+
+/* Text fields */
+[data-testid="stMain"] [data-testid="stTextInput"] div[data-baseweb="input"],
+[data-testid="stMain"] [data-testid="stTextInput"] div[data-baseweb="base-input"] {
+    background: #dfe8f3 !important;
+    border-color: #7186a1 !important;
 }
-[data-testid="stMain"] div[data-baseweb="input"]:focus-within {
-    border-color: #2f6fdb !important;
-    box-shadow: 0 0 0 2px rgba(47, 111, 219, 0.12) !important;
+[data-testid="stMain"] [data-testid="stTextInput"] div[data-baseweb="input"] {
+    border: 2px solid #7186a1 !important;
+    border-radius: 9px !important;
+    box-shadow: 0 1px 3px rgba(15, 35, 65, 0.14) !important;
 }
-[data-testid="stMain"] div[data-baseweb="input"] input {
-    background: transparent !important;
-    color: #0f172a !important;
+[data-testid="stMain"] [data-testid="stTextInput"] input {
+    background: #dfe8f3 !important;
+    color: #0b172a !important;
 }
-[data-testid="stMain"] div[data-baseweb="select"] > div {
-    background: #f7faff !important;
-    border: 1.5px solid #9cafc5 !important;
-    border-radius: 8px !important;
-    box-shadow: 0 1px 2px rgba(15, 35, 65, 0.08) !important;
+[data-testid="stMain"] [data-testid="stTextInput"] div[data-baseweb="input"]:focus-within {
+    border-color: #2563c5 !important;
+    box-shadow: 0 0 0 3px rgba(37, 99, 197, 0.16) !important;
 }
-[data-testid="stMain"] div[data-baseweb="select"] > div:focus-within {
-    border-color: #2f6fdb !important;
-    box-shadow: 0 0 0 2px rgba(47, 111, 219, 0.12) !important;
+
+/* Number fields */
+[data-testid="stMain"] [data-testid="stNumberInput"] div[data-baseweb="input"],
+[data-testid="stMain"] [data-testid="stNumberInput"] div[data-baseweb="base-input"] {
+    background: #dfe8f3 !important;
+    border-color: #7186a1 !important;
+}
+[data-testid="stMain"] [data-testid="stNumberInput"] div[data-baseweb="input"] {
+    border: 2px solid #7186a1 !important;
+    border-radius: 9px !important;
+    box-shadow: 0 1px 3px rgba(15, 35, 65, 0.14) !important;
+}
+[data-testid="stMain"] [data-testid="stNumberInput"] input {
+    background: #dfe8f3 !important;
+    color: #0b172a !important;
+}
+[data-testid="stMain"] [data-testid="stNumberInput"] div[data-baseweb="input"]:focus-within {
+    border-color: #2563c5 !important;
+    box-shadow: 0 0 0 3px rgba(37, 99, 197, 0.16) !important;
 }
 [data-testid="stMain"] [data-testid="stNumberInput"] button {
-    background: #edf3fa !important;
-    border-color: #9cafc5 !important;
+    background: #cfdceb !important;
+    border-left: 1px solid #7186a1 !important;
+    color: #17345e !important;
 }
+
+/* Select boxes */
+[data-testid="stMain"] [data-testid="stSelectbox"] div[data-baseweb="select"] > div {
+    background: #dfe8f3 !important;
+    border: 2px solid #7186a1 !important;
+    border-radius: 9px !important;
+    box-shadow: 0 1px 3px rgba(15, 35, 65, 0.14) !important;
+    color: #0b172a !important;
+}
+[data-testid="stMain"] [data-testid="stSelectbox"] div[data-baseweb="select"] > div:focus-within {
+    border-color: #2563c5 !important;
+    box-shadow: 0 0 0 3px rgba(37, 99, 197, 0.16) !important;
+}
+[data-testid="stMain"] [data-testid="stSelectbox"] div[data-baseweb="select"] * {
+    color: #0b172a !important;
+}
+
 [data-testid="stMain"] [data-testid="stTextInput"],
 [data-testid="stMain"] [data-testid="stNumberInput"],
 [data-testid="stMain"] [data-testid="stSelectbox"] {
-    margin-bottom: 0.35rem !important;
+    margin-bottom: 0.5rem !important;
 }
 </style>
         """,
@@ -246,7 +280,7 @@ def patch_source(source: str) -> str:
             raise RuntimeError("품목관리 메뉴를 추가할 위치를 찾지 못했습니다.")
         source = source.replace(anchor, menu_label + anchor, 1)
 
-    handler = '''# ------------------------------\n# Item master\n# ------------------------------\nelif page == "📋  품목관리":\n    item_ui_v086.render_item_page(\n        st=st, pd=pd, core=core, page_header=page_header, section=section,\n        kpi=kpi, money=money, fmt_date=fmt_date, latest_updated_text=latest_updated_text,\n    )\n\n\n'''
+    handler = """# ------------------------------\n# Item master\n# ------------------------------\nelif page == "📋  품목관리":\n    item_ui_v086.render_item_page(\n        st=st, pd=pd, core=core, page_header=page_header, section=section,\n        kpi=kpi, money=money, fmt_date=fmt_date, latest_updated_text=latest_updated_text,\n    )\n\n\n"""
     if 'elif page == "📋  품목관리":' not in source:
         anchor = '# ------------------------------\n# Inventory\n# ------------------------------\nelif page == "📦  재고관리":\n'
         if anchor not in source:
