@@ -37,7 +37,6 @@ def _pack_qty(name: Any):
 def _name_core(name: Any) -> str:
     s = str(name or "").lower()
     s = _PACK_RE.sub(" ", s)
-    # remove punctuation and option separators but keep descriptive text
     return re.sub(r"[^0-9a-z가-힣]+", "", s)
 
 
@@ -97,7 +96,6 @@ def apply(return_discount_module, core_module) -> None:
         oid = str(p.get("option_id") or "")
         if oid and oid in aliases:
             return False
-        # Exact active ERP option IDs are authoritative normal managed products.
         return int(p.get("active") or 0) == 1
 
     def resolve(core, db, parsed):
@@ -108,7 +106,6 @@ def apply(return_discount_module, core_module) -> None:
         managed = [p for p in products if p.get("option_id") and _managed_existing(p, aliases)]
         parsed_by_oid = {str(r.get("option_id") or ""): r for r in parsed}
 
-        # Normal selling price in this same file is the strongest reference.
         same_file_price = {}
         for p in managed:
             row = parsed_by_oid.get(str(p.get("option_id") or ""))
@@ -127,7 +124,6 @@ def apply(return_discount_module, core_module) -> None:
 
             existing = by_oid.get(oid)
             if _managed_existing(existing, aliases):
-                # Exact ERP option ID = ordinary sale, regardless of name/price.
                 continue
 
             discount_price = _row_unit_price(row)
@@ -151,8 +147,6 @@ def apply(return_discount_module, core_module) -> None:
             scored.sort(key=lambda x: x[0], reverse=True)
             eligible = [x for x in scored if x[3]]
 
-            # Require one clearly best candidate. Similar colour/size variants must
-            # not be guessed from a weak name difference.
             chosen = None
             if eligible:
                 top = eligible[0]
@@ -192,8 +186,6 @@ def apply(return_discount_module, core_module) -> None:
             now = core.now_iso()
             with core._conn(db) as c:
                 for oid, parent_pid in mappings.items():
-                    # Preserve history but remove any importer-created return child
-                    # from active managed-product screens immediately.
                     c.execute(
                         """UPDATE products SET active=0,updated_at=?
                            WHERE CAST(option_id AS TEXT)=? AND id<>?""",
@@ -206,8 +198,11 @@ def apply(return_discount_module, core_module) -> None:
     rd._rg_return_sale_match_v0944_applied = True
     _APPLIED = True
 
-    # v0.9.47: after the generic matcher is installed, apply the user-supplied
-    # canonical Rocket Growth original-product registry.  This also cleans
-    # high-confidence legacy return children already present in the local DB.
+    # v0.9.47: user-supplied canonical Rocket Growth original-product registry.
     import canonical_rg_cleanup_v0947
     canonical_rg_cleanup_v0947.apply(core_module, rd)
+
+    # v0.9.48: canonical IDs are authoritative originals. Restore any canonical
+    # product hidden/aliased by older return heuristics and repair its sales posting.
+    import canonical_rg_restore_v0948
+    canonical_rg_restore_v0948.apply(core_module, rd, canonical_rg_cleanup_v0947)
