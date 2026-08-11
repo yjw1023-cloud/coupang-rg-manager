@@ -18,10 +18,68 @@ v0.9.51:
 v0.9.52:
 - add product-level monthly overrides for expected realized unit price, inbound/outbound
   fee total, and delivery fee total
+
+v0.9.53:
+- keep provisional P&L numeric columns numeric and use Styler only for comma/percent
+  presentation so Streamlit header sorting uses numeric values instead of strings
 """
 from __future__ import annotations
 
 import importlib
+
+
+def _sortable_pnl_style(pd_obj, df):
+    """Return a Styler whose underlying values remain numeric for grid sorting."""
+    show = df.copy()
+    if show.empty:
+        return show
+
+    qty_cols = ["판매수량"]
+    money_cols = [
+        "예상 실현단가",
+        "예상매출",
+        "원가/개",
+        "매출원가",
+        "판매수수료",
+        "입출고비",
+        "배송비",
+        "반품충당",
+        "광고비",
+        "광고제외이익",
+        "예상이익",
+        "RG비용",
+    ]
+    pct_cols = ["이익률(%)"]
+
+    for col in qty_cols + money_cols + pct_cols:
+        if col in show.columns:
+            show[col] = pd_obj.to_numeric(show[col], errors="coerce").fillna(0.0)
+
+    formatters = {}
+    for col in qty_cols:
+        if col in show.columns:
+            formatters[col] = lambda v: f"{int(round(v)):,}" if abs(float(v) - round(float(v))) < 1e-9 else f"{float(v):,.1f}"
+    for col in money_cols:
+        if col in show.columns:
+            formatters[col] = lambda v: f"{int(round(float(v))):,}"
+    for col in pct_cols:
+        if col in show.columns:
+            formatters[col] = lambda v: f"{float(v):,.1f}%"
+
+    try:
+        return (
+            show.style
+            .format(formatters, na_rep="")
+            .set_properties(**{"text-align": "center"})
+            .set_table_styles(
+                [
+                    {"selector": "th", "props": [("text-align", "center"), ("font-weight", "700")]},
+                    {"selector": "td", "props": [("text-align", "center")]},
+                ]
+            )
+        )
+    except Exception:
+        return show
 
 
 def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
@@ -107,16 +165,10 @@ def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
     except Exception:
         pass
 
-    show = m._format(filtered)
-    try:
-        show_obj = show.style.set_properties(**{"text-align": "center"}).set_table_styles(
-            [
-                {"selector": "th", "props": [("text-align", "center"), ("font-weight", "700")]},
-                {"selector": "td", "props": [("text-align", "center")]},
-            ]
-        )
-    except Exception:
-        show_obj = show
+    # v0.9.53: do not call m._format() here.  That helper converts money columns
+    # to comma-formatted strings, which causes lexicographic/disabled sorting in
+    # the interactive grid.  Keep real numeric dtypes and style presentation only.
+    show_obj = _sortable_pnl_style(pd_obj, filtered)
 
     st_obj.dataframe(
         show_obj,
