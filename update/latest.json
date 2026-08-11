@@ -1,6 +1,6 @@
 {
-  "version": "0.9.31",
-  "message": "생산·BOM 실행 오류 수정: v0.9.27 BOM 후보 필터가 동적으로 실행되는 legacy 소스에 bom_candidate_filter_v0927 모듈명을 직접 삽입했지만 app.py의 exec 전역공간에 해당 모듈이 등록되지 않아 NameError가 발생하던 문제를 수정. app.py에서 bom_candidate_filter_v0927를 명시적으로 로드하고 globals에 등록해 BOM 구성/생산 처리/삭제 화면에서 후보 필터를 정상 참조하도록 함. BOM 데이터와 기존 필터 규칙은 변경하지 않음. v0.9.30 잠정손익 스냅샷 연결 수정 및 기존 기능 유지",
+  "version": "0.9.32",
+  "message": "월 잠정손익 자동생성으로 구조 변경: 자료별 잠정손익 화면을 별도로 열어야 월 잠정손익 스냅샷이 생기던 불안정한 흐름을 제거. 이제 월 잠정손익 진입 시 해당 월의 sales_stats import 중 스냅샷이 없는 자료를 DB에서 직접 다시 계산하고, 현재 잠정손익 보정 규칙(반품 할인판매/이동가중원가/수수료/0판매 제외/광고비 등)을 적용한 최종 값을 provisional_pnl_snapshots에 자동 저장한 뒤 즉시 월 합계를 표시. 같은 기간 광고성과 자료가 있으면 자동 연결하고 없으면 광고 미반영으로 계산. 월경계 판매자료는 기존 정책대로 자동 합산에서 제외. v0.9.31 BOM NameError 수정 및 기존 기능 유지",
   "files": [
     "app.py",
     "VERSION.txt",
@@ -28,6 +28,7 @@
     "provisional_pnl_ui_v0913.py",
     "pnl_month_default_v0914.py",
     "pnl_month_default_v0915.py",
+    "pnl_month_autobackfill_v0932.py",
     "monthly_closing_v0916.py",
     "sidebar_groups_v0917.py",
     "sidebar_reopen_v0920.py",
