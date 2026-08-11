@@ -22,6 +22,9 @@ v0.9.52:
 v0.9.53:
 - keep provisional P&L numeric columns numeric and use Styler only for comma/percent
   presentation so Streamlit header sorting uses numeric values instead of strings
+
+v0.9.55:
+- render advertising and product-estimate manual controls as strong bordered blocks
 """
 from __future__ import annotations
 
@@ -106,10 +109,12 @@ def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
     cov = m._coverage(core, db, month)
     m._period_strip(st_obj, month, cov)
 
-    # v0.9.51: one editable manual advertising total per month. For the current
-    # month the default period is month-start through yesterday.
+    manual_blocks = importlib.import_module("pnl_manual_blocks_v0955")
+
+    # v0.9.51/v0.9.55: one editable manual advertising total per month, shown
+    # inside a high-contrast operational block.
     manual_ad = importlib.import_module("provisional_manual_ad_v0951")
-    manual_record = manual_ad.render_input(st_obj, core, month, db)
+    manual_record = manual_blocks.render_ad(st_obj, manual_ad, core, month, db)
 
     rows, excluded = m._snapshot_rows_for_month(core, db, month)
     rows, manual_meta = manual_ad.apply_to_rows(rows, manual_record)
@@ -142,11 +147,10 @@ def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
         )
         return
 
-    # v0.9.52: product-level manual overrides.  The editor compares against the
-    # current automatic monthly values, then the saved overrides are applied only
-    # to the selected product/month before summary/search/table rendering.
+    # v0.9.52/v0.9.55: product-level manual overrides use reliable ordinary
+    # input controls and are placed in a separate high-contrast bordered block.
     manual_adjust = importlib.import_module("provisional_manual_adjust_v0952")
-    adjustments = manual_adjust.render_editor(st_obj, core, month, auto_view, db)
+    adjustments = manual_blocks.render_adjust(st_obj, manual_adjust, core, month, auto_view, db)
     view, adjust_meta = manual_adjust.apply_to_view(auto_view, adjustments)
     if adjust_meta.get("applied"):
         st_obj.caption(
@@ -165,9 +169,9 @@ def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
     except Exception:
         pass
 
-    # v0.9.53: do not call m._format() here.  That helper converts money columns
+    # v0.9.53: do not call m._format() here. That helper converts money columns
     # to comma-formatted strings, which causes lexicographic/disabled sorting in
-    # the interactive grid.  Keep real numeric dtypes and style presentation only.
+    # the interactive grid. Keep real numeric dtypes and style presentation only.
     show_obj = _sortable_pnl_style(pd_obj, filtered)
 
     st_obj.dataframe(
