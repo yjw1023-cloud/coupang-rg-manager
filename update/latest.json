@@ -1,6 +1,6 @@
 {
-  "version": "0.9.18",
-  "message": "JD SYSTEMS 브랜드 사이드바 적용: 좌측 상단에 사용자 제공 JD SYSTEMS 로고와 '주식회사 제이디씨스템즈' 표기 추가. 기존 그룹형 메뉴를 유지하면서 JD SYSTEMS 레드 포인트 컬러로 그룹 제목, 선택 메뉴, hover, 구분선을 통일. v0.9.16 월 결산과 v0.9.17 메뉴 그룹화 포함",
+  "version": "0.9.19",
+  "message": "사이드바 표시 오류 수정: JD SYSTEMS 로고를 HTML img 대신 Streamlit 이미지로 직접 렌더링해 코드처럼 보이던 문제를 해결하고, 로고 아래 '주식회사 제이디씨스템즈'를 정상 표시. 그룹 내부 비선택 메뉴의 흰 박스를 제거해 어두운 사이드바와 자연스럽게 통일하고 선택 메뉴만 JD SYSTEMS 레드로 강조. 기존 RG Manager/쿠팡 로켓그로스/구버전 grouped navigation 브랜딩 문구를 제거하되 SQLite 저장 안내는 유지",
   "files": [
     "app.py",
     "VERSION.txt",
