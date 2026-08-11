@@ -1,11 +1,12 @@
 """v0.9.15 safe monthly-default P&L routing.
 
-v0.9.19 compatibility:
+v0.9.20 compatibility:
 - keep v0.9.15's safe provisional routing
 - lazily load monthly_closing_v0916
 - route product confirmed P&L and whole-business monthly closing
 - apply grouped sidebar navigation after all page labels are finalized
 - let sidebar_groups_v0917 remove all legacy brand/version sidebar elements
+- keep the collapsed-sidebar restore control visible via sidebar_reopen_v0920
 """
 from __future__ import annotations
 
@@ -103,6 +104,8 @@ def render_monthly_closing_page(st_obj, pd_obj, core, db_path=None):
 
 
 def render_grouped_sidebar(st_obj, options, default_page=None):
+    reopen = importlib.import_module("sidebar_reopen_v0920")
+    reopen.apply(st_obj)
     m = importlib.import_module("sidebar_groups_v0917")
     return m.render_sidebar(st_obj, options, default_page)
 
