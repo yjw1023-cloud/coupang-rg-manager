@@ -1,12 +1,10 @@
 """v0.9.15 safe monthly-default P&L routing.
 
-Fixes v0.9.14 source-generation SyntaxError by never moving/copying the legacy
-provisional branch body. Instead:
-- keep the existing legacy provisional branch intact under a new menu label
-  `📄  자료별 잠정손익`
-- insert a new `📈  잠정손익` branch that renders the monthly aggregate
-- reuse v0.9.14's monthly aggregation helpers (the module itself is valid; only
-  its old patch_source strategy was unsafe)
+v0.9.16 compatibility:
+- keep v0.9.15's safe provisional routing
+- lazily load monthly_closing_v0916
+- route product confirmed P&L and whole-business monthly closing without
+  requiring a bootstrap app.py replacement
 """
 from __future__ import annotations
 
@@ -93,8 +91,18 @@ def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
             st_obj.dataframe(src, use_container_width=True, hide_index=True)
 
 
+def render_product_confirmed_page(st_obj, pd_obj, core, pnl_module, db_path=None):
+    m = importlib.import_module("monthly_closing_v0916")
+    return m.render_product_confirmed_page(st_obj, pd_obj, core, pnl_module, db_path)
+
+
+def render_monthly_closing_page(st_obj, pd_obj, core, db_path=None):
+    m = importlib.import_module("monthly_closing_v0916")
+    return m.render_monthly_closing_page(st_obj, pd_obj, core, db_path)
+
+
 def patch_source(source: str) -> str:
-    """Route monthly and source-level provisional P&L without moving code blocks."""
+    """Route monthly/source provisional P&L plus v0.9.16 closing safely."""
     legacy_branch = 'elif page == "📈  잠정손익":'
     if legacy_branch not in source:
         raise RuntimeError("v0.9.15 기존 잠정손익 분기를 찾지 못했습니다.")
@@ -110,4 +118,17 @@ def patch_source(source: str) -> str:
         '    pnl_month_default_v0915.render_provisional_month_page(st, pd, core)\n\n\n'
     )
     source = source.replace(renamed, monthly + renamed, 1)
+
+    closing = importlib.import_module("monthly_closing_v0916")
+    source = closing.patch_source(source)
+    source = source.replace(
+        'monthly_closing_v0916.render_product_confirmed_page(st, pd, core, pnl_views_v0912)',
+        'pnl_month_default_v0915.render_product_confirmed_page(st, pd, core, pnl_views_v0912)',
+        1,
+    )
+    source = source.replace(
+        'monthly_closing_v0916.render_monthly_closing_page(st, pd, core)',
+        'pnl_month_default_v0915.render_monthly_closing_page(st, pd, core)',
+        1,
+    )
     return source
