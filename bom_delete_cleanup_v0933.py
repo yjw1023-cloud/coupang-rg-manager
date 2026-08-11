@@ -1,12 +1,19 @@
-"""RG Manager v0.9.34 BOM cleanup list UI.
+"""RG Manager v0.9.35 BOM cleanup list UI.
 
 Purpose: remove obsolete finished-product BOMs from the current BOM list.
 All BOM finished products are shown as a selectable table instead of a dropdown.
 The existing v0.9.28 delete engine/logging is kept; only the UI is replaced.
+v0.9.35 also activates the dedicated current-BOM list search/quantity display patch.
 """
 from __future__ import annotations
 
 import pandas as pd
+
+# v0.9.35: the legacy BOM page's '현재 BOM' table is intercepted only when
+# its exact BOM columns are rendered. This adds search and integer quantities
+# without changing the stored bom_items.qty_per values.
+import bom_current_list_ui_v0935 as _current_bom_ui_v0935
+_current_bom_ui_v0935.apply()
 
 
 def render_delete_ui(st_obj, core_module, target_module, db_path=None) -> None:
@@ -22,7 +29,6 @@ def render_delete_ui(st_obj, core_module, target_module, db_path=None) -> None:
         st_obj.info("현재 등록된 BOM이 없습니다.")
         return
 
-    # One representative row per finished product.
     parents = {}
     component_counts = {}
     for row in rows:
