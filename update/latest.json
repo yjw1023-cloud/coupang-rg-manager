@@ -1,6 +1,6 @@
 {
-  "version": "0.9.20",
-  "message": "사이드바 접힘 복구 수정: 사이드바를 접은 뒤 다시 펼치는 버튼이 사라지는 문제를 해결. 기존 테마가 숨기던 Streamlit 헤더는 화면에 노출하지 않으면서, 접힌 상태의 사이드바 복구 컨트롤만 좌측 상단에 JD SYSTEMS 레드 버튼으로 항상 표시되도록 강제. v0.9.19 브랜딩/그룹형 메뉴 및 v0.9.16 월 결산 기능 포함",
+  "version": "0.9.21",
+  "message": "사이드바 영구 펼침 고정: ERP 재시작 시 사이드바를 항상 expanded 상태로 시작하도록 page config를 강제하고, 사이드바 접기 버튼 자체를 숨겨 다시 메뉴가 사라지는 상황을 차단. 기존 v0.9.19 브랜딩/그룹형 메뉴와 v0.9.16 월 결산 기능 유지",
   "files": [
     "app.py",
     "VERSION.txt",
@@ -31,6 +31,7 @@
     "monthly_closing_v0916.py",
     "sidebar_groups_v0917.py",
     "sidebar_reopen_v0920.py",
+    "sidebar_lock_v0921.py",
     "jd_systems_logo.b64"
   ]
 }
