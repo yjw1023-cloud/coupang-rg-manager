@@ -1,4 +1,4 @@
-"""Dedicated item master UI for RG Manager v0.8.6."""
+"""Dedicated item master UI for RG Manager v0.9.24."""
 from __future__ import annotations
 
 import re
@@ -40,6 +40,82 @@ def _load_products(core):
         )
 
 
+def _next_jds_code(core):
+    """Return the first unused JDS#### code, treating legacy JDS1/JDS001 as the same number."""
+    core.init_db(core.DEFAULT_DB)
+    used_numbers = set()
+    used_codes = set()
+    with _conn(core) as con:
+        rows = con.execute("SELECT item_code FROM products WHERE item_code IS NOT NULL").fetchall()
+    for row in rows:
+        code = str(row["item_code"] or "").strip()
+        if not code:
+            continue
+        used_codes.add(code.upper())
+        m = re.fullmatch(r"JDS(\d+)", code, flags=re.IGNORECASE)
+        if m:
+            try:
+                n = int(m.group(1))
+                if 1 <= n <= 9999:
+                    used_numbers.add(n)
+            except Exception:
+                pass
+
+    for n in range(1, 10000):
+        code = f"JDS{n:04d}"
+        if n not in used_numbers and code.upper() not in used_codes:
+            return code
+    raise RuntimeError("JDS0001~JDS9999 품목코드를 모두 사용 중입니다.")
+
+
+def _inject_item_form_css(st):
+    st.markdown(
+        """
+<style>
+/* v0.9.24 item master: make labels and editable controls visually distinct. */
+[data-testid="stMain"] [data-testid="stWidgetLabel"] p {
+    color: #17233b !important;
+    font-weight: 700 !important;
+}
+[data-testid="stMain"] div[data-baseweb="input"] {
+    background: #f7faff !important;
+    border: 1.5px solid #9cafc5 !important;
+    border-radius: 8px !important;
+    box-shadow: 0 1px 2px rgba(15, 35, 65, 0.08) !important;
+}
+[data-testid="stMain"] div[data-baseweb="input"]:focus-within {
+    border-color: #2f6fdb !important;
+    box-shadow: 0 0 0 2px rgba(47, 111, 219, 0.12) !important;
+}
+[data-testid="stMain"] div[data-baseweb="input"] input {
+    background: transparent !important;
+    color: #0f172a !important;
+}
+[data-testid="stMain"] div[data-baseweb="select"] > div {
+    background: #f7faff !important;
+    border: 1.5px solid #9cafc5 !important;
+    border-radius: 8px !important;
+    box-shadow: 0 1px 2px rgba(15, 35, 65, 0.08) !important;
+}
+[data-testid="stMain"] div[data-baseweb="select"] > div:focus-within {
+    border-color: #2f6fdb !important;
+    box-shadow: 0 0 0 2px rgba(47, 111, 219, 0.12) !important;
+}
+[data-testid="stMain"] [data-testid="stNumberInput"] button {
+    background: #edf3fa !important;
+    border-color: #9cafc5 !important;
+}
+[data-testid="stMain"] [data-testid="stTextInput"],
+[data-testid="stMain"] [data-testid="stNumberInput"],
+[data-testid="stMain"] [data-testid="stSelectbox"] {
+    margin-bottom: 0.35rem !important;
+}
+</style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _create_product(core, kind, name, item_code, option_id, unit_cost):
     name = str(name or "").strip()
     item_code = str(item_code or "").strip()
@@ -48,7 +124,7 @@ def _create_product(core, kind, name, item_code, option_id, unit_cost):
         raise ValueError("상품명을 입력해 주세요.")
     if kind == "자체창고 품목":
         if not item_code:
-            raise ValueError("자체창고 품목은 품목코드를 입력해 주세요.")
+            item_code = _next_jds_code(core)
         db_item_code = item_code
         db_option_id = None
         item_type = "raw"
@@ -87,6 +163,7 @@ def _update_product(core, product_id, name, unit_cost, active):
 
 
 def render_item_page(st, pd, core, page_header, section, **_kwargs):
+    _inject_item_form_css(st)
     page_header("품목관리", "신규 상품을 등록하고 기존 품목의 이름·원가·사용여부를 관리합니다.", eyebrow="ITEM MASTER")
     tabs = st.tabs(["품목목록", "신규등록", "품목수정"])
 
@@ -117,7 +194,13 @@ def render_item_page(st, pd, core, page_header, section, **_kwargs):
             unit_cost = st.number_input("기준원가(원)", min_value=0.0, step=1.0, format="%.0f", key="item_new_cost")
         with c2:
             if kind == "자체창고 품목":
-                item_code = st.text_input("품목코드", help="예: JDS701", key="item_new_code")
+                auto_code = _next_jds_code(core)
+                item_code = st.text_input(
+                    "품목코드",
+                    value=auto_code,
+                    help="기존 자체창고/재고 품목과 겹치지 않는 JDS+4자리 숫자 코드가 자동 입력됩니다. 필요하면 수정할 수 있습니다.",
+                    key=f"item_new_code_{auto_code}",
+                )
                 option_id = ""
             else:
                 option_id = st.text_input("쿠팡 옵션ID", help="쿠팡 상품 옵션ID 숫자", key="item_new_option")
