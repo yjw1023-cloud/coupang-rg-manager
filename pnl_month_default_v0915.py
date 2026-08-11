@@ -1,12 +1,13 @@
 """v0.9.15 safe monthly-default P&L routing.
 
-v0.9.28 compatibility:
+v0.9.30 compatibility:
 - keep v0.9.15's safe provisional routing
 - lazily load monthly_closing_v0916
 - route product confirmed P&L and whole-business monthly closing
 - apply grouped sidebar navigation and permanently lock the sidebar expanded
 - apply Production/BOM finished/component candidate filtering
 - add a dedicated BOM delete tab after the candidate-filter patch
+- actually activate the v0.9.29 provisional snapshot import-id binding fix
 """
 from __future__ import annotations
 
@@ -111,7 +112,16 @@ def render_grouped_sidebar(st_obj, options, default_page=None):
 
 
 def patch_source(source: str) -> str:
-    """Route P&L pages, monthly closing, navigation, then BOM UI patches."""
+    """Route P&L pages, monthly closing, navigation, BOM UI, and snapshot binding."""
+    # v0.9.29 shipped the binding module but did not execute it. Activate it
+    # here after pnl_views_v0912 and provisional_pnl_ui_v0913 have already been
+    # initialized by app.py, so the final displayed P&L is saved against the
+    # exact sales import selected in 자료별 잠정손익.
+    snapshot_fix = importlib.import_module("pnl_snapshot_fix_v0929")
+    core_module = importlib.import_module("core")
+    views_module = importlib.import_module("pnl_views_v0912")
+    snapshot_fix.apply(core_module, views_module)
+
     legacy_branch = 'elif page == "📈  잠정손익":'
     if legacy_branch not in source:
         raise RuntimeError("v0.9.15 기존 잠정손익 분기를 찾지 못했습니다.")
@@ -147,7 +157,6 @@ def patch_source(source: str) -> str:
     source = lock.patch_source(source)
 
     bom = importlib.import_module("bom_candidate_filter_v0927")
-    core_module = importlib.import_module("core")
     bom.apply(core_module)
     source = bom.patch_source(source)
 
