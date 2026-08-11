@@ -1,6 +1,6 @@
 {
-  "version": "0.9.37",
-  "message": "반품 판매자료에서 쿠팡이 자동 부여한 임시 옵션ID가 ERP 관리상품처럼 BOM 완제품 추천에 노출되는 문제 수정. return_discount_aliases/return_discount_sales로 확인된 반품 파생 상품행은 이력을 보존한 채 보관상태로 전환하고, 과거 alias 등록이 빠진 판매자료 유래 코드도 원가 0원·판매자료 전용·관리/생산이력 없음·더 먼저 등록된 원상품과 이름/구성수량이 강하게 일치하는 경우 BOM 완제품 추천에서 제외. 원래 등록된 정상 상품은 유지. v0.9.36 현재 BOM 검색/정수표시 및 기존 기능 유지",
+  "version": "0.9.38",
+  "message": "생산자료 Excel에서 정상 옵션ID 상품에 BOM이 없다고 표시되던 문제 수정. 과거 판매자료에서 생성된 쿠팡 반품 파생 옵션ID 쪽에 현재 BOM이 잘못 연결된 경우, 과거 판매/생산/재고 이력은 그대로 보존하고 현재 bom_items 연결만 정상 원상품으로 안전하게 이동. 명시적 반품 alias를 우선 사용하고, alias가 누락된 과거 자료는 판매이력·상품명·구성수량·생산/재고 이력을 보수적으로 검증해 유일한 경우에만 교정. 생산자료 검증/실행 직전에도 자동 재검증. v0.9.37 반품코드 추천 제외 및 v0.9.36 현재 BOM 검색/정수표시 유지",
   "files": [
     "app.py",
     "VERSION.txt",
@@ -38,6 +38,7 @@
     "bom_delete_cleanup_v0933.py",
     "bom_current_list_ui_v0935.py",
     "return_product_guard_v0937.py",
+    "bom_parent_repair_v0938.py",
     "pnl_snapshot_fix_v0929.py",
     "jd_systems_logo.b64"
   ]
