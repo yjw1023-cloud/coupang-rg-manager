@@ -1,6 +1,6 @@
 {
-  "version": "0.9.30",
-  "message": "잠정손익 월간 합계 스냅샷 저장 연결 누락 수정: v0.9.29에서 추가한 pnl_snapshot_fix_v0929.py가 업데이트 목록에는 포함됐지만 실제 실행 패치 체인에서 호출되지 않아 자료별 잠정손익을 열어도 월 잠정손익 스냅샷이 생성되지 않던 문제를 수정. 이제 pnl_month_default_v0915.patch_source 실행 시 pnl_snapshot_fix_v0929.apply(core, pnl_views_v0912)를 실제 호출하여 선택한 sales_import_id를 최종 표시 손익표와 직접 연결해 저장. v0.9.29의 import-id 직접 바인딩 로직, v0.9.28 BOM 삭제, v0.9.27 BOM 후보 필터, v0.9.26 품목 안전삭제/복원 기능 유지",
+  "version": "0.9.31",
+  "message": "생산·BOM 실행 오류 수정: v0.9.27 BOM 후보 필터가 동적으로 실행되는 legacy 소스에 bom_candidate_filter_v0927 모듈명을 직접 삽입했지만 app.py의 exec 전역공간에 해당 모듈이 등록되지 않아 NameError가 발생하던 문제를 수정. app.py에서 bom_candidate_filter_v0927를 명시적으로 로드하고 globals에 등록해 BOM 구성/생산 처리/삭제 화면에서 후보 필터를 정상 참조하도록 함. BOM 데이터와 기존 필터 규칙은 변경하지 않음. v0.9.30 잠정손익 스냅샷 연결 수정 및 기존 기능 유지",
   "files": [
     "app.py",
     "VERSION.txt",
