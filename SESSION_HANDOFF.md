@@ -3,10 +3,10 @@
 이 문서는 `yjw1023-cloud/coupang-rg-manager`의 최신 작업 기준이다.
 
 ## 현재 기준
-- main 배포 버전: **v0.9.15**
-- 현재 개발 버전: **v0.9.17**
+- main 배포 버전: **v0.9.18**
+- 현재 개발 버전: **v0.9.18**
 - 현재 개발 브랜치: **`feature/v0.9.16-monthly-closing`**
-- v0.9.16 월 결산과 v0.9.17 그룹형 사이드바는 아직 main 배포 전 단계다.
+- v0.9.16 월 결산 + v0.9.17 그룹형 사이드바 + v0.9.18 JD SYSTEMS 브랜딩까지 main 배포 기준으로 본다.
 - 새 세션은 `PROJECT_CONTEXT.md` → `SESSION_HANDOFF.md` → `VERSION.txt` → `update/latest.json` → 최신 patch module 순서로 확인한다.
 
 ## 프로젝트 기본 구조
@@ -37,6 +37,7 @@
 - 월간 잠정손익: `pnl_month_default_v0914.py`, `pnl_month_default_v0915.py`
 - 월 결산: `monthly_closing_v0916.py`
 - 그룹형 사이드바: `sidebar_groups_v0917.py`
+- JD SYSTEMS 로고 원본: `jd_systems_logo.b64`
 
 ## 손익 구조
 - `📈 잠정손익`: 월간 잠정 관리손익.
@@ -66,44 +67,44 @@
 
 사이드바 구조:
 - `🏠 대시보드`는 단독.
-- `💰 손익·정산`
-  - 잠정손익
-  - 상품 확정손익
-  - 월 결산
-  - 손익차이분석
-  - 자료별 잠정손익
-- `📦 재고·생산`
-  - 재고관리
-  - 생산자료
-  - 반품관리
-- `🛒 매입·상품`
-  - 매입관리
-  - 매입이력
-  - 품목관리
-  - 상품·원가
-- `📥 데이터·관리`
-  - 기존ERP 이관
-  - 자료 업로드/업데이트/설정 등 기존 관리성 메뉴
+- `💰 손익·정산`: 잠정손익 / 상품 확정손익 / 월 결산 / 손익차이분석 / 자료별 잠정손익.
+- `📦 재고·생산`: 재고관리 / 생산자료 / 반품관리.
+- `🛒 매입·상품`: 매입관리 / 매입이력 / 품목관리 / 상품·원가.
+- `📥 데이터·관리`: 기존ERP 이관 / 업로드 / 업데이트 / 설정 등 관리성 메뉴.
 
 구현 원칙:
-- 기존 페이지 handler와 페이지 label을 바꾸지 않는다.
-- 최종 flat menu 목록을 읽은 뒤 그룹 UI로 치환한다.
-- 현재 선택된 페이지가 들어 있는 그룹만 기본 펼침.
-- 다른 그룹은 접힌 상태.
-- 새 메뉴가 생겨 명시 분류되지 않아도 사라지지 않고 `데이터·관리`에 자동 배치.
-- v0.9.15의 안전한 `pnl_month_default_v0915.patch_source()`가 마지막에 `sidebar_groups_v0917.patch_source()`를 호출한다.
+- 기존 페이지 handler와 page label은 바꾸지 않는다.
+- 최종 flat menu 목록을 AST로 읽은 뒤 그룹 UI로 치환한다.
+- 현재 선택 페이지가 속한 그룹만 기본 펼침.
+- 새 미분류 메뉴도 사라지지 않고 `데이터·관리`에 자동 배치.
+- v0.9.15의 안전한 `pnl_month_default_v0915.patch_source()` 마지막에 `sidebar_groups_v0917.patch_source()`를 적용한다.
 - bootstrap `app.py`를 직접 크게 수정하지 않는다.
 
-## v0.9.16~0.9.17 검증
+## v0.9.18 JD SYSTEMS 브랜딩
+- 사용자 제공 원본 로고를 `jd_systems_logo.b64`로 저장하고 업데이트 manifest에 포함한다.
+- 좌측 사이드바 맨 위에 JD SYSTEMS 로고 표시.
+- 로고 바로 아래에 **`주식회사 제이디씨스템즈`** 표시.
+- 기존 상단 버전 caption은 제거해 로고가 실제 최상단에 오도록 한다.
+- 버전 표시는 그룹 메뉴 하단 `RG Manager v0.9.18` 형태로 이동.
+- JD SYSTEMS 로고의 레드 톤을 메뉴 UI에 적용:
+  - 그룹 제목 레드 포인트
+  - 선택 메뉴 레드 배경 + 흰 글씨
+  - 비선택 메뉴 hover 레드 포인트
+  - 구분선 연한 레드
+- 로고는 원본 비율 유지, 사이드바 폭에 맞춰 최대 240px.
+
+## v0.9.16~0.9.18 검증
 - 월 결산 임시 SQLite 테스트: 월초 100개×1,000원 + 당월 50개×1,200원, 80개 판매 → 월말 70개×이동평균 1,066.67원, 재고식 매출원가 약 85,333원 확인.
 - `monthly_closing_v0916.py` syntax compile 확인.
 - `sidebar_groups_v0917.py` syntax compile 확인.
 - 샘플 flat sidebar source를 그룹형 라우팅으로 변환한 뒤 compile 확인.
+- 기존 상단 `st.sidebar.caption(...)` 제거 후 그룹 메뉴 AST 패치 재검증.
+- `jd_systems_logo.b64`를 다시 data URI로 읽어 원본 이미지 표시 가능함을 확인.
 - 그룹 메뉴는 기존 canonical page label을 그대로 반환하므로 기존 page handler 분기와 호환된다.
 
 ## 배포 규칙
 1. feature branch에서 코드/문서/manifest 검증.
 2. `VERSION.txt`와 `update/latest.json` 버전 일치.
-3. 새 모듈을 manifest files에 포함.
-4. main 반영은 별도 배포 단계에서 수행.
+3. 새 모듈/로고 자산을 manifest files에 포함.
+4. main 반영 후 ERP 프로그램 업데이트에서 새 버전을 적용.
 5. 사용자 DB는 절대 배포파일로 덮어쓰지 않는다.
