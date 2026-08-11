@@ -1,10 +1,11 @@
 """v0.9.15 safe monthly-default P&L routing.
 
-v0.9.17 compatibility:
+v0.9.19 compatibility:
 - keep v0.9.15's safe provisional routing
 - lazily load monthly_closing_v0916
 - route product confirmed P&L and whole-business monthly closing
-- apply v0.9.17 grouped sidebar navigation after all page labels are finalized
+- apply grouped sidebar navigation after all page labels are finalized
+- let sidebar_groups_v0917 remove all legacy brand/version sidebar elements
 """
 from __future__ import annotations
 
@@ -134,11 +135,6 @@ def patch_source(source: str) -> str:
     source = source.replace(
         'monthly_closing_v0916.render_monthly_closing_page(st, pd, core)',
         'pnl_month_default_v0915.render_monthly_closing_page(st, pd, core)',
-        1,
-    )
-    source = source.replace(
-        'st.sidebar.caption("v0.9.15 · safe monthly P&L")',
-        'st.sidebar.caption("v0.9.17 · grouped navigation")',
         1,
     )
 
