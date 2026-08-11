@@ -1,6 +1,6 @@
 {
-  "version": "0.9.29",
-  "message": "잠정손익 월간 합계 스냅샷 저장 오류 수정: 자료별 잠정손익을 열었는데도 월 잠정손익이 비어 보이던 문제를 해결. 기존에는 최종 화면의 옵션ID별 판매수량과 원본 판매통계가 완전히 같아야 판매자료 import_id를 역추적할 수 있었으나, 반품 할인판매 행 통합/숨김·0판매 행 제외 등 최근 손익 보정 후에는 표 구성이 달라져 스냅샷 저장이 실패할 수 있었음. 이제 core.estimated_pnl 호출 시 선택한 sales_import_id를 직접 기억하고, 최종 표시 손익표를 해당 import_id에 바로 저장. 기존 signature 매칭은 fallback으로 유지. v0.9.28 BOM 삭제, v0.9.27 BOM 후보 필터, v0.9.26 품목 안전삭제/복원 기능 유지",
+  "version": "0.9.30",
+  "message": "잠정손익 월간 합계 스냅샷 저장 연결 누락 수정: v0.9.29에서 추가한 pnl_snapshot_fix_v0929.py가 업데이트 목록에는 포함됐지만 실제 실행 패치 체인에서 호출되지 않아 자료별 잠정손익을 열어도 월 잠정손익 스냅샷이 생성되지 않던 문제를 수정. 이제 pnl_month_default_v0915.patch_source 실행 시 pnl_snapshot_fix_v0929.apply(core, pnl_views_v0912)를 실제 호출하여 선택한 sales_import_id를 최종 표시 손익표와 직접 연결해 저장. v0.9.29의 import-id 직접 바인딩 로직, v0.9.28 BOM 삭제, v0.9.27 BOM 후보 필터, v0.9.26 품목 안전삭제/복원 기능 유지",
   "files": [
     "app.py",
     "VERSION.txt",
