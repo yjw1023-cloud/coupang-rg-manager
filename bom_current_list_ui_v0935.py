@@ -1,4 +1,4 @@
-"""RG Manager v0.9.37 current BOM list presentation.
+"""RG Manager v0.9.38 current BOM list presentation.
 
 Only the current BOM table is intercepted.
 - Adds a search box immediately above the table.
@@ -6,6 +6,8 @@ Only the current BOM table is intercepted.
 - Forces the BOM quantity input to use positive integers only.
 - Activates the return-generated product guard so Coupang return-only option IDs
   are never suggested as managed BOM finished products.
+- Repairs legacy current BOMs that were attached to a return-generated option
+  instead of the original managed Coupang option.
 Database BOM quantities already stored are not modified by the table formatter.
 """
 from __future__ import annotations
@@ -80,10 +82,18 @@ def _positive_int(v, default=1):
 
 def apply() -> None:
     import streamlit as st
+    import core
+    import production_batch_v095
     import return_product_guard_v0937
+    import bom_parent_repair_v0938
 
-    # v0.9.37: install before the legacy BOM selectboxes render.
+    # v0.9.37: remove return-only option IDs from managed BOM selectors.
     return_product_guard_v0937.apply()
+
+    # v0.9.38: if an old current BOM is still attached to one of those return
+    # option rows, move only the current bom_items parent link to the normal
+    # managed product. Batch validation retries this repair before production.
+    bom_parent_repair_v0938.apply(core, production_batch_v095)
 
     if getattr(st, "_rg_current_bom_ui_v0936_applied", False):
         return
