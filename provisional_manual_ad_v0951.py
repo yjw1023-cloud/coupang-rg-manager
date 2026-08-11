@@ -1,16 +1,8 @@
-"""RG Manager v0.9.51 manual provisional advertising spend.
+"""RG Manager v0.9.54 manual provisional advertising spend.
 
-Allows one user-entered cumulative ad-spend record per month. The amount is
-VAT-exclusive and can cover any date range inside the selected month.
-
-Monthly P&L application rule:
-- manual amount overrides automatic ad-performance spend only for the overlapping
-  dates, so the two sources are never double-counted;
-- source snapshot rows are weighted by expected revenue and overlap-day fraction;
-- for a partially overlapping source period, only the overlapping share of the
-  automatic ad amount is replaced;
-- profit is recalculated after the manual ad allocation, while no-ad profit stays
-  unchanged.
+Manual VAT-exclusive advertising spend for a selected date range.  The input block
+is always visible and visually emphasized.  Manual spend replaces automatic ad
+spend only for overlapping dates, preventing double counting.
 """
 from __future__ import annotations
 
@@ -109,6 +101,26 @@ def delete(core, month: str, db_path=None):
         c.execute("DELETE FROM provisional_manual_ad_spend WHERE month=?", (str(month),))
 
 
+def _inject_box_css(st):
+    st.markdown(
+        """
+        <style>
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.rg-manual-ad-marker){
+            border:3px solid #183b67 !important;
+            border-radius:14px !important;
+            box-shadow:0 3px 12px rgba(24,59,103,.10) !important;
+            padding:4px !important;
+        }
+        .rg-manual-ad-title{
+            font-size:18px;font-weight:850;color:#0f2744;margin:0 0 2px 0;
+        }
+        .rg-manual-ad-sub{font-size:12px;color:#52667d;margin-bottom:8px;}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_input(st, core, month: str, db_path=None):
     db = db_path or core.DEFAULT_DB
     current = load(core, month, db)
@@ -121,10 +133,14 @@ def render_input(st, core, month: str, db_path=None):
             pass
     amount_default = float(current["amount_ex_vat"]) if current else 0.0
 
-    with st.expander("광고비 수동입력 · 부가세 제외", expanded=current is None):
-        st.caption(
-            "선택 기간의 쿠팡 광고비 총액을 입력합니다. 같은 날짜에 광고성과보고서가 있어도 "
-            "수동입력 금액을 우선 적용해 중복 차감하지 않습니다."
+    _inject_box_css(st)
+    box = st.container(border=True)
+    with box:
+        st.markdown('<div class="rg-manual-ad-marker"></div>', unsafe_allow_html=True)
+        st.markdown('<div class="rg-manual-ad-title">광고비 수동입력</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="rg-manual-ad-sub">부가세 제외 총액 · 같은 날짜의 광고성과보고서보다 수동 입력값을 우선 적용합니다.</div>',
+            unsafe_allow_html=True,
         )
         c1, c2, c3 = st.columns([1, 1, 1.25])
         start_value = c1.date_input(
@@ -169,7 +185,7 @@ def render_input(st, core, month: str, db_path=None):
                 f"{int(round(_num(current['amount_ex_vat']))):,}원 (부가세 제외)"
             )
 
-    return current
+    return load(core, month, db)
 
 
 def _period_overlap_fraction(row: dict, manual_start: date, manual_end: date) -> float:
@@ -230,8 +246,6 @@ def apply_to_rows(rows: list[dict], record: dict | None):
     for (idx, frac), weight in zip(eligible, weights):
         r = out[idx]
         old_ad = _num(r.get("광고비"))
-        # Snapshot ad is stored as a negative expense. Keep the non-overlap share,
-        # and replace only the overlapping share with the manual total allocation.
         kept_auto_ad = old_ad * (1.0 - frac)
         manual_alloc = -amount * (weight / total_weight)
         new_ad = kept_auto_ad + manual_alloc
