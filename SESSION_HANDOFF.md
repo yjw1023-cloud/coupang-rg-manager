@@ -3,10 +3,10 @@
 이 문서는 `yjw1023-cloud/coupang-rg-manager`의 최신 작업 기준이다.
 
 ## 현재 기준
-- main 배포 버전: **v0.9.18**
-- 현재 개발 버전: **v0.9.18**
+- main 배포 버전: **v0.9.19**
+- 현재 개발 버전: **v0.9.19**
 - 현재 개발 브랜치: **`feature/v0.9.16-monthly-closing`**
-- v0.9.16 월 결산 + v0.9.17 그룹형 사이드바 + v0.9.18 JD SYSTEMS 브랜딩까지 main 배포 기준으로 본다.
+- v0.9.16 월 결산 + v0.9.17 그룹형 사이드바 + v0.9.18 브랜딩 + v0.9.19 사이드바 표시 오류 수정까지 main 배포 기준으로 본다.
 - 새 세션은 `PROJECT_CONTEXT.md` → `SESSION_HANDOFF.md` → `VERSION.txt` → `update/latest.json` → 최신 patch module 순서로 확인한다.
 
 ## 프로젝트 기본 구조
@@ -82,24 +82,30 @@
 
 ## v0.9.18 JD SYSTEMS 브랜딩
 - 사용자 제공 원본 로고를 `jd_systems_logo.b64`로 저장하고 업데이트 manifest에 포함한다.
-- 좌측 사이드바 맨 위에 JD SYSTEMS 로고 표시.
-- 로고 바로 아래에 **`주식회사 제이디씨스템즈`** 표시.
-- 기존 상단 버전 caption은 제거해 로고가 실제 최상단에 오도록 한다.
-- 버전 표시는 그룹 메뉴 하단 `RG Manager v0.9.18` 형태로 이동.
-- JD SYSTEMS 로고의 레드 톤을 메뉴 UI에 적용:
-  - 그룹 제목 레드 포인트
-  - 선택 메뉴 레드 배경 + 흰 글씨
-  - 비선택 메뉴 hover 레드 포인트
-  - 구분선 연한 레드
-- 로고는 원본 비율 유지, 사이드바 폭에 맞춰 최대 240px.
+- 좌측 사이드바에 JD SYSTEMS 로고와 **`주식회사 제이디씨스템즈`** 표시.
+- JD SYSTEMS 레드 톤을 선택 메뉴/hover/구분선에 사용.
 
-## v0.9.16~0.9.18 검증
-- 월 결산 임시 SQLite 테스트: 월초 100개×1,000원 + 당월 50개×1,200원, 80개 판매 → 월말 70개×이동평균 1,066.67원, 재고식 매출원가 약 85,333원 확인.
+## v0.9.19 사이드바 표시 오류 수정
+사용자 실제 화면 확인 후 다음 문제를 수정했다.
+- 브랜드 HTML이 코드블록처럼 보여 `<div class=...>`가 노출되던 문제.
+- 그룹 내부 비선택 메뉴가 흰색 둥근 버튼으로 표시되던 문제.
+- 기존 `RG Manager`, `쿠팡 로켓그로스 경영관리`, `v0.9.17 · grouped navigation` 문구가 새 브랜딩과 중복 표시되던 문제.
+
+수정 방식:
+- 로고는 HTML data-URI `<img>` 대신 `st.sidebar.image()`로 직접 렌더링. `jd_systems_logo.b64`를 bytes로 decode해 사용한다.
+- 회사명은 한 줄 HTML로 렌더링해 Markdown 코드블록 오인 가능성을 제거.
+- 모든 사이드바 버튼 기본 배경/테두리를 투명으로 강제하고 선택된 primary 메뉴만 JD SYSTEMS 레드 배경 + 흰 글씨.
+- expander 그룹 헤더는 어두운 사이드바에 맞는 반투명 배경/흰 글씨로 통일.
+- source AST 패치에서 구형 브랜드/버전 요소만 제거한다: `RG Manager`, `쿠팡 로켓그로스`, `v0.*`, `grouped navigation`, `monthly closing`, `legacy ERP import`.
+- `데이터는 이 PC의 SQLite에 저장됩니다.` 같은 일반 안내 caption은 유지한다.
+- `pnl_month_default_v0915.py`에서 `v0.9.17 · grouped navigation` caption을 다시 삽입하던 코드를 제거했다.
+
+## 검증
 - `monthly_closing_v0916.py` syntax compile 확인.
-- `sidebar_groups_v0917.py` syntax compile 확인.
+- `sidebar_groups_v0917.py` v0.9.19 syntax compile 확인.
+- 샘플 소스에서 구형 RG Manager/회사 설명/구버전 문구 제거 + 데이터 저장 안내 유지 확인.
 - 샘플 flat sidebar source를 그룹형 라우팅으로 변환한 뒤 compile 확인.
-- 기존 상단 `st.sidebar.caption(...)` 제거 후 그룹 메뉴 AST 패치 재검증.
-- `jd_systems_logo.b64`를 다시 data URI로 읽어 원본 이미지 표시 가능함을 확인.
+- `jd_systems_logo.b64` decode 결과 원본 이미지 bytes 정상 확인.
 - 그룹 메뉴는 기존 canonical page label을 그대로 반환하므로 기존 page handler 분기와 호환된다.
 
 ## 배포 규칙
