@@ -1,20 +1,33 @@
-"""RG Manager v0.9.22 permanent sidebar visibility lock.
+"""RG Manager v0.9.29 global runtime hook + permanent sidebar visibility lock.
 
-Force the native Streamlit sidebar DOM itself to remain visible even when the
-browser remembers a collapsed state. Also keep initial_sidebar_state expanded
-and hide collapse controls.
+- Force the native Streamlit sidebar DOM itself to remain visible.
+- Keep initial_sidebar_state expanded and hide collapse controls.
+- Activate v0.9.29 provisional P&L snapshot binding before page content renders.
 """
 from __future__ import annotations
 
 import ast
+import importlib
 import re
 
 
+def _apply_runtime_fixes() -> None:
+    core_module = importlib.import_module("core")
+    views_module = importlib.import_module("pnl_views_v0912")
+    snapshot_fix = importlib.import_module("pnl_snapshot_fix_v0929")
+    snapshot_fix.apply(core_module, views_module)
+
+
 def apply(st_obj) -> None:
+    # This hook runs while the sidebar menu is rendered, before the selected
+    # page body. Bind the exact sales import id before 자료별 잠정손익 calculates
+    # and displays its provisional dataframe.
+    _apply_runtime_fixes()
+
     st_obj.markdown(
         """
 <style>
-/* v0.9.22: force the actual sidebar element back on-screen even if the
+/* force the actual sidebar element back on-screen even if the
    Streamlit client remembers it as collapsed. */
 section[data-testid="stSidebar"] {
     display: block !important;
