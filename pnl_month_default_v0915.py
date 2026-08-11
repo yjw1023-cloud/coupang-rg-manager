@@ -1,10 +1,11 @@
 """v0.9.15 safe monthly-default P&L routing.
 
-v0.9.21 compatibility:
+v0.9.27 compatibility:
 - keep v0.9.15's safe provisional routing
 - lazily load monthly_closing_v0916
 - route product confirmed P&L and whole-business monthly closing
 - apply grouped sidebar navigation and permanently lock the sidebar expanded
+- apply Production/BOM finished/component candidate filtering as the final source patch
 """
 from __future__ import annotations
 
@@ -109,7 +110,7 @@ def render_grouped_sidebar(st_obj, options, default_page=None):
 
 
 def patch_source(source: str) -> str:
-    """Route P&L pages, monthly closing, then grouped navigation safely."""
+    """Route P&L pages, monthly closing, navigation, then BOM selector filtering."""
     legacy_branch = 'elif page == "📈  잠정손익":'
     if legacy_branch not in source:
         raise RuntimeError("v0.9.15 기존 잠정손익 분기를 찾지 못했습니다.")
@@ -143,4 +144,9 @@ def patch_source(source: str) -> str:
     source = sidebar.patch_source(source)
     lock = importlib.import_module("sidebar_lock_v0921")
     source = lock.patch_source(source)
+
+    bom = importlib.import_module("bom_candidate_filter_v0927")
+    core_module = importlib.import_module("core")
+    bom.apply(core_module)
+    source = bom.patch_source(source)
     return source
