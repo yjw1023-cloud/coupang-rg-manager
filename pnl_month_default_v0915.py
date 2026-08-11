@@ -10,6 +10,10 @@ v0.9.33 compatibility:
 - simplify BOM delete into whole-finished-product cleanup with search
 - activate the v0.9.29 provisional snapshot import-id binding fix
 - auto-calculate missing monthly provisional snapshots directly from DB
+
+v0.9.51:
+- add manual VAT-exclusive advertising-spend input to monthly provisional P&L
+- manual ad spend overrides automatic ad data only for overlapping dates
 """
 from __future__ import annotations
 
@@ -39,7 +43,14 @@ def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
 
     cov = m._coverage(core, db, month)
     m._period_strip(st_obj, month, cov)
+
+    # v0.9.51: one editable manual advertising total per month. For the current
+    # month the default period is month-start through yesterday.
+    manual_ad = importlib.import_module("provisional_manual_ad_v0951")
+    manual_record = manual_ad.render_input(st_obj, core, month, db)
+
     rows, excluded = m._snapshot_rows_for_month(core, db, month)
+    rows, manual_meta = manual_ad.apply_to_rows(rows, manual_record)
     view = m._aggregate(rows)
 
     if backfill.get("failed"):
@@ -59,6 +70,8 @@ def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
             f"월을 걸쳐 있는 판매자료 {len(excluded):,}개는 월별로 정확히 나눌 수 없어 월간 합계에서 제외했습니다. "
             "월 경계에서는 판매자료 기간을 나눠 입력해 주세요."
         )
+
+    manual_ad.render_applied_notice(st_obj, manual_meta)
 
     if view.empty:
         st_obj.info(
