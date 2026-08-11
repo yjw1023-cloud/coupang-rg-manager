@@ -1,4 +1,4 @@
-"""RG Manager v0.9.17 grouped sidebar navigation.
+"""RG Manager v0.9.19 grouped sidebar navigation + branding fix.
 
 Replaces the long flat sidebar radio with:
 - standalone dashboard button
@@ -10,18 +10,19 @@ The page labels themselves are preserved, so existing page handlers do not chang
 from __future__ import annotations
 
 import ast
+import base64
 from pathlib import Path
 from typing import Iterable
 
 
-def _logo_data_uri() -> str:
+def _logo_bytes() -> bytes | None:
     try:
         payload = (Path(__file__).resolve().parent / "jd_systems_logo.b64").read_text(encoding="utf-8").strip()
         if payload:
-            return "data:image/png;base64," + payload
+            return base64.b64decode(payload)
     except Exception:
         pass
-    return ""
+    return None
 
 
 _GROUPS = [
@@ -99,13 +100,9 @@ def _group_options(options: list[str]):
         used.update(items)
         grouped.append([title, items])
 
-    # Any existing menu item not explicitly known must remain reachable.
-    # Data/admin is the safest fallback because these tend to be occasional tools.
     leftovers = [x for x in options if x not in used]
     data_group = next(x for x in grouped if x[0] == "📥 데이터·관리")
 
-    # Put obviously operational pages into the closest workflow group even if their
-    # exact emoji/spacing changes in a future patch.
     for item in leftovers[:]:
         text = item.lower()
         if "반품" in text:
@@ -128,81 +125,95 @@ def _group_options(options: list[str]):
 def _inject_css(st_obj):
     st_obj.sidebar.markdown(
         """
-        <style>
-        section[data-testid="stSidebar"] div[data-testid="stExpander"] {
-            border: 0 !important;
-            background: transparent !important;
-            box-shadow: none !important;
-            margin: 2px 0 5px 0 !important;
-        }
-        section[data-testid="stSidebar"] div[data-testid="stExpander"] details {
-            border: 0 !important;
-        }
-        section[data-testid="stSidebar"] div[data-testid="stExpander"] summary {
-            font-weight: 750 !important;
-            color: #c91528 !important;
-            padding-top: 8px !important;
-            padding-bottom: 8px !important;
-        }
-        section[data-testid="stSidebar"] .stButton > button {
-            justify-content: flex-start !important;
-            text-align: left !important;
-            min-height: 38px !important;
-            border-radius: 9px !important;
-        }
-        section[data-testid="stSidebar"] .stButton > button[kind="primary"],
-        section[data-testid="stSidebar"] .stButton > button[data-testid="stBaseButton-primary"] {
-            background: #f3192d !important;
-            border-color: #f3192d !important;
-            color: #ffffff !important;
-            font-weight: 750 !important;
-        }
-        section[data-testid="stSidebar"] .stButton > button[kind="secondary"]:hover,
-        section[data-testid="stSidebar"] .stButton > button[data-testid="stBaseButton-secondary"]:hover {
-            border-color: #f3192d !important;
-            color: #c91528 !important;
-            background: #fff5f6 !important;
-        }
-        .rg-brand-wrap {
-            margin: 2px 0 10px 0;
-            text-align: center;
-        }
-        .rg-brand-logo {
-            display: block;
-            width: 100%;
-            max-width: 240px;
-            height: auto;
-            margin: 0 auto 7px auto;
-            border-radius: 6px;
-        }
-        .rg-brand-name {
-            font-size: 14px;
-            font-weight: 750;
-            color: #334155;
-            letter-spacing: -0.1px;
-            margin: 0 0 8px 0;
-        }
-        .rg-nav-separator {
-            height: 1px;
-            background: #f3c3c9;
-            margin: 8px 0 10px 0;
-        }
-        </style>
+<style>
+section[data-testid="stSidebar"] div[data-testid="stExpander"] {
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    margin: 2px 0 6px 0 !important;
+}
+section[data-testid="stSidebar"] div[data-testid="stExpander"] details {
+    border: 0 !important;
+    background: transparent !important;
+}
+section[data-testid="stSidebar"] div[data-testid="stExpander"] summary {
+    font-weight: 750 !important;
+    color: #ffffff !important;
+    background: rgba(255,255,255,0.055) !important;
+    border: 1px solid rgba(255,255,255,0.07) !important;
+    border-radius: 9px !important;
+    padding: 9px 10px !important;
+}
+section[data-testid="stSidebar"] div[data-testid="stExpander"] summary:hover {
+    background: rgba(243,25,45,0.10) !important;
+    border-color: rgba(243,25,45,0.40) !important;
+}
+section[data-testid="stSidebar"] .stButton {
+    margin: 0 0 2px 0 !important;
+}
+section[data-testid="stSidebar"] .stButton > button {
+    justify-content: flex-start !important;
+    text-align: left !important;
+    min-height: 34px !important;
+    width: 100% !important;
+    border-radius: 7px !important;
+    background: transparent !important;
+    border: 1px solid transparent !important;
+    box-shadow: none !important;
+    color: #dce7f8 !important;
+    padding: 0.32rem 0.72rem !important;
+}
+section[data-testid="stSidebar"] .stButton > button p {
+    color: inherit !important;
+}
+section[data-testid="stSidebar"] .stButton > button[kind="primary"],
+section[data-testid="stSidebar"] .stButton > button[data-testid="stBaseButton-primary"] {
+    background: #f3192d !important;
+    border-color: #f3192d !important;
+    color: #ffffff !important;
+    font-weight: 750 !important;
+}
+section[data-testid="stSidebar"] .stButton > button[kind="secondary"],
+section[data-testid="stSidebar"] .stButton > button[data-testid="stBaseButton-secondary"] {
+    background: transparent !important;
+    border-color: transparent !important;
+    color: #dce7f8 !important;
+}
+section[data-testid="stSidebar"] .stButton > button[kind="secondary"]:hover,
+section[data-testid="stSidebar"] .stButton > button[data-testid="stBaseButton-secondary"]:hover {
+    background: rgba(243,25,45,0.12) !important;
+    border-color: rgba(243,25,45,0.35) !important;
+    color: #ffffff !important;
+}
+.rg-brand-name {
+    text-align: center;
+    font-size: 14px;
+    line-height: 1.25;
+    font-weight: 750;
+    color: #ffffff;
+    letter-spacing: -0.1px;
+    margin: 3px 0 11px 0;
+}
+.rg-nav-separator {
+    height: 1px;
+    background: rgba(243,25,45,0.38);
+    margin: 10px 0 10px 0;
+}
+</style>
         """,
         unsafe_allow_html=True,
     )
 
 
 def _render_branding(st_obj):
-    logo_uri = _logo_data_uri()
-    logo_html = f'<img src="{logo_uri}" class="rg-brand-logo" alt="JD SYSTEMS" />' if logo_uri else ""
+    logo = _logo_bytes()
+    if logo:
+        try:
+            st_obj.sidebar.image(logo, use_container_width=True)
+        except TypeError:
+            st_obj.sidebar.image(logo, use_column_width=True)
     st_obj.sidebar.markdown(
-        f"""
-        <div class="rg-brand-wrap">
-            {logo_html}
-            <div class="rg-brand-name">주식회사 제이디씨스템즈</div>
-        </div>
-        """,
+        '<div class="rg-brand-name">주식회사 제이디씨스템즈</div>',
         unsafe_allow_html=True,
     )
 
@@ -210,9 +221,9 @@ def _render_branding(st_obj):
 def _current_version() -> str:
     try:
         value = (Path(__file__).resolve().parent / "VERSION.txt").read_text(encoding="utf-8").strip()
-        return value or "0.9.18"
+        return value or "0.9.19"
     except Exception:
-        return "0.9.18"
+        return "0.9.19"
 
 
 def render_sidebar(st_obj, options: list[str], default_page: str | None = None) -> str:
@@ -232,9 +243,8 @@ def render_sidebar(st_obj, options: list[str], default_page: str | None = None) 
     _render_branding(st_obj)
 
     if dashboard:
-        dash_label = dashboard
         if st_obj.sidebar.button(
-            dash_label,
+            dashboard,
             key="rg_nav_dashboard_v0917",
             use_container_width=True,
             type="primary" if current == dashboard else "secondary",
@@ -267,7 +277,7 @@ def _find_menu_assignment(source: str):
     try:
         tree = ast.parse(source)
     except SyntaxError as exc:
-        raise RuntimeError(f"v0.9.17 메뉴 적용 전 소스 문법 오류: {exc}") from exc
+        raise RuntimeError(f"v0.9.19 메뉴 적용 전 소스 문법 오류: {exc}") from exc
 
     candidates = []
     for node in ast.walk(tree):
@@ -280,8 +290,7 @@ def _find_menu_assignment(source: str):
         if not isinstance(call, ast.Call):
             continue
         func = call.func
-        is_radio = isinstance(func, ast.Attribute) and func.attr == "radio"
-        if not is_radio:
+        if not (isinstance(func, ast.Attribute) and func.attr == "radio"):
             continue
 
         option_list = None
@@ -331,19 +340,20 @@ def _find_menu_assignment(source: str):
     return candidates[0][1], candidates[0][2]
 
 
-def _remove_pre_menu_sidebar_caption(source: str, menu_node) -> str:
-    """Remove the old version caption above the menu so branding is truly first."""
+def _remove_legacy_sidebar_branding(source: str) -> str:
+    """Remove old sidebar brand/version elements while preserving normal help captions."""
     try:
         tree = ast.parse(source)
     except SyntaxError:
         return source
-    candidates = []
+
+    nodes = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Expr) or not isinstance(node.value, ast.Call):
             continue
         call = node.value
         func = call.func
-        if not (isinstance(func, ast.Attribute) and func.attr == "caption"):
+        if not (isinstance(func, ast.Attribute) and func.attr in {"caption", "markdown", "title", "header", "subheader"}):
             continue
         owner = func.value
         if not (isinstance(owner, ast.Attribute) and owner.attr == "sidebar"):
@@ -351,15 +361,29 @@ def _remove_pre_menu_sidebar_caption(source: str, menu_node) -> str:
         root = owner.value
         if not (isinstance(root, ast.Name) and root.id == "st"):
             continue
-        if int(getattr(node, "lineno", 10**9)) < int(menu_node.lineno):
-            candidates.append(node)
-    if not candidates:
+        if not call.args:
+            continue
+        arg = call.args[0]
+        if not (isinstance(arg, ast.Constant) and isinstance(arg.value, str)):
+            continue
+        label = arg.value.lower()
+        if (
+            "rg manager" in label
+            or "쿠팡 로켓그로스" in label
+            or "v0." in label
+            or "grouped navigation" in label
+            or "monthly closing" in label
+            or "legacy erp import" in label
+        ):
+            nodes.append(node)
+
+    if not nodes:
         return source
-    node = max(candidates, key=lambda x: int(x.lineno))
     lines = source.splitlines(keepends=True)
-    start = int(node.lineno) - 1
-    end = int(getattr(node, "end_lineno", node.lineno))
-    lines[start:end] = []
+    for node in sorted(nodes, key=lambda x: int(x.lineno), reverse=True):
+        line_start = int(node.lineno) - 1
+        line_end = int(getattr(node, "end_lineno", node.lineno))
+        lines[line_start:line_end] = []
     return "".join(lines)
 
 
@@ -369,12 +393,12 @@ def patch_source(source: str) -> str:
 
     found = _find_menu_assignment(source)
     if not found:
-        raise RuntimeError("v0.9.17 사이드바 radio 메뉴 목록을 찾지 못했습니다.")
+        raise RuntimeError("v0.9.19 사이드바 radio 메뉴 목록을 찾지 못했습니다.")
     node, labels = found
-    source = _remove_pre_menu_sidebar_caption(source, node)
+    source = _remove_legacy_sidebar_branding(source)
     found = _find_menu_assignment(source)
     if not found:
-        raise RuntimeError("v0.9.17 기존 버전표시 제거 후 메뉴를 다시 찾지 못했습니다.")
+        raise RuntimeError("v0.9.19 기존 버전표시 제거 후 메뉴를 다시 찾지 못했습니다.")
     node, labels = found
 
     lines = source.splitlines(keepends=True)
