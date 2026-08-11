@@ -1,18 +1,12 @@
-"""RG Manager v0.9.48 canonical RG original-product restoration.
+"""RG Manager v0.9.48+ canonical RG restoration and v0.9.49 cost repair.
 
 The user supplied authoritative Rocket Growth original option IDs in v0.9.47.
-Some of those legitimate products may already have been archived or registered as
-return-discount aliases by older heuristics.  That creates a confusing state where
-new registration says "already exists" while Item Master hides the product.
+Some legitimate products may already have been archived or registered as
+return-discount aliases by older heuristics.  This repair restores those originals.
 
-This repair makes canonical IDs authoritative normal managed products:
-- reactivate existing canonical product rows and mark them as finished goods;
-- remove any erroneous return_discount_aliases/return_discount_sales records for
-  canonical option IDs;
-- remove return-discount inventory deductions created by that erroneous mapping;
-- rebuild ordinary SALESSTAT inventory deductions for the canonical product from
-  existing sales_stats history, idempotently;
-- force future canonical option IDs to bypass every return-sale resolver.
+v0.9.49 also applies user-supplied baseline unit costs once per option ID.  A small
+migration table records each applied option so later real production can update the
+finished-product unit cost normally without the startup repair overwriting it again.
 
 No product row or sales history is physically deleted.
 """
@@ -20,11 +14,66 @@ from __future__ import annotations
 
 _APPLIED = False
 
+# User-confirmed baseline costs (KRW / unit), 2026-08-11.
+USER_BASELINE_COSTS = {
+    "95612444686": 3540.0,
+    "95849578033": 1560.0,
+    "95849578032": 1560.0,
+    "95648063867": 1310.0,
+    "95631138189": 6493.0,
+}
+
 
 def _exists(con, name: str) -> bool:
     return con.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
     ).fetchone() is not None
+
+
+def _apply_user_baseline_costs(core):
+    """Apply each user-provided cost only once to the matching option ID."""
+    now = core.now_iso()
+    applied, already, missing = [], [], []
+    with core._conn(core.DEFAULT_DB) as con:
+        con.execute(
+            """CREATE TABLE IF NOT EXISTS manual_cost_migrations (
+                   option_id TEXT PRIMARY KEY,
+                   unit_cost REAL NOT NULL,
+                   applied_at TEXT NOT NULL
+               )"""
+        )
+        for oid, cost in USER_BASELINE_COSTS.items():
+            done = con.execute(
+                "SELECT unit_cost FROM manual_cost_migrations WHERE option_id=?",
+                (str(oid),),
+            ).fetchone()
+            if done:
+                already.append(str(oid))
+                continue
+
+            row = con.execute(
+                """SELECT id,active FROM products
+                   WHERE CAST(option_id AS TEXT)=?
+                   ORDER BY active DESC,id ASC LIMIT 1""",
+                (str(oid),),
+            ).fetchone()
+            if not row:
+                missing.append(str(oid))
+                continue
+
+            pid = int(row["id"])
+            con.execute(
+                "UPDATE products SET unit_cost=?,updated_at=? WHERE id=?",
+                (float(cost), now, pid),
+            )
+            con.execute(
+                """INSERT INTO manual_cost_migrations(option_id,unit_cost,applied_at)
+                   VALUES(?,?,?)""",
+                (str(oid), float(cost), now),
+            )
+            applied.append({"option_id": str(oid), "product_id": pid, "unit_cost": float(cost)})
+
+    return {"applied": applied, "already": already, "missing": missing}
 
 
 def _repair_one(core, rd, oid: str, canonical_name: str):
@@ -41,9 +90,6 @@ def _repair_one(core, rd, oid: str, canonical_name: str):
         if not rows:
             return None
 
-        # option_id is intended to be unique. If legacy data ever contains more
-        # than one row, keep the oldest row as the canonical managed product and
-        # archive later duplicates without deleting history.
         primary = rows[0]
         pid = int(primary["id"])
         duplicate_ids = [int(r["id"]) for r in rows[1:]]
@@ -60,8 +106,6 @@ def _repair_one(core, rd, oid: str, canonical_name: str):
                 (str(oid),),
             ).fetchall()
 
-        # Undo only return-sale postings that were tied to this canonical option.
-        # The corresponding normal sale postings are rebuilt below from sales_stats.
         for r in return_sales:
             import_id = int(r["import_id"])
             con.execute(
@@ -112,7 +156,6 @@ def _repair_one(core, rd, oid: str, canonical_name: str):
             import_id = int(sr["import_id"])
             qty = float(sr["net_qty"] or 0)
             ref = f"SALESSTAT-{import_id}"
-            # Idempotent: replace the canonical product's standard sales posting.
             con.execute(
                 "DELETE FROM inventory_txns WHERE txn_type='판매차감' AND ref_no=? AND product_id=?",
                 (ref, pid),
@@ -156,26 +199,23 @@ def apply(core_module, return_discount_module, canonical_module) -> None:
         else:
             repaired.append(result)
 
+    cost_result = _apply_user_baseline_costs(core_module)
+
     core_module.CANONICAL_RG_RESTORE_RESULT = {
         "repaired": repaired,
         "missing": missing,
+        "baseline_costs": cost_result,
     }
 
-    # Canonical option IDs are authoritative normal sales even if a stale alias is
-    # somehow reintroduced later. Strip them before delegating to older resolvers.
     previous_resolve = rd._resolve
     canonical_ids = set(str(x) for x in canonical_module.CANONICAL_RG)
 
     def resolve(core, db, parsed):
-        normal_rows = []
         other_rows = []
         for row in parsed:
             oid = str(row.get("option_id") or "")
-            if oid in canonical_ids:
-                normal_rows.append(row)
-            else:
+            if oid not in canonical_ids:
                 other_rows.append(row)
-        # Canonical rows intentionally produce no return mapping.
         return previous_resolve(core, db, other_rows) if other_rows else {}
 
     rd._resolve = resolve
