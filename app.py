@@ -95,6 +95,10 @@ purchase_history_v092 = _original_import_module("purchase_history_v092")
 purchase_history_v094 = _original_import_module("purchase_history_v094")
 purchase_history_v094.apply(purchase_history_v092)
 
+# v0.9.42 purchase-cost UX: latest + quantity-weighted average purchase cost.
+purchase_cost_ui_v0942 = _original_import_module("purchase_cost_ui_v0942")
+purchase_cost_ui_v0942.apply(purchase_history_v092)
+
 # v0.9.3 return management dashboard.
 return_management_v093 = _original_import_module("return_management_v093")
 
