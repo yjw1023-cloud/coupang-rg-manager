@@ -205,3 +205,9 @@ def apply(return_discount_module, core_module) -> None:
     rd._post_discount = post_discount
     rd._rg_return_sale_match_v0944_applied = True
     _APPLIED = True
+
+    # v0.9.47: after the generic matcher is installed, apply the user-supplied
+    # canonical Rocket Growth original-product registry.  This also cleans
+    # high-confidence legacy return children already present in the local DB.
+    import canonical_rg_cleanup_v0947
+    canonical_rg_cleanup_v0947.apply(core_module, rd)
