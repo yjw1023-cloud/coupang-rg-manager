@@ -1,6 +1,6 @@
 {
-  "version": "0.9.43",
-  "message": "품목관리 원가 표시를 상품 성격에 맞게 분리. 자체창고 품목은 기준원가·최근매입가·매입평균원가를 표시하고, 쿠팡RG 완제품은 기준원가·최근생산원가·생산평균원가를 표시. 생산평균원가는 생산수량 가중평균으로 계산하며, 기준원가가 0원이지만 양수의 생산원가 이력이 존재하는 완제품은 원가상태에 '⚠ 생산원가 존재'를 표시하고 화면 상단에도 경고. 기준원가나 과거 생산/매입/재고 데이터는 자동 수정하지 않고 표시·진단만 변경. v0.9.42 이하 기능 유지",
+  "version": "0.9.44",
+  "message": "품목 삭제 및 쿠팡 반품 할인판매 코드 정리 강화. 별도 '품목 삭제' 메뉴를 추가해 반품코드 정리/일반 품목 삭제/삭제품목 복원을 분리. 반품코드 정리에서는 잘못 생성된 쿠팡 옵션ID와 정상 원상품을 사용자가 직접 연결하면 해당 옵션을 return_discount_aliases에 저장하고 기존 일반 판매차감도 반품 할인판매로 재분류한 뒤 child 상품을 보관처리. 향후 판매자료에서는 ERP의 활성 동일 옵션ID는 정상판매로 처리하고, ERP에 없는 옵션ID는 상품명이 강하게 유사하면서 실제 판매단가가 정상 원상품의 동일파일 또는 과거 정상 판매단가보다 낮을 때만 반품 할인판매로 자동 연결. 가격 근거가 없거나 후보가 여러 개면 임의 생성/매칭하지 않고 차단. 반품 alias로 확인된 child는 즉시 active=0으로 내려 ERP 품목/BOM/검색에 떠돌지 않게 함. v0.9.43 이하 기능 유지",
   "files": [
     "app.py",
     "VERSION.txt",
@@ -10,6 +10,7 @@
     "inventory_ui_v084.py",
     "production_v085.py",
     "item_ui_v086.py",
+    "item_delete_ui_v0944.py",
     "sales_period_v087.py",
     "inventory_flow_v088.py",
     "purchase_batch_v089.py",
@@ -24,6 +25,7 @@
     "sales_pnl_ui_v098.py",
     "return_discount_v099.py",
     "sales_import_guard_v0941.py",
+    "return_sale_match_v0944.py",
     "sales_pnl_zero_v0910.py",
     "pnl_cost_commission_v0911.py",
     "pnl_views_v0912.py",
