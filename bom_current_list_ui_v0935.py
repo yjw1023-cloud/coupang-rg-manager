@@ -1,4 +1,4 @@
-"""RG Manager v0.9.38 current BOM list presentation.
+"""RG Manager v0.9.39 current BOM list presentation.
 
 Only the current BOM table is intercepted.
 - Adds a search box immediately above the table.
@@ -6,8 +6,8 @@ Only the current BOM table is intercepted.
 - Forces the BOM quantity input to use positive integers only.
 - Activates the return-generated product guard so Coupang return-only option IDs
   are never suggested as managed BOM finished products.
-- Repairs legacy current BOMs that were attached to a return-generated option
-  instead of the original managed Coupang option.
+- Repairs legacy current BOMs that were attached to a return-generated/old option
+  instead of the exact current Coupang production option.
 Database BOM quantities already stored are not modified by the table formatter.
 """
 from __future__ import annotations
@@ -86,14 +86,18 @@ def apply() -> None:
     import production_batch_v095
     import return_product_guard_v0937
     import bom_parent_repair_v0938
+    import production_bom_repair_v0939
 
     # v0.9.37: remove return-only option IDs from managed BOM selectors.
     return_product_guard_v0937.apply()
 
-    # v0.9.38: if an old current BOM is still attached to one of those return
-    # option rows, move only the current bom_items parent link to the normal
-    # managed product. Batch validation retries this repair before production.
+    # v0.9.38: generic repair for explicit/clean return aliases.
     bom_parent_repair_v0938.apply(core, production_batch_v095)
+
+    # v0.9.39: production Excel's exact Coupang option ID is the target. This
+    # additionally fixes old legacy-ERP return codes that own a BOM/history and
+    # were intentionally skipped by v0.9.38's sales-only safety rule.
+    production_bom_repair_v0939.apply(core, production_batch_v095)
 
     if getattr(st, "_rg_current_bom_ui_v0936_applied", False):
         return
