@@ -14,6 +14,10 @@ v0.9.33 compatibility:
 v0.9.51:
 - add manual VAT-exclusive advertising-spend input to monthly provisional P&L
 - manual ad spend overrides automatic ad data only for overlapping dates
+
+v0.9.52:
+- add product-level monthly overrides for expected realized unit price, inbound/outbound
+  fee total, and delivery fee total
 """
 from __future__ import annotations
 
@@ -51,7 +55,7 @@ def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
 
     rows, excluded = m._snapshot_rows_for_month(core, db, month)
     rows, manual_meta = manual_ad.apply_to_rows(rows, manual_record)
-    view = m._aggregate(rows)
+    auto_view = m._aggregate(rows)
 
     if backfill.get("failed"):
         details = "; ".join(str(x.get("error") or "알 수 없는 오류") for x in backfill["failed"][:3])
@@ -73,12 +77,23 @@ def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
 
     manual_ad.render_applied_notice(st_obj, manual_meta)
 
-    if view.empty:
+    if auto_view.empty:
         st_obj.info(
             f"{month}의 잠정손익을 생성하지 못했습니다. "
             "판매자료는 존재하지만 자동 계산 과정에서 오류가 발생했는지 위 안내를 확인해 주세요."
         )
         return
+
+    # v0.9.52: product-level manual overrides.  The editor compares against the
+    # current automatic monthly values, then the saved overrides are applied only
+    # to the selected product/month before summary/search/table rendering.
+    manual_adjust = importlib.import_module("provisional_manual_adjust_v0952")
+    adjustments = manual_adjust.render_editor(st_obj, core, month, auto_view, db)
+    view, adjust_meta = manual_adjust.apply_to_view(auto_view, adjustments)
+    if adjust_meta.get("applied"):
+        st_obj.caption(
+            f"이 달의 상품별 수동조정 {int(adjust_meta['applied']):,}개가 잠정손익에 반영되어 있습니다."
+        )
 
     q = st_obj.text_input("상품 검색", placeholder="상품명 또는 옵션ID 입력", key="provisional_month_search_v0915")
     filtered = m._search(view, q)
