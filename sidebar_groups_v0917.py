@@ -9,7 +9,7 @@ The page labels themselves are preserved, so existing page handlers do not chang
 """
 from __future__ import annotations
 
-import re
+import ast
 from typing import Iterable
 
 
@@ -88,13 +88,9 @@ def _group_options(options: list[str]):
         used.update(items)
         grouped.append([title, items])
 
-    # Any existing menu item not explicitly known must remain reachable.
-    # Data/admin is the safest fallback because these tend to be occasional tools.
     leftovers = [x for x in options if x not in used]
     data_group = next(x for x in grouped if x[0] == "📥 데이터·관리")
 
-    # Put obviously operational pages into the closest workflow group even if their
-    # exact emoji/spacing changes in a future patch.
     for item in leftovers[:]:
         text = item.lower()
         if "반품" in text:
@@ -166,9 +162,8 @@ def render_sidebar(st_obj, options: list[str], default_page: str | None = None) 
     _inject_css(st_obj)
 
     if dashboard:
-        dash_label = dashboard
         if st_obj.sidebar.button(
-            dash_label,
+            dashboard,
             key="rg_nav_dashboard_v0917",
             use_container_width=True,
             type="primary" if current == dashboard else "secondary",
@@ -195,36 +190,92 @@ def render_sidebar(st_obj, options: list[str], default_page: str | None = None) 
     return current
 
 
-def _extract_menu_block(source: str):
-    # The base application uses one sidebar radio whose second argument is a
-    # literal list of page labels. All later patch modules add/remove strings in
-    # that same list before this patch runs.
-    pattern = re.compile(
-        r"(?P<indent>^[ \t]*)page\s*=\s*st\.sidebar\.radio\(\s*"
-        r"(?P<title>['\"][^'\"]*['\"])\s*,\s*"
-        r"(?P<list>\[(?:\s*['\"][^'\"]*['\"]\s*,?\s*)+\])"
-        r"(?P<tail>\s*(?:,[^\)]*)?\))",
-        re.MULTILINE,
-    )
-    return pattern.search(source)
+def _find_menu_assignment(source: str):
+    """Find the final literal radio menu assignment using Python AST."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as exc:
+        raise RuntimeError(f"v0.9.17 메뉴 적용 전 소스 문법 오류: {exc}") from exc
+
+    candidates = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        if not isinstance(target, ast.Name) or target.id != "page":
+            continue
+        call = node.value
+        if not isinstance(call, ast.Call):
+            continue
+        func = call.func
+        if not (isinstance(func, ast.Attribute) and func.attr == "radio"):
+            continue
+
+        option_list = None
+        for arg in call.args:
+            if isinstance(arg, (ast.List, ast.Tuple)):
+                vals = []
+                ok = True
+                for elt in arg.elts:
+                    if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+                        vals.append(elt.value)
+                    else:
+                        ok = False
+                        break
+                if ok and vals:
+                    option_list = vals
+                    break
+        if not option_list:
+            for kw in call.keywords:
+                if kw.arg in {"options", "items"} and isinstance(kw.value, (ast.List, ast.Tuple)):
+                    vals = []
+                    ok = True
+                    for elt in kw.value.elts:
+                        if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+                            vals.append(elt.value)
+                        else:
+                            ok = False
+                            break
+                    if ok and vals:
+                        option_list = vals
+                        break
+        if not option_list:
+            continue
+
+        score = len(option_list)
+        joined = " ".join(option_list)
+        if "대시보드" in joined:
+            score += 20
+        if "재고관리" in joined:
+            score += 10
+        if "잠정손익" in joined or "판매·손익" in joined:
+            score += 10
+        candidates.append((score, node, option_list))
+
+    if not candidates:
+        return None
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    return candidates[0][1], candidates[0][2]
 
 
 def patch_source(source: str) -> str:
     if "_rg_menu_options_v0917" in source:
         return source
 
-    match = _extract_menu_block(source)
-    if not match:
-        raise RuntimeError("v0.9.17 사이드바 메뉴 목록을 찾지 못했습니다.")
+    found = _find_menu_assignment(source)
+    if not found:
+        raise RuntimeError("v0.9.17 사이드바 radio 메뉴 목록을 찾지 못했습니다.")
+    node, labels = found
 
-    list_text = match.group("list")
-    labels = re.findall(r"['\"]([^'\"]+)['\"]", list_text)
-    if not labels:
-        raise RuntimeError("v0.9.17 사이드바 메뉴 항목을 읽지 못했습니다.")
-
-    indent = match.group("indent")
+    lines = source.splitlines(keepends=True)
+    start_idx = int(node.lineno) - 1
+    end_idx = int(getattr(node, "end_lineno", node.lineno))
+    original_first = lines[start_idx]
+    indent = original_first[: len(original_first) - len(original_first.lstrip())]
+    newline = "\r\n" if original_first.endswith("\r\n") else "\n"
     replacement = (
-        f"{indent}_rg_menu_options_v0917 = {labels!r}\n"
-        f"{indent}page = pnl_month_default_v0915.render_grouped_sidebar(st, _rg_menu_options_v0917)"
+        f"{indent}_rg_menu_options_v0917 = {labels!r}{newline}"
+        f"{indent}page = pnl_month_default_v0915.render_grouped_sidebar(st, _rg_menu_options_v0917){newline}"
     )
-    return source[: match.start()] + replacement + source[match.end() :]
+    lines[start_idx:end_idx] = [replacement]
+    return "".join(lines)
