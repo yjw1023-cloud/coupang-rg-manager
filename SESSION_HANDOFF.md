@@ -3,10 +3,10 @@
 이 문서는 `yjw1023-cloud/coupang-rg-manager`의 최신 작업 기준이다.
 
 ## 현재 기준
-- main 배포 버전: **v0.9.19**
-- 현재 개발 버전: **v0.9.19**
+- main 배포 버전: **v0.9.20**
+- 현재 개발 버전: **v0.9.20**
 - 현재 개발 브랜치: **`feature/v0.9.16-monthly-closing`**
-- v0.9.16 월 결산 + v0.9.17 그룹형 사이드바 + v0.9.18 브랜딩 + v0.9.19 사이드바 표시 오류 수정까지 main 배포 기준으로 본다.
+- v0.9.16 월 결산 + v0.9.17 그룹형 사이드바 + v0.9.18 브랜딩 + v0.9.19 사이드바 표시 오류 수정 + v0.9.20 접힘 복구 버튼 수정까지 main 배포 기준으로 본다.
 - 새 세션은 `PROJECT_CONTEXT.md` → `SESSION_HANDOFF.md` → `VERSION.txt` → `update/latest.json` → 최신 patch module 순서로 확인한다.
 
 ## 프로젝트 기본 구조
@@ -37,6 +37,7 @@
 - 월간 잠정손익: `pnl_month_default_v0914.py`, `pnl_month_default_v0915.py`
 - 월 결산: `monthly_closing_v0916.py`
 - 그룹형 사이드바: `sidebar_groups_v0917.py`
+- 사이드바 접힘 복구: `sidebar_reopen_v0920.py`
 - JD SYSTEMS 로고 원본: `jd_systems_logo.b64`
 
 ## 손익 구조
@@ -96,16 +97,23 @@
 - 회사명은 한 줄 HTML로 렌더링해 Markdown 코드블록 오인 가능성을 제거.
 - 모든 사이드바 버튼 기본 배경/테두리를 투명으로 강제하고 선택된 primary 메뉴만 JD SYSTEMS 레드 배경 + 흰 글씨.
 - expander 그룹 헤더는 어두운 사이드바에 맞는 반투명 배경/흰 글씨로 통일.
-- source AST 패치에서 구형 브랜드/버전 요소만 제거한다: `RG Manager`, `쿠팡 로켓그로스`, `v0.*`, `grouped navigation`, `monthly closing`, `legacy ERP import`.
+- source AST 패치에서 구형 브랜드/버전 요소만 제거한다.
 - `데이터는 이 PC의 SQLite에 저장됩니다.` 같은 일반 안내 caption은 유지한다.
-- `pnl_month_default_v0915.py`에서 `v0.9.17 · grouped navigation` caption을 다시 삽입하던 코드를 제거했다.
+
+## v0.9.20 사이드바 접힘 복구
+관련 모듈: `sidebar_reopen_v0920.py`
+
+사용자가 사이드바를 접은 뒤 다시 펼치는 컨트롤이 사라지는 실제 화면을 확인해 수정했다.
+- 기존 ERP 테마가 Streamlit header를 숨겨도 접힌 사이드바 복구 컨트롤은 항상 보이도록 별도 CSS를 메인 영역에서 주입한다.
+- Streamlit의 `collapsedControl`과 `stSidebarCollapsedControl` 두 selector를 모두 대응한다.
+- 접힌 상태의 복구 버튼은 좌측 상단 40×40px JD SYSTEMS 레드 버튼으로 고정한다.
+- header 자체는 높이 0/투명 상태로 두고 toolbar/status/main menu는 숨겨 기존 화면 레이아웃을 해치지 않는다.
+- `pnl_month_default_v0915.render_grouped_sidebar()`가 먼저 `sidebar_reopen_v0920.apply(st_obj)`를 적용한 뒤 기존 그룹형 사이드바를 렌더링한다.
 
 ## 검증
 - `monthly_closing_v0916.py` syntax compile 확인.
 - `sidebar_groups_v0917.py` v0.9.19 syntax compile 확인.
-- 샘플 소스에서 구형 RG Manager/회사 설명/구버전 문구 제거 + 데이터 저장 안내 유지 확인.
-- 샘플 flat sidebar source를 그룹형 라우팅으로 변환한 뒤 compile 확인.
-- `jd_systems_logo.b64` decode 결과 원본 이미지 bytes 정상 확인.
+- `sidebar_reopen_v0920.py`는 단순 Streamlit CSS 주입 모듈로 별도 DB/상태 변경 없음.
 - 그룹 메뉴는 기존 canonical page label을 그대로 반환하므로 기존 page handler 분기와 호환된다.
 
 ## 배포 규칙
