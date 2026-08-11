@@ -101,6 +101,11 @@ return_management_v093 = _original_import_module("return_management_v093")
 # v0.9.5 all-or-nothing production from Coupang inbound Excel.
 production_batch_v095 = _original_import_module("production_batch_v095")
 
+# v0.9.40 direct production-target BOM reconciliation. Apply immediately after
+# the production module loads so the production page cannot miss the patch.
+production_bom_link_v0940 = _original_import_module("production_bom_link_v0940")
+production_bom_link_v0940.apply(core, production_batch_v095)
+
 # v0.9.6 reusable search boxes for product/item list tables.
 search_ui_v096 = _original_import_module("search_ui_v096")
 search_ui_v096.apply()
