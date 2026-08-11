@@ -79,6 +79,9 @@ production_patch.apply(core)
 # v0.8.6 dedicated item master page.
 item_ui_v086 = _original_import_module("item_ui_v086")
 
+# v0.9.44 dedicated item deletion / manual return-option cleanup page.
+item_delete_ui_v0944 = _original_import_module("item_delete_ui_v0944")
+
 # v0.8.7 sales-stat upload period. v0.9.7 fixes duplicate replacement widget rendering.
 sales_period_v087 = _original_import_module("sales_period_v087")
 sales_period_v087.apply(core)
@@ -125,6 +128,10 @@ sales_pnl_ui_v098.apply()
 # v0.9.9 returned-item discount resale.
 return_discount_v099 = _original_import_module("return_discount_v099")
 return_discount_v099.apply(core)
+
+# v0.9.44 exact ERP option = normal sale; unknown similar + discounted option = return sale.
+return_sale_match_v0944 = _original_import_module("return_sale_match_v0944")
+return_sale_match_v0944.apply(return_discount_v099, core)
 
 # v0.9.11 moving weighted-average cost + 10.8% commission fallback.
 pnl_cost_commission_v0911 = _original_import_module("pnl_cost_commission_v0911")
@@ -191,6 +198,7 @@ if loader_exec not in source:
 source = source.replace(
     loader_exec,
     'source = item_ui_v086.patch_source(source)\n'
+    'source = item_delete_ui_v0944.patch_source(source)\n'
     'source = purchase_history_v092.patch_source(source)\n'
     'source = return_management_v093.patch_source(source)\n'
     'source = production_batch_v095.patch_source(source)\n'
@@ -201,6 +209,7 @@ source = source.replace(
 )
 globals()["LEGACY_REPAIR_RESULT"] = LEGACY_REPAIR_RESULT
 globals()["item_ui_v086"] = item_ui_v086
+globals()["item_delete_ui_v0944"] = item_delete_ui_v0944
 globals()["purchase_history_v092"] = purchase_history_v092
 globals()["purchase_history_v094"] = purchase_history_v094
 globals()["return_management_v093"] = return_management_v093
@@ -209,6 +218,7 @@ globals()["search_ui_v096"] = search_ui_v096
 globals()["pnl_views_v0912"] = pnl_views_v0912
 globals()["sales_pnl_ui_v098"] = sales_pnl_ui_v098
 globals()["return_discount_v099"] = return_discount_v099
+globals()["return_sale_match_v0944"] = return_sale_match_v0944
 globals()["pnl_cost_commission_v0911"] = pnl_cost_commission_v0911
 globals()["sales_pnl_zero_v0910"] = sales_pnl_zero_v0910
 globals()["provisional_pnl_ui_v0913"] = provisional_pnl_ui_v0913
