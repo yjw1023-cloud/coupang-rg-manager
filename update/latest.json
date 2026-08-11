@@ -1,6 +1,6 @@
 {
-  "version": "0.9.36",
-  "message": "생산·BOM 현재 BOM 표시 수정 재적용: v0.9.35에서 현재 BOM 표가 pandas Styler 형태로 전달될 때 전용 패치가 표를 인식하지 못해 검색창과 정수 수량 표시가 적용되지 않던 문제 수정. DataFrame/Styler 모두 인식하고 소요수량 컬럼을 %d 정수 형식으로 강제. 완제품 1개당 소요수량 입력도 1 이상 자연수만 입력되도록 변경. BOM 삭제 목록형 선택, 월 잠정손익 자동생성 및 기존 기능 유지",
+  "version": "0.9.37",
+  "message": "반품 판매자료에서 쿠팡이 자동 부여한 임시 옵션ID가 ERP 관리상품처럼 BOM 완제품 추천에 노출되는 문제 수정. return_discount_aliases/return_discount_sales로 확인된 반품 파생 상품행은 이력을 보존한 채 보관상태로 전환하고, 과거 alias 등록이 빠진 판매자료 유래 코드도 원가 0원·판매자료 전용·관리/생산이력 없음·더 먼저 등록된 원상품과 이름/구성수량이 강하게 일치하는 경우 BOM 완제품 추천에서 제외. 원래 등록된 정상 상품은 유지. v0.9.36 현재 BOM 검색/정수표시 및 기존 기능 유지",
   "files": [
     "app.py",
     "VERSION.txt",
@@ -37,6 +37,7 @@
     "bom_delete_v0928.py",
     "bom_delete_cleanup_v0933.py",
     "bom_current_list_ui_v0935.py",
+    "return_product_guard_v0937.py",
     "pnl_snapshot_fix_v0929.py",
     "jd_systems_logo.b64"
   ]
