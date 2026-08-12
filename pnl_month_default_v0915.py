@@ -1,30 +1,10 @@
-"""v0.9.15 safe monthly-default P&L routing.
+"""v0.9.56 safe monthly-default P&L routing.
 
-v0.9.33 compatibility:
-- keep v0.9.15's safe provisional routing
-- lazily load monthly_closing_v0916
-- route product confirmed P&L and whole-business monthly closing
-- apply grouped sidebar navigation and permanently lock the sidebar expanded
-- apply Production/BOM finished/component candidate filtering
-- add a dedicated BOM delete tab after the candidate-filter patch
-- simplify BOM delete into whole-finished-product cleanup with search
-- activate the v0.9.29 provisional snapshot import-id binding fix
-- auto-calculate missing monthly provisional snapshots directly from DB
-
-v0.9.51:
-- add manual VAT-exclusive advertising-spend input to monthly provisional P&L
-- manual ad spend overrides automatic ad data only for overlapping dates
-
-v0.9.52:
-- add product-level monthly overrides for expected realized unit price, inbound/outbound
-  fee total, and delivery fee total
-
-v0.9.53:
-- keep provisional P&L numeric columns numeric and use Styler only for comma/percent
-  presentation so Streamlit header sorting uses numeric values instead of strings
-
-v0.9.55:
-- render advertising and product-estimate manual controls as strong bordered blocks
+v0.9.56:
+- remove manual monthly advertising total allocation
+- upload Coupang advertising performance reports instead
+- attribute advertising spend directly by `광고집행 옵션ID`
+- uploaded advertising data is authoritative; sales-ratio allocation is not used
 """
 from __future__ import annotations
 
@@ -39,18 +19,9 @@ def _sortable_pnl_style(pd_obj, df):
 
     qty_cols = ["판매수량"]
     money_cols = [
-        "예상 실현단가",
-        "예상매출",
-        "원가/개",
-        "매출원가",
-        "판매수수료",
-        "입출고비",
-        "배송비",
-        "반품충당",
-        "광고비",
-        "광고제외이익",
-        "예상이익",
-        "RG비용",
+        "예상 실현단가", "예상매출", "원가/개", "매출원가", "판매수수료",
+        "입출고비", "배송비", "반품충당", "광고비", "광고제외이익",
+        "예상이익", "RG비용",
     ]
     pct_cols = ["이익률(%)"]
 
@@ -61,7 +32,11 @@ def _sortable_pnl_style(pd_obj, df):
     formatters = {}
     for col in qty_cols:
         if col in show.columns:
-            formatters[col] = lambda v: f"{int(round(v)):,}" if abs(float(v) - round(float(v))) < 1e-9 else f"{float(v):,.1f}"
+            formatters[col] = lambda v: (
+                f"{int(round(v)):,}"
+                if abs(float(v) - round(float(v))) < 1e-9
+                else f"{float(v):,.1f}"
+            )
     for col in money_cols:
         if col in show.columns:
             formatters[col] = lambda v: f"{int(round(float(v))):,}"
@@ -90,15 +65,16 @@ def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
     db = db_path or core.DEFAULT_DB
 
     st_obj.markdown("## 📈 잠정손익")
-    st_obj.caption("평소 입력한 판매통계를 월 단위로 합산한 잠정 손익입니다. 기본 조회기간은 선택 월의 1일~말일입니다.")
+    st_obj.caption(
+        "평소 입력한 판매통계를 월 단위로 합산한 잠정 손익입니다. "
+        "광고비는 쿠팡 광고성과보고서의 광고집행 옵션ID 기준으로 직접 반영합니다."
+    )
 
     months = m._available_months(core, db)
     cur = m._current_month()
     default_idx = months.index(cur) if cur in months else 0
     month = st_obj.selectbox("조회 월", months, index=default_idx, key="provisional_month_v0915")
 
-    # v0.9.32: monthly P&L no longer depends on the user opening the per-file
-    # provisional page. Missing snapshots are calculated from DB immediately.
     backfill = {"attempted": 0, "saved": 0, "failed": []}
     try:
         autobackfill = importlib.import_module("pnl_month_autobackfill_v0932")
@@ -111,17 +87,17 @@ def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
 
     manual_blocks = importlib.import_module("pnl_manual_blocks_v0955")
 
-    # v0.9.51/v0.9.55: one editable manual advertising total per month, shown
-    # inside a high-contrast operational block.
-    manual_ad = importlib.import_module("provisional_manual_ad_v0951")
-    manual_record = manual_blocks.render_ad(st_obj, manual_ad, core, month, db)
+    # v0.9.56: advertising report upload replaces manual advertising total input.
+    ad_report = importlib.import_module("provisional_ad_report_v0956")
+    ad_dataset = manual_blocks.render_ad(st_obj, ad_report, core, month, db)
 
     rows, excluded = m._snapshot_rows_for_month(core, db, month)
-    rows, manual_meta = manual_ad.apply_to_rows(rows, manual_record)
     auto_view = m._aggregate(rows)
 
     if backfill.get("failed"):
-        details = "; ".join(str(x.get("error") or "알 수 없는 오류") for x in backfill["failed"][:3])
+        details = "; ".join(
+            str(x.get("error") or "알 수 없는 오류") for x in backfill["failed"][:3]
+        )
         st_obj.warning(
             "일부 판매자료의 잠정손익 자동 계산에 실패했습니다. "
             f"오류: {details}"
@@ -129,16 +105,15 @@ def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
 
     if cov.get("missing_snapshots", 0):
         st_obj.warning(
-            f"이 달의 판매자료 중 잠정손익 계산값을 아직 만들지 못한 자료가 {cov['missing_snapshots']:,}개 있습니다. "
-            "월 잠정손익 화면에서 자동 계산을 시도했지만 완료되지 않은 자료입니다. 위 오류 내용을 확인해 주세요."
+            f"이 달의 판매자료 중 잠정손익 계산값을 아직 만들지 못한 자료가 "
+            f"{cov['missing_snapshots']:,}개 있습니다. "
+            "월 잠정손익 화면에서 자동 계산을 시도했지만 완료되지 않은 자료입니다."
         )
     if excluded:
         st_obj.warning(
-            f"월을 걸쳐 있는 판매자료 {len(excluded):,}개는 월별로 정확히 나눌 수 없어 월간 합계에서 제외했습니다. "
-            "월 경계에서는 판매자료 기간을 나눠 입력해 주세요."
+            f"월을 걸쳐 있는 판매자료 {len(excluded):,}개는 월별로 정확히 나눌 수 없어 "
+            "월간 합계에서 제외했습니다. 월 경계에서는 판매자료 기간을 나눠 입력해 주세요."
         )
-
-    manual_ad.render_applied_notice(st_obj, manual_meta)
 
     if auto_view.empty:
         st_obj.info(
@@ -147,17 +122,27 @@ def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
         )
         return
 
-    # v0.9.52/v0.9.55: product-level manual overrides use reliable ordinary
-    # input controls and are placed in a separate high-contrast bordered block.
+    # Advertising report is authoritative. This also zeros any old snapshot ad
+    # values so historical/manual ratio allocation cannot leak into the new view.
+    auto_view, ad_meta = ad_report.apply_to_view(auto_view, ad_dataset)
+    ad_report.render_applied_notice(st_obj, ad_meta, ad_dataset)
+
+    # Product-level unit-price / RG-fee manual overrides remain available.
     manual_adjust = importlib.import_module("provisional_manual_adjust_v0952")
-    adjustments = manual_blocks.render_adjust(st_obj, manual_adjust, core, month, auto_view, db)
+    adjustments = manual_blocks.render_adjust(
+        st_obj, manual_adjust, core, month, auto_view, db
+    )
     view, adjust_meta = manual_adjust.apply_to_view(auto_view, adjustments)
     if adjust_meta.get("applied"):
         st_obj.caption(
             f"이 달의 상품별 수동조정 {int(adjust_meta['applied']):,}개가 잠정손익에 반영되어 있습니다."
         )
 
-    q = st_obj.text_input("상품 검색", placeholder="상품명 또는 옵션ID 입력", key="provisional_month_search_v0915")
+    q = st_obj.text_input(
+        "상품 검색",
+        placeholder="상품명 또는 옵션ID 입력",
+        key="provisional_month_search_v0915",
+    )
     filtered = m._search(view, q)
     if q.strip():
         st_obj.caption(f"검색 결과 {len(filtered):,}개 / 전체 {len(view):,}개")
@@ -165,15 +150,14 @@ def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
     try:
         ui = importlib.import_module("provisional_pnl_ui_v0913")
         ui._inject_css()
-        st_obj.markdown(ui._summary_html(ui._summary(filtered)), unsafe_allow_html=True)
+        st_obj.markdown(
+            ui._summary_html(ui._summary(filtered)),
+            unsafe_allow_html=True,
+        )
     except Exception:
         pass
 
-    # v0.9.53: do not call m._format() here. That helper converts money columns
-    # to comma-formatted strings, which causes lexicographic/disabled sorting in
-    # the interactive grid. Keep real numeric dtypes and style presentation only.
     show_obj = _sortable_pnl_style(pd_obj, filtered)
-
     st_obj.dataframe(
         show_obj,
         use_container_width=True,
