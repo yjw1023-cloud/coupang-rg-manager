@@ -1,6 +1,6 @@
 {
-  "version": "0.9.69",
-  "message": "창고별 재고 실사 Excel에서 모든 창고 시트에 같은 상품목록이 반복되던 문제를 수정합니다. 자체창고 시트는 자체창고 품목(raw)만, 쿠팡RG 시트는 완제품(finished)만, 반품창고 시트는 완제품만 표시합니다. 기타 보조창고는 실제 현재고가 있는 품목만 표시하고, 보관 품목도 해당 창고에 실제 재고가 남아 있을 때만 포함합니다. 업로드·실사조정 안전장치는 v0.9.68 방식 그대로 유지됩니다.",
+  "version": "0.9.70",
+  "message": "사용자가 지정한 신규 상품 3종을 ERP에 자동 등록합니다. 완제품은 쿠팡 옵션ID 95912623408, 95912717676, 95912816721로 등록하고, 각 상품과 같은 이름의 자체창고 품목도 현재 ERP에서 비어 있는 다음 JDS#### 코드를 자동 배정해 등록합니다. 기존 동일 옵션ID 또는 같은 이름의 자체창고 품목이 있으면 중복 생성하지 않으며, 기존 원가와 재고는 변경하지 않습니다.",
   "files": [
     "app.py",
     "VERSION.txt",
@@ -16,6 +16,7 @@
     "inventory_flow_v088.py",
     "inventory_stocktake_v0968.py",
     "inventory_stocktake_v0969.py",
+    "requested_product_seed_v0970.py",
     "purchase_batch_v089.py",
     "purchase_match_ui_v090.py",
     "purchase_match_ui_v091.py",
