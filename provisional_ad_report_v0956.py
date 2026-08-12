@@ -326,7 +326,11 @@ def apply_to_view(view: pd.DataFrame, dataset: dict):
     if "광고비" not in out.columns:
         out["광고비"] = 0.0
     else:
-        out["광고비"] = 0.0
+        out["광고비"] = pd.to_numeric(out["광고비"], errors="coerce").fillna(0.0).astype(float)
+        out.loc[:, "광고비"] = 0.0
+    for col in ("예상이익", "이익률(%)"):
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors="coerce").fillna(0.0).astype(float)
 
     matched_ids = set()
     for idx in out.index:
