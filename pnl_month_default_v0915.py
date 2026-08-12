@@ -1,8 +1,9 @@
-"""v0.9.63 safe monthly-default P&L routing.
+"""v0.9.64 safe monthly-default P&L routing.
 
-The monthly provisional page is rendered by pnl_month_v0963. It keeps the
-v0.9.61 client-side sortable HTML table and adds returned-item sale consolidation
-into the original managed product row.
+The monthly provisional page is rendered by pnl_month_v0964. It keeps the
+v0.9.61 client-side sortable HTML table, consolidates returned-item sales into
+the original product, and treats negative returned-item quantities as
+cancellation/refund reversals instead of new sales.
 """
 from __future__ import annotations
 
@@ -10,7 +11,7 @@ import importlib
 
 
 def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
-    m = importlib.import_module("pnl_month_v0963")
+    m = importlib.import_module("pnl_month_v0964")
     return m.render_provisional_month_page(st_obj, pd_obj, core, db_path)
 
 
