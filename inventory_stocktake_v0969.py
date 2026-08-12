@@ -10,6 +10,10 @@ Export eligibility:
 - Archived products are shown only when that specific warehouse still has stock.
 
 The upload/preview/commit safety rules remain those of v0.9.68.
+
+v0.9.70 startup hook:
+- register the three user-requested Coupang finished products;
+- register same-name raw/self-warehouse counterparts using next-free JDS codes.
 """
 from __future__ import annotations
 
@@ -153,6 +157,16 @@ def _build_workbook(core, db) -> bytes:
 
 
 def apply(core_module):
+    # v0.9.70: register the products requested by the user before inventory/item
+    # pages read the product master.  The seed is idempotent and never creates stock.
+    try:
+        import requested_product_seed_v0970 as seed
+        seed.apply(core_module)
+    except Exception as exc:
+        # Product registration must not make the whole ERP unavailable.  Keep the
+        # exception available for diagnostics while allowing the existing ERP to run.
+        setattr(core_module, "_rg_requested_product_seed_v0970_error", str(exc))
+
     # Patch the v0.9.68 exporter before its existing UI wrapper is installed.
     base._build_workbook = _build_workbook
     return base.apply(core_module)
