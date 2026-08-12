@@ -1,8 +1,8 @@
-"""v0.9.60 safe monthly-default P&L routing.
+"""v0.9.61 safe monthly-default P&L routing.
 
-The monthly provisional page is rendered by pnl_month_v0960 so the advertising
-report uploader remains visible, the HTML table styling remains deterministic,
-and clicking a table header toggles ascending/descending sorting.
+The monthly provisional page is rendered by pnl_month_v0961 so the advertising
+report uploader remains visible, styling stays deterministic, and header sorting
+runs entirely inside the embedded table without reloading the ERP.
 """
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import importlib
 
 
 def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
-    m = importlib.import_module("pnl_month_v0960")
+    m = importlib.import_module("pnl_month_v0961")
     return m.render_provisional_month_page(st_obj, pd_obj, core, db_path)
 
 
