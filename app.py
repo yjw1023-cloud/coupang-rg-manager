@@ -10,6 +10,20 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+# v0.9.62: Streamlit reruns reuse Python's module cache.  The updater replaces
+# files on disk, but without clearing these modules an already-running ERP can
+# keep executing the previous P&L renderer until the whole process is restarted.
+# Purge only the monthly provisional renderer chain on every app rerun so the
+# freshly downloaded implementation is used immediately after an update.
+for _rg_mod in (
+    "pnl_month_default_v0915",
+    "pnl_month_v0959",
+    "pnl_month_v0960",
+    "pnl_month_v0961",
+):
+    sys.modules.pop(_rg_mod, None)
+importlib.invalidate_caches()
+
 # Apply v0.8 purchase rules and legacy-import guards whenever
 # the pinned v0.7 loader imports those modules.
 _original_import_module = importlib.import_module
