@@ -1,8 +1,8 @@
-"""v0.9.61 safe monthly-default P&L routing.
+"""v0.9.63 safe monthly-default P&L routing.
 
-The monthly provisional page is rendered by pnl_month_v0961 so the advertising
-report uploader remains visible, styling stays deterministic, and header sorting
-runs entirely inside the embedded table without reloading the ERP.
+The monthly provisional page is rendered by pnl_month_v0963. It keeps the
+v0.9.61 client-side sortable HTML table and adds returned-item sale consolidation
+into the original managed product row.
 """
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import importlib
 
 
 def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
-    m = importlib.import_module("pnl_month_v0961")
+    m = importlib.import_module("pnl_month_v0963")
     return m.render_provisional_month_page(st_obj, pd_obj, core, db_path)
 
 
