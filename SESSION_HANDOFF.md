@@ -3,151 +3,121 @@
 이 문서는 `yjw1023-cloud/coupang-rg-manager`의 새 ChatGPT 세션 인계 기준이다.
 
 ## 현재 기준
-- main 배포 버전: **v0.9.63**
+- main 배포 버전: **v0.9.65**
 - 현재 개발 기준 브랜치: **main**
 - 저장소: `yjw1023-cloud/coupang-rg-manager`
 - 새 세션은 반드시 `PROJECT_CONTEXT.md` → `SESSION_HANDOFF.md` → `SESSION_LOG_2026-08-12.md` → `VERSION.txt` → `update/latest.json` → 최근 관련 모듈 순서로 확인한다.
-- 오늘 상세 작업기록은 `SESSION_LOG_2026-08-12.md`에 저장했다.
-
-## 프로젝트 기본 구조
 - Windows 로컬 ERP / Streamlit / SQLite `data/rocketgrowth.db`
-- 실행: `run.bat`
 - 자동 업데이트: GitHub `main`의 `update/latest.json`
 - 사용자 데이터(`data`, `.venv`, `sample_data`)는 업데이트로 덮어쓰지 않는다.
-- 기본 실행 구조는 안정된 v0.7 loader를 `_code_base/app_loader_v07.py`에 유지하고 최신 기능은 별도 patch module을 순차 적용하는 방식이다.
-- 쿠팡 연결키는 가능한 경우 옵션ID를 우선한다.
-- 실제 생산/판매는 재고 부족 때문에 막지 않고 마이너스 재고를 허용한다.
 
-## 현재 핵심 손익 메뉴
+## 손익 메뉴
 - `📈 잠정손익`: 월 단위 잠정 관리손익
-- `📄 자료별 잠정손익`: 판매통계 파일별 잠정손익
+- `📄 자료별 잠정손익`
 - `✅ 상품 확정손익`
 - `📒 월 결산`
 - `🔍 손익차이분석`
 
-## 2026-08-12 최신 변경 — 반품판매 원상품 연결 (v0.9.63)
+## 2026-08-12 최신 변경 — 판매수량 의미 수정 (v0.9.65)
+사용자 확인으로 잠정손익의 `판매수량`을 순판매수량으로 보여주던 방식이 잘못됐음을 확인했다.
+
+**현재 고정 원칙**
+- `판매수량` = 쿠팡 판매통계의 실제 판매수량(gross sales)
+- `취소수량` = 취소/환불 수량
+- `순판매수량` = 판매수량 - 취소수량에 해당하는 signed net quantity. 손익/재고/원가 역분개 계산용
+- 화면의 판매수량을 다시 net_qty로 표시하지 말 것.
+- 매출원가/손익 계산은 반드시 `순판매수량` 기준으로 유지한다.
+- 수동 예상 실현단가 조정도 판매수량이 아니라 `순판매수량`을 곱해 예상매출을 계산한다.
+
+구현:
+- `sales_quantity_v0965.py`가 sales_stats 스키마를 동적으로 확인하여 실제 판매수량/취소수량/순판매수량을 월별로 집계
+- 가능한 경우 `sales_qty`/`판매수량` 및 `cancel_qty`/`취소수량` 계열 컬럼을 직접 사용
+- 구형 DB에서 gross 컬럼이 없으면 net+cancel 조합으로 복원하고, net만 있으면 안전한 fallback 사용
+- `provisional_manual_netqty_v0965.py`가 수동 실현단가 계산 시 순판매수량을 사용하도록 보정
+- `pnl_month_v0965.py`에서 월 잠정손익에 적용
+
+## 반품판매 원상품 연결
 사용자가 아래 2개 옵션을 반품판매 데이터라고 직접 확인했다.
 - `95119299567` → 원상품 `94475454519` 글라스 네일 파일 5P
 - `95156135112` → 원상품 `94350296878` 휴대용 가죽 구두주걱 미니 2P
 
-현재 방식:
-- 위 반품 옵션ID는 `return_discount_aliases`에 원상품과 명시적으로 연결
-- 기존에 별도 쿠팡RG 판매상품처럼 생성된 반품 옵션은 보관처리
-- 기존 일반 `판매차감`은 제거하고 원상품 `반품창고`에서 `반품할인판매차감`으로 복구
-- 원 판매통계 이력은 감사 추적을 위해 원래 import child row에 유지
-- 월 잠정손익에서는 반품 옵션을 별도 상품행으로 표시하지 않음
-- 원상품 행의 `판매수량`, `예상매출`, `예상이익` 등에 반품판매를 합산
-- 대신 `반품판매수량`, `반품판매매출` 2개 열을 추가하여 반품 재판매 기여분을 별도로 확인
-- 원상품 정상판매가 없는 달에 반품판매만 있더라도 원상품 옵션ID/상품명으로 한 행 표시
+현재 원칙:
+- 반품 옵션ID는 `return_discount_aliases`로 원상품에 연결
+- 반품 옵션은 독립 관리상품/독립 잠정손익 행으로 두지 않음
+- 원 판매통계 이력은 감사 추적을 위해 유지
+- 재고는 원상품 `반품창고`에서 `반품할인판매차감`으로 처리
+- 월 잠정손익에서는 원상품 행으로 합산
+- `반품판매수량` = 실제 반품상품 판매수량(gross)
+- `반품판매취소` = 반품판매의 취소/환불 수량
+- `반품판매매출` = 쿠팡 자료의 취소/환불을 포함한 반품판매 순매출
+- 원가는 연결된 원상품 원가 사용
+- 반품판매의 매출원가는 signed `순판매수량`으로 계산: +판매는 원가 차감, 취소/환불은 원가 환입
+- 반품판매 여부를 net_qty의 양/음 부호만 보고 판정하지 말 것. 실제 판매수량/취소수량 컬럼을 우선한다.
 
-관련 파일:
+관련 최신 파일:
 - `return_sale_pnl_v0963.py`
-- `pnl_month_v0963.py`
+- `return_sale_pnl_v0964.py`
+- `return_sale_pnl_v0965.py`
+- `sales_quantity_v0965.py`
+- `provisional_manual_netqty_v0965.py`
+- `pnl_month_v0965.py`
 - `pnl_month_default_v0915.py`
 
-## 2026-08-12 변경 — 광고비 처리
-기존 월 광고비 수동입력 + 매출비율 배분 방식은 **폐기**했다.
-
-현재 방식:
+## 광고비 처리
+기존 월 광고비 수동입력 + 매출비율 배분 방식은 폐기.
 - 잠정손익에서 쿠팡 `광고성과보고서 Excel` 업로드
-- `광고집행 옵션ID` 기준으로 광고비를 해당 상품에 직접 귀속
+- `광고집행 옵션ID` 기준으로 광고비 직접 귀속
 - 동일 옵션ID 여러 광고행 합산
-- 판매가 없고 광고만 집행된 옵션도 광고비 손실행으로 표시
-- 광고성과보고서 파일명의 `YYYYMMDD_YYYYMMDD` 기간 자동 인식
-- 동일 파일 중복 업로드 차단
-- 기간 중복 시 교체 가능
+- 판매가 없고 광고만 집행된 옵션도 광고비 손실행 표시
 - 과거 수동 광고비는 계산에서 사용하지 않음
-- 과거 `provisional_manual_ad_spend` 레코드는 잠정손익 진입 시 자동 정리
-- 상품별 예상 실현단가 / 입출고비 / 배송비 수동조정 기능은 유지
+- 상품별 예상 실현단가 / 입출고비 / 배송비 수동조정은 유지
 
-실제 검증 파일:
-- 2026-08-01~2026-08-11
-- 광고집행 옵션 19개
-- 광고비 합계 2,478,464원
-- 옵션ID별 귀속 후 총액 일치 확인
+검증 파일: 2026-08-01~2026-08-11, 광고집행 옵션 19개, 광고비 합계 2,478,464원.
 
-관련 파일:
-- `provisional_ad_report_v0956.py`
-- `provisional_manual_cleanup_v0957.py`
-- `pnl_manual_blocks_v0955.py`
-- `provisional_manual_adjust_v0952.py`
-
-## 2026-08-12 변경 — 잠정손익 표
-사용자 요구:
-- 헤더 배경색 + 굵은 글씨
-- 상품명 좌측 정렬 + 들여쓰기
-- 숫자 중앙 정렬
-- 좌우 가로 스크롤 허용
-- 내부 세로 스크롤 제거
-- 헤더 클릭 오름차순/내림차순 정렬
-
-진행 이력:
-- v0.9.58: `st.dataframe` CSS/Styler 방식 실패
-- v0.9.59: HTML 테이블로 디자인 문제 해결, 정렬 기능 사라짐
-- v0.9.60: URL/query parameter 헤더 정렬 → ERP 전체 재로드 문제 발생
-- v0.9.61: embedded HTML/JavaScript 내부 정렬로 변경
-- v0.9.62: 업데이트 후 import 캐시에 구버전 렌더러가 남지 않도록 모듈 캐시 무효화/재로드 보강
-
-**현재 사용자 최종 확인 상태:** 헤더 클릭 정렬이 정상 동작한다고 확인함 (`아니다 된다`).
-
-현재 표 상태:
+## 잠정손익 표 UI 유지사항
 - 파란 헤더 + 굵은 글씨
-- 상품명 좌측 정렬
-- 숫자 중앙 정렬
-- 전체 행 세로 표시
+- 상품명 좌측 정렬, 숫자 중앙 정렬
 - 가로 스크롤 유지
-- 헤더 클릭 시 ERP 재시작 없이 클라이언트 내부에서 정렬
-
-관련 파일:
-- `pnl_month_v0959.py`
-- `pnl_month_v0960.py`
-- `pnl_month_v0961.py`
-- `pnl_month_default_v0915.py`
-- `app.py`
+- 내부 세로 스크롤 없이 전체 행 표시
+- 헤더 클릭 정렬은 embedded HTML/JavaScript 내부에서 처리
+- URL/query parameter 정렬 방식으로 되돌리지 말 것.
 
 ## 중요한 금지/유지사항
-- 헤더 정렬을 다시 `<a href>` / query parameter 방식으로 구현하지 말 것. ERP 재로드 문제가 있었다.
-- 광고비를 다시 수동 총액 + 매출비율 배분 방식으로 되돌리지 말 것.
-- 광고성과보고서 업로드 메뉴는 잠정손익에서 계속 보여야 한다.
-- 반품판매 옵션을 다시 독립 관리상품/독립 잠정손익 행으로 되돌리지 말 것. 원상품에 합산하되 반품판매수량/매출을 별도 열로 보인다.
+- 광고비를 수동 총액 + 매출비율 배분 방식으로 되돌리지 말 것.
+- 반품판매 옵션을 다시 독립 잠정손익 행으로 되돌리지 말 것.
+- `판매수량`에 순판매수량을 넣지 말 것. 취소수량과 순판매수량을 별도로 유지한다.
+- 손익 원가 계산은 gross 판매수량이 아니라 signed 순판매수량 기준이다.
+- 월 결산은 매입액 전체 비용처리가 아니라 재고식 매출원가 원칙 유지.
 - 사용자의 로컬 SQLite DB에 직접 접근할 수 없으므로 필요한 DB 정리는 업데이트 코드가 실행되도록 구현한다.
 
-## 기존 기능 중 계속 유지해야 할 것
+## 기존 기능 유지
 - 품목코드 JDS 자동부여 및 과거 코드 영구예약
 - 품목 보관삭제/복원
 - 생산/BOM 후보 필터와 BOM 전체삭제 정책
 - 월 잠정손익 snapshot 자동 backfill
-- 사이드바 그룹화/로고/8517 포트 관련 기존 안정화
-- 월 결산은 매입액 전체 비용처리가 아니라 재고식 매출원가 원칙 유지
+- 사이드바 그룹화/로고/8517 포트 안정화
 
-## 다음 세션에서 가장 먼저 할 것
+## 다음 세션 시작 시
 1. `PROJECT_CONTEXT.md`
-2. 이 `SESSION_HANDOFF.md`
+2. `SESSION_HANDOFF.md`
 3. `SESSION_LOG_2026-08-12.md`
-4. `VERSION.txt`와 `update/latest.json`이 모두 **v0.9.63 이상**인지 확인
-5. 사용자가 새 요구를 주면 현재 `main` 기준으로 이어서 작업
+4. `VERSION.txt`와 `update/latest.json`이 모두 **v0.9.65 이상**인지 확인
+5. 잠정손익 수량 문제면 `sales_quantity_v0965.py` → `return_sale_pnl_v0965.py` → `pnl_month_v0965.py` 순서로 확인
 
 ## 최신 주요 파일
 - `app.py`
 - `VERSION.txt`
 - `update/latest.json`
-- `return_sale_pnl_v0963.py`
-- `pnl_month_v0963.py`
+- `sales_quantity_v0965.py`
+- `return_sale_pnl_v0965.py`
+- `provisional_manual_netqty_v0965.py`
+- `pnl_month_v0965.py`
+- `pnl_month_default_v0915.py`
 - `return_discount_v099.py`
 - `return_sale_match_v0944.py`
 - `canonical_rg_cleanup_v0947.py`
 - `provisional_ad_report_v0956.py`
-- `provisional_manual_cleanup_v0957.py`
 - `provisional_manual_adjust_v0952.py`
-- `pnl_manual_blocks_v0955.py`
-- `pnl_month_v0959.py`
-- `pnl_month_v0960.py`
 - `pnl_month_v0961.py`
-- `pnl_month_default_v0915.py`
 - `pnl_month_autobackfill_v0932.py`
-- `provisional_pnl_ui_v0913.py`
 - `monthly_closing_v0916.py`
-- `item_ui_v086.py`
-- `production_batch_v095.py`
-- `bom_candidate_filter_v0927.py`
-- `bom_delete_cleanup_v0933.py`
