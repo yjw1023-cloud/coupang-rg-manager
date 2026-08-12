@@ -1,6 +1,6 @@
 {
-  "version": "0.9.63",
-  "message": "반품판매 옵션을 원상품에 연결하고 월 잠정손익에서 원상품 행으로 합산합니다. 반품판매수량과 반품판매매출 열을 추가하며 기존 광고성과보고서 직접 귀속과 표 정렬 기능은 유지합니다.",
+  "version": "0.9.64",
+  "message": "반품판매 음수수량을 취소/환불 역분개로 처리하도록 수정합니다. 원상품 손익에 합산할 때 +판매는 원가를 차감하고 -취소/환불은 원가를 되돌립니다. 반품판매수량은 양수 판매만, 반품판매취소는 음수 수량의 절대값, 반품판매매출은 취소/환불을 포함한 순매출로 표시합니다. 기존 자료 삭제나 재업로드 없이 현재 DB 자료로 다시 계산됩니다.",
   "files": [
     "app.py",
     "VERSION.txt",
@@ -28,6 +28,7 @@
     "sales_import_guard_v0941.py",
     "return_sale_match_v0944.py",
     "return_sale_pnl_v0963.py",
+    "return_sale_pnl_v0964.py",
     "canonical_rg_cleanup_v0947.py",
     "canonical_rg_restore_v0948.py",
     "august_cost_backfill_v0950.py",
@@ -39,6 +40,7 @@
     "pnl_month_v0960.py",
     "pnl_month_v0961.py",
     "pnl_month_v0963.py",
+    "pnl_month_v0964.py",
     "sales_pnl_zero_v0910.py",
     "pnl_cost_commission_v0911.py",
     "pnl_views_v0912.py",
