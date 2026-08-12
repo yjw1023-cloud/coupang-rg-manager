@@ -3,7 +3,7 @@
 이 문서는 `yjw1023-cloud/coupang-rg-manager`의 새 ChatGPT 세션 인계 기준이다.
 
 ## 현재 기준
-- main 배포 버전: **v0.9.62**
+- main 배포 버전: **v0.9.63**
 - 현재 개발 기준 브랜치: **main**
 - 저장소: `yjw1023-cloud/coupang-rg-manager`
 - 새 세션은 반드시 `PROJECT_CONTEXT.md` → `SESSION_HANDOFF.md` → `SESSION_LOG_2026-08-12.md` → `VERSION.txt` → `update/latest.json` → 최근 관련 모듈 순서로 확인한다.
@@ -25,7 +25,27 @@
 - `📒 월 결산`
 - `🔍 손익차이분석`
 
-## 2026-08-12 최신 변경 — 광고비 처리
+## 2026-08-12 최신 변경 — 반품판매 원상품 연결 (v0.9.63)
+사용자가 아래 2개 옵션을 반품판매 데이터라고 직접 확인했다.
+- `95119299567` → 원상품 `94475454519` 글라스 네일 파일 5P
+- `95156135112` → 원상품 `94350296878` 휴대용 가죽 구두주걱 미니 2P
+
+현재 방식:
+- 위 반품 옵션ID는 `return_discount_aliases`에 원상품과 명시적으로 연결
+- 기존에 별도 쿠팡RG 판매상품처럼 생성된 반품 옵션은 보관처리
+- 기존 일반 `판매차감`은 제거하고 원상품 `반품창고`에서 `반품할인판매차감`으로 복구
+- 원 판매통계 이력은 감사 추적을 위해 원래 import child row에 유지
+- 월 잠정손익에서는 반품 옵션을 별도 상품행으로 표시하지 않음
+- 원상품 행의 `판매수량`, `예상매출`, `예상이익` 등에 반품판매를 합산
+- 대신 `반품판매수량`, `반품판매매출` 2개 열을 추가하여 반품 재판매 기여분을 별도로 확인
+- 원상품 정상판매가 없는 달에 반품판매만 있더라도 원상품 옵션ID/상품명으로 한 행 표시
+
+관련 파일:
+- `return_sale_pnl_v0963.py`
+- `pnl_month_v0963.py`
+- `pnl_month_default_v0915.py`
+
+## 2026-08-12 변경 — 광고비 처리
 기존 월 광고비 수동입력 + 매출비율 배분 방식은 **폐기**했다.
 
 현재 방식:
@@ -52,7 +72,7 @@
 - `pnl_manual_blocks_v0955.py`
 - `provisional_manual_adjust_v0952.py`
 
-## 2026-08-12 최신 변경 — 잠정손익 표
+## 2026-08-12 변경 — 잠정손익 표
 사용자 요구:
 - 헤더 배경색 + 굵은 글씨
 - 상품명 좌측 정렬 + 들여쓰기
@@ -89,6 +109,7 @@
 - 헤더 정렬을 다시 `<a href>` / query parameter 방식으로 구현하지 말 것. ERP 재로드 문제가 있었다.
 - 광고비를 다시 수동 총액 + 매출비율 배분 방식으로 되돌리지 말 것.
 - 광고성과보고서 업로드 메뉴는 잠정손익에서 계속 보여야 한다.
+- 반품판매 옵션을 다시 독립 관리상품/독립 잠정손익 행으로 되돌리지 말 것. 원상품에 합산하되 반품판매수량/매출을 별도 열로 보인다.
 - 사용자의 로컬 SQLite DB에 직접 접근할 수 없으므로 필요한 DB 정리는 업데이트 코드가 실행되도록 구현한다.
 
 ## 기존 기능 중 계속 유지해야 할 것
@@ -103,13 +124,18 @@
 1. `PROJECT_CONTEXT.md`
 2. 이 `SESSION_HANDOFF.md`
 3. `SESSION_LOG_2026-08-12.md`
-4. `VERSION.txt`와 `update/latest.json`이 모두 **v0.9.62 이상**인지 확인
+4. `VERSION.txt`와 `update/latest.json`이 모두 **v0.9.63 이상**인지 확인
 5. 사용자가 새 요구를 주면 현재 `main` 기준으로 이어서 작업
 
 ## 최신 주요 파일
 - `app.py`
 - `VERSION.txt`
 - `update/latest.json`
+- `return_sale_pnl_v0963.py`
+- `pnl_month_v0963.py`
+- `return_discount_v099.py`
+- `return_sale_match_v0944.py`
+- `canonical_rg_cleanup_v0947.py`
 - `provisional_ad_report_v0956.py`
 - `provisional_manual_cleanup_v0957.py`
 - `provisional_manual_adjust_v0952.py`
