@@ -1,6 +1,6 @@
 {
-  "version": "0.9.66",
-  "message": "월 잠정손익의 수량과 매출이 서로 다른 시점의 자료를 섞어 쓰는 문제를 수정합니다. 판매통계 원자료 또는 계산 버전이 바뀌면 해당 월의 기존 provisional snapshot을 현재 sales_stats 기준으로 다시 계산한 뒤 월 손익을 표시합니다. v0.9.65의 판매수량/취소수량/순판매수량 분리, 반품판매 원상품 합산, 광고성과보고서 직접 귀속은 유지됩니다. 기존 판매자료를 삭제하거나 재업로드할 필요는 없습니다.",
+  "version": "0.9.67",
+  "message": "v0.9.66 잠정손익 화면에서 존재하지 않는 _snapshot_rows_for_month 함수를 호출해 발생한 AttributeError를 수정합니다. 월 화면 진입 전에 스냅샷 갱신을 먼저 실행한 뒤 검증된 v0.9.65 화면을 렌더링합니다. 기존 판매자료 삭제나 재업로드는 필요 없습니다.",
   "files": [
     "app.py",
     "VERSION.txt",
@@ -47,6 +47,7 @@
     "pnl_month_v0964.py",
     "pnl_month_v0965.py",
     "pnl_month_v0966.py",
+    "pnl_month_v0967.py",
     "sales_pnl_zero_v0910.py",
     "pnl_cost_commission_v0911.py",
     "pnl_views_v0912.py",
