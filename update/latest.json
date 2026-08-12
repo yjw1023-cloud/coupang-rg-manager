@@ -1,6 +1,6 @@
 {
-  "version": "0.9.62",
-  "message": "잠정손익 표 정렬 구버전 캐시 문제 수정. Streamlit은 업데이트 후에도 이미 import된 Python 모듈을 메모리에서 재사용할 수 있어 v0.9.60의 링크 정렬 코드가 계속 실행되는 경우가 있었다. v0.9.62에서는 app.py가 매 rerun 시작 시 pnl_month_default_v0915 및 v0.9.59~v0.9.61 잠정손익 렌더러 모듈을 sys.modules에서 제거하고 import 캐시를 무효화한 뒤 최신 렌더러를 다시 로드한다. 실제 표 정렬은 v0.9.61 방식대로 embedded HTML/JavaScript 안에서만 처리되어 헤더 클릭 시 ERP 재실행이나 새 화면 이동이 없어야 한다. 파란 헤더, 굵은 글씨, 상품명 왼쪽 정렬, 숫자 가운데 정렬, 가로 스크롤, 세로 전체표 표시, 광고성과보고서 Excel 업로드 및 광고집행 옵션ID 기준 광고비 반영은 유지. v0.9.61 이하 기능 유지.",
+  "version": "0.9.63",
+  "message": "반품판매 옵션을 원상품에 연결하고 월 잠정손익에서 원상품 행으로 합산합니다. 반품판매수량과 반품판매매출 열을 추가하며 기존 광고성과보고서 직접 귀속과 표 정렬 기능은 유지합니다.",
   "files": [
     "app.py",
     "VERSION.txt",
@@ -27,6 +27,7 @@
     "return_discount_v099.py",
     "sales_import_guard_v0941.py",
     "return_sale_match_v0944.py",
+    "return_sale_pnl_v0963.py",
     "canonical_rg_cleanup_v0947.py",
     "canonical_rg_restore_v0948.py",
     "august_cost_backfill_v0950.py",
@@ -37,6 +38,7 @@
     "pnl_month_v0959.py",
     "pnl_month_v0960.py",
     "pnl_month_v0961.py",
+    "pnl_month_v0963.py",
     "sales_pnl_zero_v0910.py",
     "pnl_cost_commission_v0911.py",
     "pnl_views_v0912.py",
