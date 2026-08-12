@@ -1,6 +1,6 @@
 {
-  "version": "0.9.64",
-  "message": "반품판매 음수수량을 취소/환불 역분개로 처리하도록 수정합니다. 원상품 손익에 합산할 때 +판매는 원가를 차감하고 -취소/환불은 원가를 되돌립니다. 반품판매수량은 양수 판매만, 반품판매취소는 음수 수량의 절대값, 반품판매매출은 취소/환불을 포함한 순매출로 표시합니다. 기존 자료 삭제나 재업로드 없이 현재 DB 자료로 다시 계산됩니다.",
+  "version": "0.9.65",
+  "message": "잠정손익의 판매수량 의미를 바로잡습니다. 판매수량은 쿠팡 판매통계의 실제 판매수량, 취소수량은 취소/환불 수량, 순판매수량은 손익·재고 계산용 순수량으로 분리합니다. 반품판매도 net_qty 부호로 판매/취소를 추정하지 않고 판매통계의 실제 판매수량·취소수량을 우선 사용하며 원상품 행에 합산합니다. 수동 실현단가 조정은 순판매수량 기준으로 계산해 손익이 틀어지지 않도록 보정합니다. 기존 자료 삭제나 재업로드는 필요 없습니다.",
   "files": [
     "app.py",
     "VERSION.txt",
@@ -29,6 +29,9 @@
     "return_sale_match_v0944.py",
     "return_sale_pnl_v0963.py",
     "return_sale_pnl_v0964.py",
+    "return_sale_pnl_v0965.py",
+    "sales_quantity_v0965.py",
+    "provisional_manual_netqty_v0965.py",
     "canonical_rg_cleanup_v0947.py",
     "canonical_rg_restore_v0948.py",
     "august_cost_backfill_v0950.py",
@@ -41,6 +44,7 @@
     "pnl_month_v0961.py",
     "pnl_month_v0963.py",
     "pnl_month_v0964.py",
+    "pnl_month_v0965.py",
     "sales_pnl_zero_v0910.py",
     "pnl_cost_commission_v0911.py",
     "pnl_views_v0912.py",
