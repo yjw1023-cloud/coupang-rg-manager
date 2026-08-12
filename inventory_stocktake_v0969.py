@@ -11,9 +11,10 @@ Export eligibility:
 
 The upload/preview/commit safety rules remain those of v0.9.68.
 
-v0.9.70 startup hook:
-- register the three user-requested Coupang finished products;
-- register same-name raw/self-warehouse counterparts using next-free JDS codes.
+v0.9.71 startup hook:
+- ensure the three user-requested Coupang finished products exist;
+- ensure same-name raw/self-warehouse counterparts exist using next-free JDS codes;
+- register/update the requested BOM quantities idempotently.
 """
 from __future__ import annotations
 
@@ -157,15 +158,14 @@ def _build_workbook(core, db) -> bytes:
 
 
 def apply(core_module):
-    # v0.9.70: register the products requested by the user before inventory/item
-    # pages read the product master.  The seed is idempotent and never creates stock.
+    # v0.9.71: create/reactivate requested product masters and set their BOMs.
+    # The seed is idempotent; Streamlit reruns never duplicate products/BOM rows.
     try:
-        import requested_product_seed_v0970 as seed
+        import requested_product_bom_seed_v0971 as seed
         seed.apply(core_module)
     except Exception as exc:
-        # Product registration must not make the whole ERP unavailable.  Keep the
-        # exception available for diagnostics while allowing the existing ERP to run.
-        setattr(core_module, "_rg_requested_product_seed_v0970_error", str(exc))
+        # Keep the ERP available even if a local legacy schema causes a seed error.
+        setattr(core_module, "_rg_requested_product_bom_seed_v0971_error", str(exc))
 
     # Patch the v0.9.68 exporter before its existing UI wrapper is installed.
     base._build_workbook = _build_workbook
