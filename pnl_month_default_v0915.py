@@ -1,10 +1,19 @@
-"""v0.9.56 safe monthly-default P&L routing.
+"""v0.9.58 safe monthly-default P&L routing.
 
 v0.9.56:
 - remove manual monthly advertising total allocation
 - upload Coupang advertising performance reports instead
 - attribute advertising spend directly by `광고집행 옵션ID`
 - uploaded advertising data is authoritative; sales-ratio allocation is not used
+
+v0.9.57:
+- remove legacy manual-ad records from the local DB when the monthly provisional page opens
+
+v0.9.58:
+- emphasize the provisional P&L header row with background color and bold text
+- left-align/indent product names while centering all other table values
+- expand the main table vertically so all rows are visible without an internal vertical scrollbar
+- keep horizontal scrolling for wide tables
 """
 from __future__ import annotations
 
@@ -45,19 +54,54 @@ def _sortable_pnl_style(pd_obj, df):
             formatters[col] = lambda v: f"{float(v):,.1f}%"
 
     try:
-        return (
-            show.style
-            .format(formatters, na_rep="")
-            .set_properties(**{"text-align": "center"})
-            .set_table_styles(
-                [
-                    {"selector": "th", "props": [("text-align", "center"), ("font-weight", "700")]},
-                    {"selector": "td", "props": [("text-align", "center")]},
-                ]
+        styler = show.style.format(formatters, na_rep="")
+        styler = styler.set_properties(**{"text-align": "center"})
+        if "상품명" in show.columns:
+            styler = styler.set_properties(
+                subset=["상품명"],
+                **{"text-align": "left", "padding-left": "18px"},
             )
+        return styler.set_table_styles(
+            [
+                {
+                    "selector": "th",
+                    "props": [
+                        ("text-align", "center"),
+                        ("font-weight", "800"),
+                        ("background-color", "#DCEBFF"),
+                        ("color", "#163B68"),
+                    ],
+                },
+                {"selector": "td", "props": [("text-align", "center")]},
+            ]
         )
     except Exception:
         return show
+
+
+def _inject_pnl_table_css(st_obj):
+    st_obj.markdown(
+        """
+        <style>
+        div[data-testid="stDataFrame"] [role="columnheader"]{
+            background:#DCEBFF !important;
+            color:#163B68 !important;
+            font-weight:800 !important;
+        }
+        div[data-testid="stDataFrame"] [role="gridcell"]{
+            text-align:center !important;
+            justify-content:center !important;
+        }
+        div[data-testid="stDataFrame"] [role="columnheader"][aria-colindex="2"],
+        div[data-testid="stDataFrame"] [role="gridcell"][aria-colindex="2"]{
+            text-align:left !important;
+            justify-content:flex-start !important;
+            padding-left:18px !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
@@ -84,6 +128,13 @@ def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
 
     cov = m._coverage(core, db, month)
     m._period_strip(st_obj, month, cov)
+
+    # v0.9.57: old manual-ad rows are retired and removed without exposing a delete UI.
+    try:
+        cleanup = importlib.import_module("provisional_manual_cleanup_v0957")
+        cleanup.run_once(core, db)
+    except Exception:
+        pass
 
     manual_blocks = importlib.import_module("pnl_manual_blocks_v0955")
 
@@ -157,12 +208,16 @@ def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
     except Exception:
         pass
 
+    _inject_pnl_table_css(st_obj)
     show_obj = _sortable_pnl_style(pd_obj, filtered)
+
+    # v0.9.58: enough height for every row, so only page scrolling is needed vertically.
+    table_height = max(230, 38 * (len(filtered) + 1) + 10)
     st_obj.dataframe(
         show_obj,
         use_container_width=True,
         hide_index=True,
-        height=min(760, max(230, 38 * (len(filtered) + 1))),
+        height=table_height,
     )
 
     if cov.get("imports"):
