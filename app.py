@@ -110,6 +110,10 @@ sales_period_v087.apply(core)
 inventory_flow_v088 = _original_import_module("inventory_flow_v088")
 inventory_flow_v088.apply(core)
 
+# v0.9.68 warehouse inventory Excel export + physical stocktake adjustment upload.
+inventory_stocktake_v0968 = _original_import_module("inventory_stocktake_v0968")
+inventory_stocktake_v0968.apply(core)
+
 # v0.9.2 item-by-item purchase history.
 purchase_history_v092 = _original_import_module("purchase_history_v092")
 
