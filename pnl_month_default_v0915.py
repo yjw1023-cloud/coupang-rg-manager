@@ -1,12 +1,31 @@
-"""v0.9.67 safe monthly-default P&L routing.
+"""v0.9.72 safe monthly-default P&L routing + forced requested BOM repair.
 
 The monthly provisional page is rendered by pnl_month_v0967. It refreshes stale
 monthly snapshots before the proven v0.9.65 gross/cancel/net quantity and
 returned-item consolidation view is rendered.
+
+This module is explicitly purged from sys.modules by app.py on every rerun.  That
+makes it a reliable startup hook for the v0.9.72 BOM repair even when older
+inventory/stocktake modules remain cached in Streamlit's Python process.
 """
 from __future__ import annotations
 
 import importlib
+
+
+# v0.9.72: force and verify the three user-requested BOMs from a module name that
+# did not exist in earlier versions.  Store diagnostics on core rather than making
+# an unrelated ERP page unavailable if a local legacy DB has an unexpected schema.
+try:
+    _rg_core_v0972 = importlib.import_module("core")
+    _rg_bom_repair_v0972 = importlib.import_module("requested_product_bom_repair_v0972")
+    _rg_core_v0972._rg_requested_bom_repair_v0972_result = _rg_bom_repair_v0972.apply(_rg_core_v0972)
+    _rg_core_v0972._rg_requested_bom_repair_v0972_error = ""
+except Exception as _rg_bom_exc_v0972:
+    try:
+        _rg_core_v0972._rg_requested_bom_repair_v0972_error = str(_rg_bom_exc_v0972)
+    except Exception:
+        pass
 
 
 def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
