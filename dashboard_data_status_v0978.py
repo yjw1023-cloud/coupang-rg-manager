@@ -199,7 +199,7 @@ def patch_source(source: str) -> str:
     if _MARKER in source:
         return source
 
-    pattern = re.compile(r'(?m)^(\s*)(section\("월별 실적")')
+    pattern = re.compile(r'(?m)^([ \t]*)(section\("월별 실적")')
     matches = list(pattern.finditer(source))
     if not matches:
         raise RuntimeError("v0.9.78 대시보드의 월별 실적 위치를 찾지 못했습니다.")
