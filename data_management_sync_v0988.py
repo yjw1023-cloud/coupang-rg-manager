@@ -1,18 +1,18 @@
-"""v0.9.89 unify generic advertising import with provisional P&L storage.
+"""v0.9.90 repair and unify advertising-performance dates and provisional P&L data.
 
-The generic Coupang data-management uploader remains the owner of the UI and
-legacy `imports/ad_performance` history. After that normal import succeeds,
-the same file is mirrored into `provisional_ad_report_*`, which is the source
-used by dashboard/goal/provisional P&L. No Streamlit button is intercepted.
+Key rules:
+- Filename dates win over stale date widgets for advertising performance reports.
+- Existing duplicate legacy imports with wrong periods are repaired in place.
+- Legacy ad_performance rows are mirrored into provisional_ad_report_* so
+  dashboard / goal / provisional P&L use the same data.
+- Repair runs at startup, so a previously misdated 8/12 file is corrected
+  without requiring the user to upload it again.
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
-import hashlib
+from datetime import date, datetime
 import importlib
 from typing import Any
-
-import pandas as pd
 
 _PATCHED = False
 
@@ -35,193 +35,216 @@ def _canonical_module():
     return importlib.import_module("provisional_ad_report_v0956")
 
 
-def _same_period(row, start: date, end: date) -> bool:
-    return _as_date(row.get("period_start")) == start and _as_date(row.get("period_end")) == end
-
-
-def _already_saved(core, db, raw: bytes) -> bool:
-    digest = hashlib.sha256(raw).hexdigest()
+def _filename_period(file_name: str):
     try:
-        with core._conn(db) as c:
-            row = c.execute(
-                "SELECT 1 FROM provisional_ad_report_imports WHERE file_hash=? LIMIT 1",
-                (digest,),
-            ).fetchone()
-        return row is not None
+        mod = importlib.import_module("ad_period_v0987")
+        parsed = mod._period_from_filename(file_name)
+        if parsed:
+            return parsed
     except Exception:
+        pass
+    return None
+
+
+def _legacy_import_row(core, db, import_id: int):
+    with core._conn(db) as c:
+        row = c.execute(
+            """SELECT id,file_name,file_hash,period_start,period_end,created_at
+               FROM imports WHERE id=? AND data_type='ad_performance'""",
+            (int(import_id),),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def _legacy_items(core, db, import_id: int):
+    with core._conn(db) as c:
+        rows = c.execute(
+            """SELECT ap.option_id,
+                      COALESCE(MAX(p.name),'') AS product_name,
+                      COALESCE(SUM(ap.spend),0) AS ad_spend
+               FROM ad_performance ap
+               LEFT JOIN products p ON p.id=ap.product_id
+               WHERE ap.import_id=?
+               GROUP BY ap.option_id""",
+            (int(import_id),),
+        ).fetchall()
+    out = []
+    for r in rows:
+        oid = str(r["option_id"] or "").strip()
+        spend = float(r["ad_spend"] or 0)
+        if oid and spend > 0:
+            out.append({
+                "option_id": oid,
+                "product_name": str(r["product_name"] or ""),
+                "ad_spend": spend,
+            })
+    return out
+
+
+def _repair_legacy_period(core, db, import_id: int, start: date, end: date):
+    ps, pe = start.isoformat(), end.isoformat()
+    with core._conn(db) as c:
+        c.execute(
+            """UPDATE imports
+               SET period_start=?, period_end=?
+               WHERE id=? AND data_type='ad_performance'""",
+            (ps, pe, int(import_id)),
+        )
+        c.execute(
+            """UPDATE ad_performance
+               SET period_start=?, period_end=?
+               WHERE import_id=?""",
+            (ps, pe, int(import_id)),
+        )
+
+
+def _mirror_legacy_to_canonical(core, db, import_id: int, start: date, end: date):
+    row = _legacy_import_row(core, db, import_id)
+    if not row:
         return False
 
+    items = _legacy_items(core, db, import_id)
+    if not items:
+        return False
 
-def _sync_one(core, source, file_name: str, start: date, end: date, db):
-    raw = core.as_bytes(source)
-    if not raw:
-        return
     ad = _canonical_module()
     ad._ensure_schema(core, db)
-    if _already_saved(core, db, raw):
-        return
 
-    grouped, _total = ad._parse_excel(raw)
-    overlaps = ad._overlaps(core, db, start, end)
-    replace = False
-    if overlaps:
-        # Mirror the legacy importer's exact-scope replacement rule. A wider
-        # overlapping file must not erase days outside the newly uploaded range.
-        if all(_same_period(r, start, end) for r in overlaps):
-            replace = True
+    ps, pe = start.isoformat(), end.isoformat()
+    digest = str(row.get("file_hash") or "")
+    file_name = str(row.get("file_name") or "")
+    imported_at = str(row.get("created_at") or core.now_iso())
+    total = float(sum(x["ad_spend"] for x in items))
+
+    with core._conn(db) as c:
+        same_hash = None
+        if digest:
+            same_hash = c.execute(
+                """SELECT id FROM provisional_ad_report_imports
+                   WHERE file_hash=? LIMIT 1""",
+                (digest,),
+            ).fetchone()
+
+        # The legacy uploader replaces the same exact period. Mirror that rule
+        # so the canonical provisional source never double-counts one day/range.
+        exact_rows = c.execute(
+            """SELECT id FROM provisional_ad_report_imports
+               WHERE period_start=? AND period_end=?""",
+            (ps, pe),
+        ).fetchall()
+        for ex in exact_rows:
+            ex_id = int(ex["id"])
+            if same_hash and ex_id == int(same_hash["id"]):
+                continue
+            c.execute("DELETE FROM provisional_ad_report_items WHERE import_id=?", (ex_id,))
+            c.execute("DELETE FROM provisional_ad_report_imports WHERE id=?", (ex_id,))
+
+        if same_hash:
+            cid = int(same_hash["id"])
+            c.execute(
+                """UPDATE provisional_ad_report_imports
+                   SET file_name=?, period_start=?, period_end=?,
+                       total_ad_spend=?, imported_at=?
+                   WHERE id=?""",
+                (file_name, ps, pe, total, imported_at, cid),
+            )
+            c.execute("DELETE FROM provisional_ad_report_items WHERE import_id=?", (cid,))
         else:
-            fully_covered = all(
-                (_as_date(r.get("period_start")) or start) <= start
-                and (_as_date(r.get("period_end")) or end) >= end
-                for r in overlaps
+            cur = c.execute(
+                """INSERT INTO provisional_ad_report_imports
+                   (file_name,file_hash,period_start,period_end,total_ad_spend,imported_at)
+                   VALUES(?,?,?,?,?,?)""",
+                (file_name, digest, ps, pe, total, imported_at),
             )
-            if fully_covered:
-                return
-            raise ValueError(
-                "기존 광고자료와 기간이 일부 겹칩니다. 잠정손익의 광고성과보고서에서 겹치는 기간을 정리한 뒤 다시 올려 주세요."
-            )
+            cid = int(cur.lastrowid)
 
-    ad._save(
-        core,
-        db,
-        file_name,
-        raw,
-        start,
-        end,
-        grouped,
-        replace_overlap=replace,
-    )
-
-
-def _canonical_month_summary(core, db):
-    today = date.today()
-    month = today.strftime("%Y-%m")
-    month_start = today.replace(day=1)
-    try:
-        dataset = _canonical_module().load_month(core, month, db)
-    except Exception:
-        return None
-
-    imports = list(dataset.get("imports") or [])
-    if not imports:
-        return None
-
-    periods = []
-    latest_imported = ""
-    for row in imports:
-        a = _as_date(row.get("period_start"))
-        b = _as_date(row.get("period_end")) or a
-        if a is None or b is None:
-            continue
-        if b < a:
-            a, b = b, a
-        periods.append((a, b))
-        latest_imported = max(latest_imported, str(row.get("imported_at") or ""))
-
-    if not periods:
-        return None
-
-    covered = set()
-    for a, b in periods:
-        left = max(a, month_start)
-        right = min(b, today)
-        d = left
-        while d <= right:
-            covered.add(d)
-            d += timedelta(days=1)
-
-    cursor = month_start
-    continuous_end = None
-    while cursor <= today and cursor in covered:
-        continuous_end = cursor
-        cursor += timedelta(days=1)
-
-    if continuous_end is not None:
-        start = month_start
-        end = continuous_end
-    else:
-        start = min(a for a, _ in periods)
-        end = max(b for _, b in periods)
-
-    return {
-        "period_start": start.isoformat(),
-        "period_end": end.isoformat(),
-        "main_value": float(dataset.get("total") or 0.0),
-        "row_count": int(len(dataset.get("items") or {})),
-        "created_at": latest_imported,
-        "file_name": "당월 광고성과보고서 통합",
-    }
-
-
-def _patch_overview(core, original_get_import_overview):
-    def wrapper(db_path=None):
-        db = db_path or core.DEFAULT_DB
-        df = original_get_import_overview(db)
-        summary = _canonical_month_summary(core, db)
-        if not summary:
-            return df
-
-        if df is None or df.empty:
-            row = {
-                "id": 0,
-                "file_name": summary["file_name"],
-                "file_hash": "",
-                "data_type": "ad_performance",
-                "period_start": summary["period_start"],
-                "period_end": summary["period_end"],
-                "settlement_month": None,
-                "created_at": summary["created_at"],
-                "notes": None,
-                "row_count": summary["row_count"],
-                "main_value": summary["main_value"],
-                "main_kind": "money",
-            }
-            return pd.DataFrame([row])
-
-        out = df.copy()
-        mask = (
-            out["data_type"].astype(str).eq("ad_performance")
-            if "data_type" in out.columns
-            else pd.Series(False, index=out.index)
+        c.executemany(
+            """INSERT INTO provisional_ad_report_items
+               (import_id,option_id,product_name,ad_spend)
+               VALUES(?,?,?,?)""",
+            [
+                (cid, x["option_id"], x["product_name"], float(x["ad_spend"]))
+                for x in items
+            ],
         )
-        if mask.any():
-            idx = out.index[mask][0]
-            for key, value in summary.items():
-                if key in out.columns:
-                    out.at[idx, key] = value
-            if "main_kind" in out.columns:
-                out.at[idx, "main_kind"] = "money"
-            return out
+    return True
 
-        row = {c: None for c in out.columns}
-        row.update({
-            "id": 0,
-            "file_name": summary["file_name"],
-            "data_type": "ad_performance",
-            "period_start": summary["period_start"],
-            "period_end": summary["period_end"],
-            "created_at": summary["created_at"],
-            "row_count": summary["row_count"],
-            "main_value": summary["main_value"],
-            "main_kind": "money",
-        })
-        return pd.concat([pd.DataFrame([row]), out], ignore_index=True)
 
-    return wrapper
+def _repair_one(core, db, import_id: int):
+    row = _legacy_import_row(core, db, import_id)
+    if not row:
+        return False
+
+    parsed = _filename_period(str(row.get("file_name") or ""))
+    if parsed:
+        start, end = parsed
+    else:
+        start = _as_date(row.get("period_start"))
+        end = _as_date(row.get("period_end"))
+        if start is None or end is None:
+            return False
+
+    if end < start:
+        start, end = end, start
+
+    current_start = _as_date(row.get("period_start"))
+    current_end = _as_date(row.get("period_end"))
+    if current_start != start or current_end != end:
+        _repair_legacy_period(core, db, import_id, start, end)
+
+    _mirror_legacy_to_canonical(core, db, import_id, start, end)
+    return True
+
+
+def _repair_existing(core, db):
+    """Repair all prior advertising imports whose filenames contain periods."""
+    try:
+        core.init_db(db)
+        with core._conn(db) as c:
+            rows = c.execute(
+                """SELECT id FROM imports
+                   WHERE data_type='ad_performance'
+                   ORDER BY id"""
+            ).fetchall()
+        for r in rows:
+            try:
+                _repair_one(core, db, int(r["id"]))
+            except Exception as exc:
+                print(f"RG Manager v0.9.90 ad repair skipped import {r['id']}: {exc}")
+    except Exception as exc:
+        print(f"RG Manager v0.9.90 ad repair failed: {exc}")
 
 
 def apply(core) -> None:
     global _PATCHED
-    if _PATCHED or getattr(core, "_rg_ad_import_unified_v0989", False):
+    if _PATCHED or getattr(core, "_rg_ad_import_unified_v0990", False):
         _PATCHED = True
         return
 
     original_import = core.import_ad_performance
-    original_overview = core.get_import_overview
+
+    # Fix already-saved records before any page renders. This repairs the
+    # existing 8/12 file that v0.9.87~0.9.89 stored as 8/3~8/9 and mirrors
+    # its stored option-level spend into the provisional tables.
+    _repair_existing(core, core.DEFAULT_DB)
 
     def import_wrapper(source, file_name: str, period_start=None, period_end=None, db_path=None):
         db = db_path or core.DEFAULT_DB
-        raw = core.as_bytes(source)
+
+        # For advertising performance reports the Coupang filename is
+        # authoritative. Ignore stale UI date widgets when the filename has
+        # an explicit start/end period.
+        parsed = _filename_period(file_name)
+        if parsed:
+            start, end = parsed
+            if end < start:
+                start, end = end, start
+            period_start = start.isoformat()
+            period_end = end.isoformat()
+        else:
+            start = _as_date(period_start)
+            end = _as_date(period_end)
+
         result = original_import(
             source,
             file_name,
@@ -230,25 +253,19 @@ def apply(core) -> None:
             db_path=db,
         )
 
-        start = _as_date((result or {}).get("period_start")) or _as_date(period_start)
-        end = _as_date((result or {}).get("period_end")) or _as_date(period_end)
-        if start is None or end is None:
+        import_id = int((result or {}).get("import_id") or 0)
+        if import_id:
             try:
-                parsed = core.extract_period_from_filename(file_name)
-                if parsed:
-                    start = start or _as_date(parsed[0])
-                    end = end or _as_date(parsed[1])
-            except Exception:
-                pass
-
-        if start is not None and end is not None:
-            if end < start:
-                start, end = end, start
-            try:
-                _sync_one(core, raw, file_name, start, end, db)
+                if start is not None and end is not None:
+                    if end < start:
+                        start, end = end, start
+                    # Duplicate hashes in core return the pre-existing row
+                    # without updating its period, so repair it explicitly.
+                    _repair_legacy_period(core, db, import_id, start, end)
+                    _mirror_legacy_to_canonical(core, db, import_id, start, end)
+                else:
+                    _repair_one(core, db, import_id)
             except Exception as exc:
-                # The normal Coupang-data import has already succeeded. Never
-                # turn it into a failed upload just because the mirror had a problem.
                 try:
                     result = dict(result or {})
                     result["provisional_sync_warning"] = str(exc)
@@ -257,6 +274,5 @@ def apply(core) -> None:
         return result
 
     core.import_ad_performance = import_wrapper
-    core.get_import_overview = _patch_overview(core, original_overview)
-    core._rg_ad_import_unified_v0989 = True
+    core._rg_ad_import_unified_v0990 = True
     _PATCHED = True
