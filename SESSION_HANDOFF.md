@@ -5,31 +5,37 @@
 ## 현재 기준
 - 저장소: `yjw1023-cloud/coupang-rg-manager`
 - 현재 개발/배포 브랜치: **main**
-- 현재 배포 버전: **v0.9.79**
+- 현재 GitHub 배포 버전: **v0.9.80**
 - Windows 로컬 ERP / Streamlit / SQLite `data/rocketgrowth.db`
 - 자동 업데이트: GitHub `main`의 `update/latest.json`
 - 사용자 데이터(`data`, `.venv`, `sample_data`)는 업데이트로 덮어쓰지 않는다.
-- 새 세션은 반드시 `PROJECT_CONTEXT.md` → `SESSION_HANDOFF.md` → `SESSION_LOG_2026-08-13_PART2.md` → `VERSION.txt` → `update/latest.json` → 현재 이슈 관련 최신 모듈 순서로 확인한다.
+- 새 세션은 반드시 `PROJECT_CONTEXT.md` → `SESSION_HANDOFF.md` → 최신 `SESSION_LOG_*.md` → `VERSION.txt` → `update/latest.json` → 현재 이슈 관련 최신 모듈 순서로 확인한다.
 
-## 현재 최우선 미해결 이슈
-### **v0.9.79인데 `🎯 목표·실적관리` 메뉴가 사용자 화면에 보이지 않음**
-사용자가 v0.9.79 업데이트 후 사이드바 캡처를 제공했다.
+## 현재 최우선 확인 사항
+### **사용자 로컬이 아직 v0.9.79이면 v0.9.80으로 업데이트 후 `🎯 목표·실적관리` 메뉴 표시 여부 확인**
 
-확인된 화면:
-- `RG Manager v0.9.79` 표시 → 버전 파일/업데이트 자체는 적용됨.
-- 사이드바 그룹: `💰 손익·정산`, `📦 재고·생산`, `🛒 매입·상품`, `📥 데이터·관리`.
-- 캡처에서는 그룹이 접혀 있음.
-- 사용자 직접 피드백: **`목표실적관리 메뉴가 없잖아`**.
+v0.9.79에서 목표·실적관리 기능 자체는 추가됐지만, grouped sidebar가 최종 `options`에 실제 존재하는 메뉴만 표시하는 구조 때문에 새 메뉴가 사용자 화면에서 누락될 수 있었다.
 
-다음 세션 첫 작업:
-1. `💰 손익·정산`을 펼쳤을 때도 메뉴가 실제 없는지 먼저 구분. 캡처는 접힌 상태이므로 숨겨진 것인지 확인할 가치가 있음.
-2. 실제로 없다면 바로 v0.9.80을 찍기 전에 현재 main 코드의 메뉴 patch 흐름을 점검.
-3. `goal_management_v0979.patch_source(source)`가 최종 legacy source 메뉴 목록에 `🎯  목표·실적관리`를 실제 삽입하는지 확인.
-4. `sidebar_groups_v0917._group_options()`는 **최종 options에 존재하는 항목만** 그룹에 표시한다. `_GROUPS`만 수정돼도 options에 PAGE_LABEL이 없으면 메뉴가 안 나온다.
-5. 최종 patched source의 `_rg_menu_options_v0917` 값 확인이 핵심.
-6. 필요하면 일시적 diagnostic을 화면에 넣거나 patch 순서를 바로잡는다.
-7. 메뉴가 나타난 뒤 실제 화면 진입과 목표 저장까지 확인.
+v0.9.80 수정:
+- `pnl_month_default_v0915.render_grouped_sidebar()`에서 기존 options를 `runtime_options`로 복사.
+- `product_overview_v0977.PAGE_LABEL`, `goal_management_v0979.PAGE_LABEL`이 없으면 런타임 options에 강제로 추가.
+- 이후 `sidebar_groups_v0917.render_sidebar()`로 전달.
+- 따라서 legacy 메뉴 목록이 이전 상태로 남아 있어도 `🎯 목표·실적관리`가 손익·정산 그룹에서 누락되지 않도록 보강.
+- `VERSION.txt`와 `update/latest.json`은 **0.9.80**으로 배포 완료.
 
+현재 GitHub `main` 기준 관련 커밋:
+- `cf7741f` — `fix: force goal page into grouped sidebar options`
+- `bc01539` — `release: bump ERP to v0.9.80`
+- `f72df45` — `release: publish v0.9.80 goal menu visibility fix`
+
+다음 확인 순서:
+1. 사용자 로컬 하단 버전이 `RG Manager v0.9.80`인지 확인.
+2. `💰 손익·정산`을 펼쳐 `🎯 목표·실적관리`가 보이는지 확인.
+3. 메뉴 진입 후 `진행현황 / 목표 설정 / 월말검증 / 목표이력` 4개 탭 표시 확인.
+4. 테스트 목표 1건 저장 후 재진입하여 저장 유지 확인.
+5. v0.9.80인데도 메뉴가 없으면 updater가 `pnl_month_default_v0915.py`를 실제 교체했는지, 실행 프로세스가 새 모듈을 읽는지 진단한다. `app.py`는 해당 모듈을 rerun마다 `sys.modules`에서 제거하도록 되어 있다.
+
+## v0.9.79~0.9.80 — 목표·실적관리
 관련 파일:
 - `goal_management_v0979.py`
 - `pnl_month_default_v0915.py`
@@ -38,9 +44,6 @@
 - `app.py`
 - `VERSION.txt`
 - `update/latest.json`
-
-## v0.9.79 — 목표·실적관리 의도된 기능
-신규 파일: `goal_management_v0979.py`
 
 의도한 메뉴 위치:
 - `💰 손익·정산`
@@ -144,8 +147,7 @@ v0.9.77 UX 원칙:
 - `95119299567` → `94475454519` 글라스 네일 파일 5P
 - `95156135112` → `94350296878` 휴대용 가죽 구두주걱 미니 2P
 
-## 사용자가 별도 월별 손익 Excel 작업에서 확정한 계산 기준
-향후 비슷한 집계에도 참고.
+## 별도 월별 손익 Excel 작업에서 확정한 계산 기준
 - 파일명으로 매출 월 판단 금지.
 - **발생일(결제완료일)** 기준으로 월 판단.
 - 동일 상품명인데 ID가 다른 판매건은 반품상품 판매로 보고 원상품에 합산.
@@ -163,16 +165,14 @@ v0.9.77 UX 원칙:
 ## 사용자 작업 방식/커뮤니케이션
 - 반드시 존댓말.
 - 수정 요청이 명확하면 GitHub 연결로 직접 수정하고 사용자에게 수동 코드 편집을 시키지 말 것.
-- `수정해/만들어`는 해당 범위 GitHub write 승인으로 본다.
+- `수정해/만들어/해결해`는 해당 범위 GitHub write 승인으로 본다.
 - main 배포 시 코드 먼저 → `VERSION.txt` → `update/latest.json` 마지막 순서.
 - 실제 검증하지 않은 화면은 검증했다고 말하지 않는다.
 - UI는 네이비/블루 계열, 검색/선택 입력영역은 경계가 분명하게.
 - 상품/손익 화면은 내부 개발 필드 노출 금지.
 
 ## 다음 세션 시작 문구
-사용자는 새 채팅에서 아래처럼 시작하면 된다.
-
-`쿠팡 RG ERP 계속 개발하자. GitHub의 PROJECT_CONTEXT.md, SESSION_HANDOFF.md, SESSION_LOG_2026-08-13_PART2.md 읽고, v0.9.79인데 목표·실적관리 메뉴가 안 보이는 문제부터 이어서 해결해.`
+`쿠팡 RG ERP 계속 개발하자. GitHub의 PROJECT_CONTEXT.md, SESSION_HANDOFF.md와 최신 SESSION_LOG를 읽고 현재 배포 버전과 마지막 미해결 이슈부터 확인해서 이어서 작업해.`
 
 ## 상세 로그
-오늘 후반 작업의 더 자세한 기록은 `SESSION_LOG_2026-08-13_PART2.md`에 저장되어 있다.
+2026-08-13 후반 작업 기록은 `SESSION_LOG_2026-08-13_PART2.md`에 있다. 해당 로그의 v0.9.79 메뉴 미표시 이슈는 이후 v0.9.80에서 수정됐으므로 최신 상태 판단은 이 `SESSION_HANDOFF.md`, `VERSION.txt`, `update/latest.json`을 우선한다.
