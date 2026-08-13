@@ -1,7 +1,8 @@
 """RG Manager runtime patch bootstrap.
 
-Keeps the v0.8 purchase import hook and v0.9.87 generic advertising-report
-filename period detection active from process startup.
+Keeps the v0.8 purchase import hook, v0.9.87 generic advertising-report
+filename period detection, and v0.9.88 canonical advertising-data sync active
+from process startup.
 """
 import importlib
 import sys
@@ -41,3 +42,13 @@ try:
     _ad_period.apply()
 except Exception as exc:
     print(f"RG Manager v0.9.87 ad period patch failed: {exc}", file=sys.stderr)
+
+# v0.9.88: make the generic Coupang data-management advertising uploader write
+# the same canonical provisional-ad tables used by dashboard/goal/P&L screens,
+# and make its status card display that same canonical source.
+try:
+    _core_v0988 = _original_import_module("core")
+    _ad_sync_v0988 = _original_import_module("data_management_sync_v0988")
+    _ad_sync_v0988.apply(_core_v0988)
+except Exception as exc:
+    print(f"RG Manager v0.9.88 ad data sync patch failed: {exc}", file=sys.stderr)
