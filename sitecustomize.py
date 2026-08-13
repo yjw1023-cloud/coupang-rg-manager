@@ -1,6 +1,7 @@
-"""RG Manager v0.8 runtime patch bootstrap.
+"""RG Manager runtime patch bootstrap.
 
-v0.7 app.py가 purchase_v06를 import할 때 v0.8 매입 규칙을 적용한다.
+Keeps the v0.8 purchase import hook and v0.9.87 generic advertising-report
+filename period detection active from process startup.
 """
 import importlib
 import sys
@@ -32,3 +33,11 @@ if not getattr(importlib, "_rg_v08_patched", False):
     importlib._rg_v08_patched = True
 
 _apply_purchase_v08(sys.modules.get("purchase_v06"))
+
+# v0.9.87: the legacy '새 자료 반영' advertising uploader is separate from
+# provisional_ad_report_v0956, so patch its selector/uploader/date widgets here.
+try:
+    _ad_period = _original_import_module("ad_period_v0987")
+    _ad_period.apply()
+except Exception as exc:
+    print(f"RG Manager v0.9.87 ad period patch failed: {exc}", file=sys.stderr)
