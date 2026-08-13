@@ -1,35 +1,20 @@
-"""v0.9.88 unify generic Coupang data-management advertising reports.
+"""v0.9.89 unify generic advertising import with provisional P&L storage.
 
-The legacy `쿠팡 자료 관리` screen and the provisional-P&L advertising uploader
-historically stored advertising reports in different places.  This patch keeps
-the legacy screen usable while making `provisional_ad_report_imports` the
-canonical source for dashboard/P&L/status display.
+The generic Coupang data-management uploader remains the owner of the UI and
+legacy `imports/ad_performance` history. After that normal import succeeds,
+the same file is mirrored into `provisional_ad_report_*`, which is the source
+used by dashboard/goal/provisional P&L. No Streamlit button is intercepted.
 """
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+import hashlib
 import importlib
-import re
 from typing import Any
 
-import streamlit as st
+import pandas as pd
 
 _PATCHED = False
-_AD_LABELS = {"광고 성과보고서", "광고성과보고서"}
-
-
-def _active() -> bool:
-    return bool(st.session_state.get("_rg_ad_generic_period_active", False))
-
-
-def _label(args, kwargs) -> str:
-    return str(args[0] if args else kwargs.get("label", "") or "")
-
-
-def _first_uploaded(value):
-    if isinstance(value, (list, tuple)):
-        return value[0] if value else None
-    return value
 
 
 def _as_date(value: Any) -> date | None:
@@ -46,54 +31,77 @@ def _as_date(value: Any) -> date | None:
         return None
 
 
-def _period_from_filename(name: str):
-    try:
-        period = importlib.import_module("ad_period_v0987")._period_from_filename(name)
-        if period:
-            return period
-    except Exception:
-        pass
-    text = str(name or "")
-    found = []
-    for m in re.finditer(r"(?<!\d)(20\d{2})(\d{2})(\d{2})(?!\d)", text):
-        try:
-            found.append((m.start(), date(int(m.group(1)), int(m.group(2)), int(m.group(3)))))
-        except Exception:
-            pass
-    found.sort(key=lambda x: x[0])
-    if len(found) < 2:
-        return None
-    a, b = found[0][1], found[1][1]
-    return (b, a) if b < a else (a, b)
-
-
-def _current_period():
-    parsed = _period_from_filename(str(st.session_state.get("_rg_ad_sync_file_name") or ""))
-    if parsed:
-        return parsed
-    a = _as_date(st.session_state.get("_rg_ad_sync_start"))
-    b = _as_date(st.session_state.get("_rg_ad_sync_end"))
-    if a is None or b is None:
-        return None
-    return (b, a) if b < a else (a, b)
-
-
-def _replace_key(start: date, end: date) -> str:
-    return f"_rg_ad_sync_replace_{start:%Y%m%d}_{end:%Y%m%d}"
-
-
 def _canonical_module():
     return importlib.import_module("provisional_ad_report_v0956")
 
 
-def _summary(core):
+def _same_period(row, start: date, end: date) -> bool:
+    return _as_date(row.get("period_start")) == start and _as_date(row.get("period_end")) == end
+
+
+def _already_saved(core, db, raw: bytes) -> bool:
+    digest = hashlib.sha256(raw).hexdigest()
+    try:
+        with core._conn(db) as c:
+            row = c.execute(
+                "SELECT 1 FROM provisional_ad_report_imports WHERE file_hash=? LIMIT 1",
+                (digest,),
+            ).fetchone()
+        return row is not None
+    except Exception:
+        return False
+
+
+def _sync_one(core, source, file_name: str, start: date, end: date, db):
+    raw = core.as_bytes(source)
+    if not raw:
+        return
+    ad = _canonical_module()
+    ad._ensure_schema(core, db)
+    if _already_saved(core, db, raw):
+        return
+
+    grouped, _total = ad._parse_excel(raw)
+    overlaps = ad._overlaps(core, db, start, end)
+    replace = False
+    if overlaps:
+        # Mirror the legacy importer's exact-scope replacement rule. A wider
+        # overlapping file must not erase days outside the newly uploaded range.
+        if all(_same_period(r, start, end) for r in overlaps):
+            replace = True
+        else:
+            fully_covered = all(
+                (_as_date(r.get("period_start")) or start) <= start
+                and (_as_date(r.get("period_end")) or end) >= end
+                for r in overlaps
+            )
+            if fully_covered:
+                return
+            raise ValueError(
+                "기존 광고자료와 기간이 일부 겹칩니다. 잠정손익의 광고성과보고서에서 겹치는 기간을 정리한 뒤 다시 올려 주세요."
+            )
+
+    ad._save(
+        core,
+        db,
+        file_name,
+        raw,
+        start,
+        end,
+        grouped,
+        replace_overlap=replace,
+    )
+
+
+def _canonical_month_summary(core, db):
     today = date.today()
     month = today.strftime("%Y-%m")
     month_start = today.replace(day=1)
     try:
-        dataset = _canonical_module().load_month(core, month, core.DEFAULT_DB)
+        dataset = _canonical_module().load_month(core, month, db)
     except Exception:
         return None
+
     imports = list(dataset.get("imports") or [])
     if not imports:
         return None
@@ -109,10 +117,11 @@ def _summary(core):
             a, b = b, a
         periods.append((a, b))
         latest_imported = max(latest_imported, str(row.get("imported_at") or ""))
+
     if not periods:
         return None
 
-    covered: set[date] = set()
+    covered = set()
     for a, b in periods:
         left = max(a, month_start)
         right = min(b, today)
@@ -127,188 +136,127 @@ def _summary(core):
         continuous_end = cursor
         cursor += timedelta(days=1)
 
-    period_start = month_start if continuous_end is not None else min(a for a, _ in periods)
-    period_end = continuous_end if continuous_end is not None else max(b for _, b in periods)
-    yesterday = today - timedelta(days=1)
-    complete = continuous_end is not None and continuous_end >= yesterday
-
-    latest_text = ""
-    if latest_imported:
-        try:
-            dt = datetime.fromisoformat(latest_imported.replace("Z", "+00:00"))
-            latest_text = dt.strftime("%m/%d %H:%M")
-        except Exception:
-            m = re.search(r"(\d{2})-(\d{2}).*?(\d{2}):(\d{2})", latest_imported)
-            if m:
-                latest_text = f"{m.group(1)}/{m.group(2)} {m.group(3)}:{m.group(4)}"
+    if continuous_end is not None:
+        start = month_start
+        end = continuous_end
+    else:
+        start = min(a for a, _ in periods)
+        end = max(b for _, b in periods)
 
     return {
-        "start": period_start,
-        "end": period_end,
-        "total": float(dataset.get("total") or 0.0),
-        "rows": len(dataset.get("items") or {}),
-        "latest": latest_text,
-        "complete": complete,
+        "period_start": start.isoformat(),
+        "period_end": end.isoformat(),
+        "main_value": float(dataset.get("total") or 0.0),
+        "row_count": int(len(dataset.get("items") or {})),
+        "created_at": latest_imported,
+        "file_name": "당월 광고성과보고서 통합",
     }
 
 
-def _replace_status_card(body: str, core) -> str:
-    # The legacy status card is custom HTML.  Dedicated P&L headings do not use
-    # the spaced label and are intentionally left untouched.
-    if "광고 성과보고서" not in body or "<" not in body or ">" not in body:
-        return body
-    info = _summary(core)
-    if not info:
-        return body
+def _patch_overview(core, original_get_import_overview):
+    def wrapper(db_path=None):
+        db = db_path or core.DEFAULT_DB
+        df = original_get_import_overview(db)
+        summary = _canonical_month_summary(core, db)
+        if not summary:
+            return df
 
-    out = str(body)
-    period = f"{info['start']:%Y.%m.%d} ~ {info['end']:%Y.%m.%d}"
-    out = re.sub(
-        r"20\d{2}[./-]\d{2}[./-]\d{2}\s*~\s*20\d{2}[./-]\d{2}[./-]\d{2}",
-        period,
-        out,
-        count=1,
-    )
-    out = re.sub(
-        r"\d[\d,]*원\s*[·ㆍ]\s*\d[\d,]*행",
-        f"{int(round(info['total'])):,}원 · {int(info['rows']):,}행",
-        out,
-        count=1,
-    )
-    if info.get("latest"):
-        out = re.sub(
-            r"최근\s*입력\s*\d{2}/\d{2}\s+\d{2}:\d{2}",
-            f"최근 입력 {info['latest']}",
-            out,
-            count=1,
+        if df is None or df.empty:
+            row = {
+                "id": 0,
+                "file_name": summary["file_name"],
+                "file_hash": "",
+                "data_type": "ad_performance",
+                "period_start": summary["period_start"],
+                "period_end": summary["period_end"],
+                "settlement_month": None,
+                "created_at": summary["created_at"],
+                "notes": None,
+                "row_count": summary["row_count"],
+                "main_value": summary["main_value"],
+                "main_kind": "money",
+            }
+            return pd.DataFrame([row])
+
+        out = df.copy()
+        mask = (
+            out["data_type"].astype(str).eq("ad_performance")
+            if "data_type" in out.columns
+            else pd.Series(False, index=out.index)
         )
-    if info.get("complete"):
-        out = out.replace("업데이트 필요", "정상", 1)
-    elif "업데이트 필요" not in out:
-        out = out.replace("정상", "업데이트 필요", 1)
-    return out
+        if mask.any():
+            idx = out.index[mask][0]
+            for key, value in summary.items():
+                if key in out.columns:
+                    out.at[idx, key] = value
+            if "main_kind" in out.columns:
+                out.at[idx, "main_kind"] = "money"
+            return out
+
+        row = {c: None for c in out.columns}
+        row.update({
+            "id": 0,
+            "file_name": summary["file_name"],
+            "data_type": "ad_performance",
+            "period_start": summary["period_start"],
+            "period_end": summary["period_end"],
+            "created_at": summary["created_at"],
+            "row_count": summary["row_count"],
+            "main_value": summary["main_value"],
+            "main_kind": "money",
+        })
+        return pd.concat([pd.DataFrame([row]), out], ignore_index=True)
+
+    return wrapper
 
 
 def apply(core) -> None:
     global _PATCHED
-    if _PATCHED:
+    if _PATCHED or getattr(core, "_rg_ad_import_unified_v0989", False):
+        _PATCHED = True
         return
 
-    original_file_uploader = st.file_uploader
-    original_date_input = st.date_input
-    original_button = st.button
-    original_markdown = st.markdown
+    original_import = core.import_ad_performance
+    original_overview = core.get_import_overview
 
-    def file_uploader_wrapper(*args, **kwargs):
-        result = original_file_uploader(*args, **kwargs)
-        if not _active():
-            return result
-        label = _label(args, kwargs).replace(" ", "").lower()
-        if "광고성과보고서excel" in label:
-            return result
-        uploaded = _first_uploaded(result)
-        if uploaded is None:
-            st.session_state.pop("_rg_ad_sync_file_name", None)
-            st.session_state.pop("_rg_ad_sync_raw", None)
-            return result
-        name = str(getattr(uploaded, "name", "") or "")
-        try:
-            raw = uploaded.getvalue()
-        except Exception:
-            try:
-                raw = uploaded.read()
-            except Exception:
-                raw = b""
-        st.session_state["_rg_ad_sync_file_name"] = name
-        st.session_state["_rg_ad_sync_raw"] = bytes(raw or b"")
+    def import_wrapper(source, file_name: str, period_start=None, period_end=None, db_path=None):
+        db = db_path or core.DEFAULT_DB
+        raw = core.as_bytes(source)
+        result = original_import(
+            source,
+            file_name,
+            period_start=period_start,
+            period_end=period_end,
+            db_path=db,
+        )
 
-        # If this file overlaps canonical provisional-ad data, require the same
-        # explicit replacement confirmation used by the dedicated P&L uploader.
-        period = _current_period()
-        if period and raw:
+        start = _as_date((result or {}).get("period_start")) or _as_date(period_start)
+        end = _as_date((result or {}).get("period_end")) or _as_date(period_end)
+        if start is None or end is None:
             try:
-                ad = _canonical_module()
-                overlaps = ad._overlaps(core, core.DEFAULT_DB, period[0], period[1])
+                parsed = core.extract_period_from_filename(file_name)
+                if parsed:
+                    start = start or _as_date(parsed[0])
+                    end = end or _as_date(parsed[1])
             except Exception:
-                overlaps = []
-            if overlaps:
-                names = ", ".join(
-                    f"{r['period_start']}~{r['period_end']} {r['file_name']}" for r in overlaps[:3]
-                )
-                st.warning("잠정손익 광고자료와 기간이 겹칩니다: " + names)
-                st.checkbox(
-                    "겹치는 기존 광고자료를 삭제하고 이 파일로 교체",
-                    key=_replace_key(period[0], period[1]),
-                )
+                pass
+
+        if start is not None and end is not None:
+            if end < start:
+                start, end = end, start
+            try:
+                _sync_one(core, raw, file_name, start, end, db)
+            except Exception as exc:
+                # The normal Coupang-data import has already succeeded. Never
+                # turn it into a failed upload just because the mirror had a problem.
+                try:
+                    result = dict(result or {})
+                    result["provisional_sync_warning"] = str(exc)
+                except Exception:
+                    pass
         return result
 
-    def date_input_wrapper(*args, **kwargs):
-        result = original_date_input(*args, **kwargs)
-        if _active():
-            label = _label(args, kwargs)
-            if "시작" in label:
-                st.session_state["_rg_ad_sync_start"] = _as_date(result)
-            elif "종료" in label:
-                st.session_state["_rg_ad_sync_end"] = _as_date(result)
-            elif isinstance(result, (tuple, list)) and len(result) == 2:
-                st.session_state["_rg_ad_sync_start"] = _as_date(result[0])
-                st.session_state["_rg_ad_sync_end"] = _as_date(result[1])
-        return result
-
-    def button_wrapper(*args, **kwargs):
-        clicked = original_button(*args, **kwargs)
-        if not _active():
-            return clicked
-        label = _label(args, kwargs).replace(" ", "")
-        if "자료반영" not in label:
-            return clicked
-        if not clicked:
-            return False
-
-        raw = st.session_state.get("_rg_ad_sync_raw") or b""
-        file_name = str(st.session_state.get("_rg_ad_sync_file_name") or "")
-        period = _current_period()
-        if not raw or not file_name or not period:
-            st.error("광고성과보고서 파일 또는 조회기간을 확인해 주세요.")
-            return False
-        start, end = period
-        try:
-            ad = _canonical_module()
-            grouped, _total = ad._parse_excel(bytes(raw))
-            overlaps = ad._overlaps(core, core.DEFAULT_DB, start, end)
-            replace = bool(st.session_state.get(_replace_key(start, end), False))
-            if overlaps and not replace:
-                st.error("기존 잠정손익 광고자료와 기간이 겹칩니다. 교체 항목을 체크한 뒤 다시 반영해 주세요.")
-                return False
-            ad._save(
-                core,
-                core.DEFAULT_DB,
-                file_name,
-                bytes(raw),
-                start,
-                end,
-                grouped,
-                replace_overlap=replace,
-            )
-            st.success(
-                f"광고성과보고서를 잠정손익에도 반영했습니다. {start:%Y-%m-%d} ~ {end:%Y-%m-%d}"
-            )
-            # Return True so the legacy screen also records its normal upload
-            # history.  From now on both histories receive the same file/period.
-            return True
-        except Exception as exc:
-            st.error("잠정손익 광고자료 반영 실패: " + str(exc))
-            return False
-
-    def markdown_wrapper(body, *args, **kwargs):
-        try:
-            body = _replace_status_card(str(body), core)
-        except Exception:
-            pass
-        return original_markdown(body, *args, **kwargs)
-
-    st.file_uploader = file_uploader_wrapper
-    st.date_input = date_input_wrapper
-    st.button = button_wrapper
-    st.markdown = markdown_wrapper
+    core.import_ad_performance = import_wrapper
+    core.get_import_overview = _patch_overview(core, original_overview)
+    core._rg_ad_import_unified_v0989 = True
     _PATCHED = True
