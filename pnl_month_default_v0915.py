@@ -1,8 +1,9 @@
-"""v0.9.79 safe monthly-default routing + product goals/performance management.
+"""v0.9.80 safe monthly-default routing + product goals/performance management.
 
 This module is explicitly purged from sys.modules by app.py on every rerun.
 Existing P&L/BOM/product-overview/dashboard-status routing remains unchanged;
-v0.9.79 adds monthly finished-product target setting, progress, review and history.
+v0.9.80 also guarantees newly patched pages are present in the runtime sidebar
+option list even when the legacy sidebar menu list was cached by an older patch.
 """
 from __future__ import annotations
 
@@ -76,7 +77,16 @@ def render_grouped_sidebar(st_obj, options, default_page=None):
     overview.apply_sidebar(m)
     goals = importlib.import_module("goal_management_v0979")
     goals.apply_sidebar(m)
-    return m.render_sidebar(st_obj, options, default_page)
+
+    # The grouped sidebar only renders labels that are present in `options`.
+    # Older patched legacy menu lists can survive without newly-added labels,
+    # so force the current dynamic pages into the runtime option list here.
+    runtime_options = [str(x) for x in list(options or [])]
+    for label in (overview.PAGE_LABEL, goals.PAGE_LABEL):
+        if label not in runtime_options:
+            runtime_options.append(label)
+
+    return m.render_sidebar(st_obj, runtime_options, default_page)
 
 
 def patch_source(source: str) -> str:
