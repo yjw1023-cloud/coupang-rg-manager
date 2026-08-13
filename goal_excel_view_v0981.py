@@ -4,10 +4,14 @@ Keeps the v0.9.79 goal/review/history logic, but presents the main screen as:
 - overall totals: 목표 / 잠정실적 / 확정실적
 - item detail: three rows per product with the same comparison structure
 - detailed target-cost inputs matching the comparison columns
+
+v0.9.82 hardens blank/NaN formatting so months without confirmed settlement data
+render empty confirmed cells instead of raising an integer-conversion error.
 """
 from __future__ import annotations
 
 import importlib
+import math
 from typing import Any
 
 import pandas as pd
@@ -21,8 +25,19 @@ _TARGET_COST_COLUMNS = (
 )
 
 
+def _is_blank(v: Any) -> bool:
+    if v is None:
+        return True
+    try:
+        return bool(pd.isna(v))
+    except Exception:
+        return False
+
+
 def _num(v: Any) -> float:
     try:
+        if _is_blank(v):
+            return 0.0
         if isinstance(v, str):
             v = (
                 v.replace(",", "")
@@ -32,19 +47,20 @@ def _num(v: Any) -> float:
                 .replace("%", "")
                 .strip()
             )
-        return float(v or 0)
+        x = float(v or 0)
+        return x if math.isfinite(x) else 0.0
     except Exception:
         return 0.0
 
 
 def _fmt_money(v: Any) -> str:
-    if v is None:
+    if _is_blank(v):
         return ""
     return f"{int(round(_num(v))):,}"
 
 
 def _fmt_qty(v: Any) -> str:
-    if v is None:
+    if _is_blank(v):
         return ""
     n = _num(v)
     return f"{int(round(n)):,}" if abs(n - round(n)) < 1e-9 else f"{n:,.1f}"
