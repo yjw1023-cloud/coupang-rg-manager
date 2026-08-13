@@ -3,214 +3,176 @@
 이 문서는 `yjw1023-cloud/coupang-rg-manager`의 새 ChatGPT 세션 인계 기준이다.
 
 ## 현재 기준
-- main 배포 버전: **v0.9.74**
-- 현재 개발 기준 브랜치: **main**
 - 저장소: `yjw1023-cloud/coupang-rg-manager`
+- 현재 개발/배포 브랜치: **main**
+- 현재 배포 버전: **v0.9.79**
 - Windows 로컬 ERP / Streamlit / SQLite `data/rocketgrowth.db`
 - 자동 업데이트: GitHub `main`의 `update/latest.json`
 - 사용자 데이터(`data`, `.venv`, `sample_data`)는 업데이트로 덮어쓰지 않는다.
-- 새 세션은 반드시 `PROJECT_CONTEXT.md` → `SESSION_HANDOFF.md` → `SESSION_LOG_2026-08-13.md` → `VERSION.txt` → `update/latest.json` → 최근 관련 모듈 순서로 확인한다.
+- 새 세션은 반드시 `PROJECT_CONTEXT.md` → `SESSION_HANDOFF.md` → `SESSION_LOG_2026-08-13_PART2.md` → `VERSION.txt` → `update/latest.json` → 현재 이슈 관련 최신 모듈 순서로 확인한다.
 
-## 가장 중요한 현재 미해결 이슈 — 신규 3상품 BOM
-사용자가 아래 3개 상품의 품목등록과 BOM 등록을 요청했다.
+## 현재 최우선 미해결 이슈
+### **v0.9.79인데 `🎯 목표·실적관리` 메뉴가 사용자 화면에 보이지 않음**
+사용자가 v0.9.79 업데이트 후 사이드바 캡처를 제공했다.
+
+확인된 화면:
+- `RG Manager v0.9.79` 표시 → 버전 파일/업데이트 자체는 적용됨.
+- 사이드바 그룹: `💰 손익·정산`, `📦 재고·생산`, `🛒 매입·상품`, `📥 데이터·관리`.
+- 캡처에서는 그룹이 접혀 있음.
+- 사용자 직접 피드백: **`목표실적관리 메뉴가 없잖아`**.
+
+다음 세션 첫 작업:
+1. `💰 손익·정산`을 펼쳤을 때도 메뉴가 실제 없는지 먼저 구분. 캡처는 접힌 상태이므로 숨겨진 것인지 확인할 가치가 있음.
+2. 실제로 없다면 바로 v0.9.80을 찍기 전에 현재 main 코드의 메뉴 patch 흐름을 점검.
+3. `goal_management_v0979.patch_source(source)`가 최종 legacy source 메뉴 목록에 `🎯  목표·실적관리`를 실제 삽입하는지 확인.
+4. `sidebar_groups_v0917._group_options()`는 **최종 options에 존재하는 항목만** 그룹에 표시한다. `_GROUPS`만 수정돼도 options에 PAGE_LABEL이 없으면 메뉴가 안 나온다.
+5. 최종 patched source의 `_rg_menu_options_v0917` 값 확인이 핵심.
+6. 필요하면 일시적 diagnostic을 화면에 넣거나 patch 순서를 바로잡는다.
+7. 메뉴가 나타난 뒤 실제 화면 진입과 목표 저장까지 확인.
+
+관련 파일:
+- `goal_management_v0979.py`
+- `pnl_month_default_v0915.py`
+- `sidebar_groups_v0917.py`
+- `sidebar_lock_v0921.py`
+- `app.py`
+- `VERSION.txt`
+- `update/latest.json`
+
+## v0.9.79 — 목표·실적관리 의도된 기능
+신규 파일: `goal_management_v0979.py`
+
+의도한 메뉴 위치:
+- `💰 손익·정산`
+  - `📈 잠정손익`
+  - `🎯 목표·실적관리`
+  - `✅ 상품 확정손익`
+  - `📒 월 결산`
+  - `🔍 손익차이분석`
+  - `📄 자료별 잠정손익`
+
+화면 탭:
+1. `진행현황`
+2. `목표 설정`
+3. `월말검증`
+4. `목표이력`
+
+목표 저장 테이블:
+- `monthly_product_goals`
+- `monthly_goal_reviews`
+
+기능:
+- 당월/익월/과거월 목표 설정
+- 상품별 목표 판매수량, 목표매출, 광고예산, 목표이익, 메모
+- 목표이익률, 목표 ROAS 자동 계산
+- 전월 목표 복사
+- 당월 잠정실적 / 과거월 확정실적 연결
+- 판매자료 연속 입력일 기준 월말 예상 판매/이익
+- 목표 대비 진행상태
+- 월말 목표 vs 실제 비교
+- 미달사유/검토메모 저장
+- 상품별 월별 목표이력
+
+## v0.9.78 — 대시보드 당월 자료 입력 현황
+신규 파일: `dashboard_data_status_v0978.py`
+
+대시보드 `월별 실적` 위에:
+- 판매 Excel이 당월 1일부터 며칠까지 연속 입력됐는지
+- 광고비 Excel이 당월 1일부터 며칠까지 연속 입력됐는지
+- 다음 입력 시작일
+- 전일 기준 미입력 일수
+- 당월 인식 파일 수
+
+중간 날짜가 빠지면 더 뒤 날짜 파일이 존재해도 최초 누락일부터 안내한다.
+
+## v0.9.76~0.9.77 — 상품 통합현황
+완제품 하나를 검색해서 한 화면에서 아래 내용을 보는 메뉴를 추가함.
+- 판매/매출
+- 반품/취소 및 비율
+- 쿠팡RG 재고
+- 반품창고 재고
+- BOM 기초재고
+- 현재 생산가능수량 및 병목 구성품
+- 광고비 사용이력
+- 잠정/확정 이익
+
+관련 파일:
+- `product_overview_v0976.py`
+- `product_overview_v0977.py`
+
+v0.9.77 UX 원칙:
+- 완제품 선택/조회기간 selectbox에 진한 2px 테두리
+- 기본 조회기간 `이번 달`
+- 이번 달 = 당월 1일 ~ 어제
+- 최근 30/90일도 오늘 제외
+- 판매이력과 잠정 매출·이익 이력은 원본 업로드 파일 조각별 기간이 아니라 사용자가 선택한 조회기간 기준으로 집계
+
+## v0.9.75 — ERP 전체 검색창 테두리
+`search_ui_v096.py`에서 ERP 전체 `st.text_input` 검색영역을 강하게 표시.
+- 흰 배경
+- 2px 회색 외곽선
+- hover 진해짐
+- focus 파란 테두리/ring
+- Streamlit DOM 차이를 고려해 wrapper + 실제 input fallback
+
+## BOM
+신규 3상품 BOM 문제는 사용자 확인 기준 **해결됨**.
+사용자가 다시 요청하지 않는 한 seed/repair/reseed 작업을 하지 않는다.
 
 완제품:
 - `95912623408` — 어항용 뜰채 플라스틱 2p 수족관 새우 베타 구피, Free 2개
 - `95912717676` — 프로 야구 포토카드 앨범 바인더, 화이트 50매
 - `95912816721` — 대형 견출지 라벨 스티커 300장 라벨지, 혼합 300개입 1개
 
-v0.9.70에서:
-- 위 3개 `finished` 완제품 등록
-- 각각 동일명 `raw` 자체창고 품목 생성
-- 자체창고 코드는 로컬 DB의 다음 비어 있는 `JDS####` 자동부여
-- 중복 생성 방지
-- 사용자가 **품목 등록 자체는 성공했다고 확인함**
-
-요청 BOM:
-- `95912623408` → 동일명 JDS 자체창고 품목 **2개**
-- `95912717676` → 동일명 JDS 자체창고 품목 **1개**
-- `95912816721` → 동일명 JDS 자체창고 품목 **1개**
-
-BOM 시도:
-- v0.9.71 `requested_product_bom_seed_v0971.py`: 직접 `bom_items` 등록 → 사용자 화면에 BOM 없음
-- v0.9.72 `requested_product_bom_repair_v0972.py`: startup 강제복구 + 저장검증 → 사용자 화면에 BOM 없음
-- v0.9.73 `requested_product_bom_force_v0973.py`: 직접 INSERT 대신 ERP 정식 `core.add_bom()` 사용 + DB 재검증 방식으로 변경
-
-**현재 상태:** v0.9.73 이후 사용자가 `현재 BOM` 화면을 캡처했는데 검색창 아래 BOM 행이 보이지 않았다. 그 직후 검색창 UI 개선으로 넘어가 BOM 확인이 끝나지 않았다. 따라서 새 세션의 첫 확인사항은 **v0.9.74 현재 DB/화면에 위 3개 BOM이 실제 존재하는지 확인하는 것**이다.
-
-중요:
-- 품목 master 6개는 이미 등록된 것으로 보고 중복 생성하지 말 것.
-- BOM이 계속 없으면 또 추측성 버전업부터 하지 말고, 실제 `core.add_bom()` 저장 결과와 현재 BOM 화면이 읽는 DB/쿼리/필터를 먼저 대조할 것.
-- 필요하면 오류를 화면에 직접 노출해서 로컬 DB의 실제 실패 이유를 확인할 것.
-
-관련 파일:
+관련 과거 모듈:
 - `requested_product_seed_v0970.py`
 - `requested_product_bom_seed_v0971.py`
 - `requested_product_bom_repair_v0972.py`
 - `requested_product_bom_force_v0973.py`
-- `bom_candidate_filter_v0927.py`
-- `bom_current_list_ui_v0935.py`
-- `production_v085.py`
-- `production_batch_v095.py`
 
-## v0.9.74 — ERP 전체 검색 입력창 테두리
-사용자가 `현재 BOM 검색`을 포함해 ERP 전체 검색창이 흰 배경에 묻혀 흐리다고 지적함.
+## 판매/손익 고정 원칙
+- `판매수량` = gross 실제 판매수량
+- `취소수량` = 취소/환불
+- `순판매수량` = signed net
+- 손익/원가/재고 계산은 signed net 기준
+- 반품판매 옵션은 원상품 손익에 합산
+- 반품판매 원가는 원상품 원가 사용
+- 광고비는 광고성과보고서 `광고집행 옵션ID` 직접 귀속
+- 과거 수동 총광고비 매출비율 배분 방식으로 되돌리지 않는다.
 
-현재 구현:
-- `search_ui_v096.py`에서 전역 CSS 주입
-- Streamlit `st.text_input` 기반 입력영역 기본 회색 1.5px 테두리
-- hover 시 더 진한 회색
-- focus 시 파란 2px 테두리 + 약한 focus ring
-- placeholder도 진하게 표시
-- BOM, 재고, 품목, 매입이력 등 text_input 기반 검색영역 전체에 적용
-
-`VERSION.txt`와 `update/latest.json` 모두 **0.9.74** 확인 완료.
-
-## 재고관리 — 창고별 Excel / 재고실사
-사용자 요구:
-- ERP 재고를 창고별 Excel로 출력
-- 실제 재고실사 후 Excel의 `실사수량` 입력
-- 같은 Excel 업로드 후 ERP 재고 조정
-
-v0.9.68 고정 원칙:
-- 재고를 직접 UPDATE/덮어쓰기 하지 않는다.
-- `실사수량 - 업로드 시점 현재 ERP 재고` 차이만 `inventory_txns`에 `재고실사조정`으로 기록한다.
-- 엑셀 다운로드 후 판매/입고/생산이 발생했더라도 업로드 시 실제 ERP 재고를 다시 읽는다.
-- 실사하지 않은 행은 빈칸으로 두고 무시.
-- 실사수량 음수 차단.
-- 동일 상품+창고 중복행 차단.
-- 동일 파일 해시 중복 적용 차단.
-- 적용 전 변경행/증가/감소 preview + 사용자 확인 체크.
-- 실사일/파일명/참조번호/증감수량을 `inventory_stocktake_imports`에 기록.
-
-Excel 구조:
-- `사용방법` + 창고별 sheet
-- 열: ERP상품ID(숨김), 창고, 품목코드, 쿠팡 옵션ID, 상품명, 상태, ERP현재고, 실사수량, 차이, 비고
-
-v0.9.69 창고별 출력 필터:
-- `자체창고` → `raw` 품목만
-- `쿠팡RG` → `finished` 완제품만
-- `반품창고` → 완제품만
-- 기타 창고 → 해당 창고에 실제 현재고가 있는 품목만
-- 보관품목은 해당 창고 재고가 있을 때만 표시
-
-관련 파일:
-- `inventory_stocktake_v0968.py`
-- `inventory_stocktake_v0969.py`
-- `inventory_ui_v084.py`
-- `inventory_flow_v088.py`
-
-## 잠정손익 — 판매수량/반품판매/월 snapshot
-
-### 판매수량 고정 원칙
-- `판매수량` = 쿠팡 원자료의 실제 판매수량(gross)
-- `취소수량` = 취소/환불 수량
-- `순판매수량` = signed net quantity
-- 화면의 판매수량을 다시 net_qty로 표시하지 말 것.
-- 매출원가/손익/재고 계산은 순판매수량 기준.
-- 수동 예상 실현단가 조정도 순판매수량 기준.
-
-### 반품판매 원상품 연결
-사용자가 아래 2개 옵션을 반품판매 데이터라고 직접 확인함.
+확정 반품판매 연결:
 - `95119299567` → `94475454519` 글라스 네일 파일 5P
 - `95156135112` → `94350296878` 휴대용 가죽 구두주걱 미니 2P
 
-고정 원칙:
-- 반품 옵션을 독립 잠정손익 행으로 두지 않고 원상품 행에 합산.
-- 원 판매통계 이력은 감사 추적을 위해 유지.
-- 반품판매 재고는 원상품 `반품창고`에서 처리.
-- `반품판매수량` = gross 반품상품 판매수량.
-- `반품판매취소` = 반품판매 취소/환불 수량.
-- `반품판매매출` = 쿠팡 자료의 signed 순매출.
-- 원가는 연결된 원상품 원가.
-- 반품판매의 매출원가도 signed 순판매수량으로 처리: 판매 시 차감, 취소 시 환입.
-- `net_qty`의 부호만 보고 판매/취소를 추정하지 말 것.
+## 사용자가 별도 월별 손익 Excel 작업에서 확정한 계산 기준
+향후 비슷한 집계에도 참고.
+- 파일명으로 매출 월 판단 금지.
+- **발생일(결제완료일)** 기준으로 월 판단.
+- 동일 상품명인데 ID가 다른 판매건은 반품상품 판매로 보고 원상품에 합산.
+- 상품원가 = 월 판매수량 × ERP 개당 상품원가.
+- 평균판매단가 = 매출액 ÷ 판매건수.
+- 이익 = 매출액 - 판매수수료 - 입출고배송비 - 반품처리비용 - 광고비 - 상품원가.
+- 7월 입출고배송/반품비는 사용자 허용 하에 ERP DB 확정자료 사용 가능.
 
-### 실제 8월 판매통계 두 파일 검증값
-사용자가 입력한 판매통계 Excel은 아래 두 개가 전부라고 확인함.
-- `Statistics-20260801~20260802_(0).xlsx`
-- `Statistics-20260803~20260809_(0)(1).xlsx`
+## 재고실사 유지 원칙
+- 재고 balance 직접 덮어쓰기 금지.
+- `실사수량 - 업로드 시점 현재 ERP 재고` 차이만 `inventory_txns`의 `재고실사조정`으로 기록.
+- 같은 파일 중복적용 차단.
+- 자체창고 raw / 쿠팡RG finished / 반품창고 finished 필터 유지.
 
-검증 완료:
-- `94350296878` 구두주걱: 판매 3 / 취소 1 / 순판매 2 / 반품판매수량 0 / 반품판매취소 1 / 예상매출 **23,940원** / 반품판매매출 **-10,260원**
-- `94475454519` 네일파일: 판매 4 / 취소 1 / 순판매 3 / 반품판매수량 1 / 반품판매취소 0 / 예상매출 **24,360원** / 반품판매매출 **7,560원**
+## 사용자 작업 방식/커뮤니케이션
+- 반드시 존댓말.
+- 수정 요청이 명확하면 GitHub 연결로 직접 수정하고 사용자에게 수동 코드 편집을 시키지 말 것.
+- `수정해/만들어`는 해당 범위 GitHub write 승인으로 본다.
+- main 배포 시 코드 먼저 → `VERSION.txt` → `update/latest.json` 마지막 순서.
+- 실제 검증하지 않은 화면은 검증했다고 말하지 않는다.
+- UI는 네이비/블루 계열, 검색/선택 입력영역은 경계가 분명하게.
+- 상품/손익 화면은 내부 개발 필드 노출 금지.
 
-사용자가 v0.9.67 화면에서 위 숫자가 맞음을 확인함.
+## 다음 세션 시작 문구
+사용자는 새 채팅에서 아래처럼 시작하면 된다.
 
-### 월 snapshot stale 문제
-- v0.9.66에서 존재하지 않는 `_snapshot_rows_for_month` 호출 오류 발생.
-- v0.9.67에서 함수 monkey-patch 제거.
-- 월 화면 진입 전에 현재 `sales_stats` fingerprint/calculation version을 보고 stale snapshot이면 다시 생성.
-- 수량은 최신 DB, 예상매출은 과거 snapshot 식으로 서로 다른 기준을 섞지 말 것.
+`쿠팡 RG ERP 계속 개발하자. GitHub의 PROJECT_CONTEXT.md, SESSION_HANDOFF.md, SESSION_LOG_2026-08-13_PART2.md 읽고, v0.9.79인데 목표·실적관리 메뉴가 안 보이는 문제부터 이어서 해결해.`
 
-관련 파일:
-- `sales_quantity_v0965.py`
-- `return_sale_pnl_v0965.py`
-- `provisional_manual_netqty_v0965.py`
-- `pnl_snapshot_refresh_v0966.py`
-- `pnl_month_v0967.py`
-
-## 광고비 처리
-기존 월 광고비 수동 총액 + 매출비율 배분 방식은 폐기.
-- 잠정손익에서 쿠팡 `광고성과보고서 Excel` 업로드
-- `광고집행 옵션ID` 기준으로 광고비 직접 귀속
-- 동일 옵션ID 광고행 합산
-- 판매가 없고 광고만 집행된 옵션도 광고비 손실행 표시
-- 과거 수동 광고비는 계산에서 사용하지 않음
-- 상품별 예상 실현단가 / 입출고비 / 배송비 수동조정은 유지
-
-검증 파일: 2026-08-01~2026-08-11 광고집행 옵션 19개, 광고비 합계 2,478,464원.
-
-## 잠정손익 표 UI 유지사항
-- 파란 헤더 + 굵은 글씨
-- 상품명 좌측 정렬, 숫자 중앙 정렬
-- 가로 스크롤 유지
-- 내부 세로 스크롤 없이 전체 행 표시
-- 헤더 클릭 정렬은 embedded HTML/JavaScript 내부 처리
-- URL/query parameter 정렬 방식으로 되돌리지 말 것
-
-## 중요한 금지/유지사항
-- 광고비를 수동 총액 + 매출비율 배분으로 되돌리지 말 것.
-- 반품판매 옵션을 다시 독립 잠정손익 행으로 되돌리지 말 것.
-- 판매수량/취소수량/순판매수량을 다시 혼용하지 말 것.
-- 손익 원가는 gross가 아니라 signed 순판매수량 기준.
-- 재고실사 때 balance 직접 덮어쓰기 금지. 반드시 `재고실사조정` transaction.
-- 월 결산은 당월 전체 매입액 비용처리가 아니라 재고식 매출원가 원칙.
-- 사용자 로컬 SQLite DB에 직접 접근할 수 없으므로 DB 정리가 필요하면 업데이트 코드가 실행되도록 구현.
-- 신규 3상품 master는 이미 생성 성공했으므로 중복생성 금지.
-
-## 기존 기능 유지
-- 품목코드 JDS 자동부여 및 과거 코드 영구예약
-- 품목 보관삭제/복원
-- 생산/BOM 후보 필터와 BOM 삭제 정책
-- 월 잠정손익 snapshot 자동 backfill
-- 사이드바 그룹화/로고/8517 포트 안정화
-
-## 다음 세션 시작 시
-1. `PROJECT_CONTEXT.md`
-2. `SESSION_HANDOFF.md`
-3. `SESSION_LOG_2026-08-13.md`
-4. `VERSION.txt`, `update/latest.json`이 모두 **v0.9.74**인지 확인
-5. **신규 3상품 BOM 존재 여부부터 확인**
-6. BOM 문제면 `requested_product_bom_force_v0973.py` → `bom_candidate_filter_v0927.py` → `bom_current_list_ui_v0935.py` → `production_batch_v095.py` → 실제 `core.add_bom()` 순서로 확인
-7. 재고실사 문제면 `inventory_stocktake_v0969.py` → `inventory_stocktake_v0968.py` → `inventory_ui_v084.py`
-8. 잠정손익 문제면 `sales_quantity_v0965.py` → `return_sale_pnl_v0965.py` → `pnl_snapshot_refresh_v0966.py` → `pnl_month_v0967.py`
-
-## 최신 주요 파일
-- `app.py`
-- `VERSION.txt`
-- `update/latest.json`
-- `SESSION_LOG_2026-08-13.md`
-- `search_ui_v096.py`
-- `inventory_stocktake_v0968.py`
-- `inventory_stocktake_v0969.py`
-- `requested_product_seed_v0970.py`
-- `requested_product_bom_seed_v0971.py`
-- `requested_product_bom_repair_v0972.py`
-- `requested_product_bom_force_v0973.py`
-- `sales_quantity_v0965.py`
-- `return_sale_pnl_v0965.py`
-- `pnl_snapshot_refresh_v0966.py`
-- `pnl_month_v0967.py`
-- `provisional_ad_report_v0956.py`
-- `monthly_closing_v0916.py`
+## 상세 로그
+오늘 후반 작업의 더 자세한 기록은 `SESSION_LOG_2026-08-13_PART2.md`에 저장되어 있다.
