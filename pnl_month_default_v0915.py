@@ -1,8 +1,8 @@
-"""v0.9.78 safe monthly-default routing + dashboard input coverage.
+"""v0.9.79 safe monthly-default routing + product goals/performance management.
 
 This module is explicitly purged from sys.modules by app.py on every rerun.
-Existing P&L/BOM/product-overview routing remains unchanged; v0.9.78 also inserts
-current-month sales/ad Excel coverage immediately above the dashboard monthly results.
+Existing P&L/BOM/product-overview/dashboard-status routing remains unchanged;
+v0.9.79 adds monthly finished-product target setting, progress, review and history.
 """
 from __future__ import annotations
 
@@ -63,17 +63,24 @@ def render_dashboard_data_status(st_obj, core, db_path=None):
     return m.render(st_obj, core, db_path)
 
 
+def render_goal_management_page(st_obj, pd_obj, core, db_path=None):
+    m = importlib.import_module("goal_management_v0979")
+    return m.render_page(st_obj, pd_obj, core, db_path)
+
+
 def render_grouped_sidebar(st_obj, options, default_page=None):
     lock = importlib.import_module("sidebar_lock_v0921")
     lock.apply(st_obj)
     m = importlib.import_module("sidebar_groups_v0917")
     overview = importlib.import_module("product_overview_v0977")
     overview.apply_sidebar(m)
+    goals = importlib.import_module("goal_management_v0979")
+    goals.apply_sidebar(m)
     return m.render_sidebar(st_obj, options, default_page)
 
 
 def patch_source(source: str) -> str:
-    """Route P&L/pages/navigation/BOM and add dashboard data-input coverage."""
+    """Route P&L/pages/navigation/BOM and add dashboard status + goal management."""
     snapshot_fix = importlib.import_module("pnl_snapshot_fix_v0929")
     core_module = importlib.import_module("core")
     views_module = importlib.import_module("pnl_views_v0912")
@@ -114,8 +121,12 @@ def patch_source(source: str) -> str:
     dashboard_status = importlib.import_module("dashboard_data_status_v0978")
     source = dashboard_status.patch_source(source)
 
+    goals = importlib.import_module("goal_management_v0979")
+    source = goals.patch_source(source)
+
     sidebar = importlib.import_module("sidebar_groups_v0917")
     overview.apply_sidebar(sidebar)
+    goals.apply_sidebar(sidebar)
     source = sidebar.patch_source(source)
     lock = importlib.import_module("sidebar_lock_v0921")
     source = lock.patch_source(source)
