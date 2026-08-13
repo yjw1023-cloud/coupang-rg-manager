@@ -1,8 +1,8 @@
-"""v0.9.76 safe monthly-default P&L routing + product integrated overview.
+"""v0.9.77 safe monthly-default P&L routing + product integrated overview.
 
 This module is explicitly purged from sys.modules by app.py on every rerun.
-Existing P&L/BOM routing remains unchanged; v0.9.76 adds a read-only finished-product
-overview page that brings sales, returns, inventory, BOM, ads and profit together.
+Existing P&L/BOM routing remains unchanged; v0.9.77 keeps the read-only finished-product
+overview page and routes it through the corrected period/selector presentation.
 """
 from __future__ import annotations
 
@@ -54,7 +54,7 @@ def render_monthly_closing_page(st_obj, pd_obj, core, db_path=None):
 
 
 def render_product_overview_page(st_obj, pd_obj, core, db_path=None):
-    m = importlib.import_module("product_overview_v0976")
+    m = importlib.import_module("product_overview_v0977")
     return m.render_page(st_obj, pd_obj, core, db_path)
 
 
@@ -62,7 +62,7 @@ def render_grouped_sidebar(st_obj, options, default_page=None):
     lock = importlib.import_module("sidebar_lock_v0921")
     lock.apply(st_obj)
     m = importlib.import_module("sidebar_groups_v0917")
-    overview = importlib.import_module("product_overview_v0976")
+    overview = importlib.import_module("product_overview_v0977")
     overview.apply_sidebar(m)
     return m.render_sidebar(st_obj, options, default_page)
 
@@ -103,7 +103,7 @@ def patch_source(source: str) -> str:
         1,
     )
 
-    overview = importlib.import_module("product_overview_v0976")
+    overview = importlib.import_module("product_overview_v0977")
     source = overview.patch_source(source)
 
     sidebar = importlib.import_module("sidebar_groups_v0917")
