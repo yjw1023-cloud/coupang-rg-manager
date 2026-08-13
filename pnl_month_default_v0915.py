@@ -1,9 +1,8 @@
-"""v0.9.73 safe monthly-default P&L routing + forced requested BOM repair.
+"""v0.9.76 safe monthly-default P&L routing + product integrated overview.
 
-This module is explicitly purged from sys.modules by app.py on every rerun, so it
-is also used as a reliable startup repair hook for the three user-requested BOMs.
-v0.9.73 uses the ERP's own core.add_bom() path and exposes any failure instead of
-silently pretending the BOM was registered.
+This module is explicitly purged from sys.modules by app.py on every rerun.
+Existing P&L/BOM routing remains unchanged; v0.9.76 adds a read-only finished-product
+overview page that brings sales, returns, inventory, BOM, ads and profit together.
 """
 from __future__ import annotations
 
@@ -54,15 +53,22 @@ def render_monthly_closing_page(st_obj, pd_obj, core, db_path=None):
     return m.render_monthly_closing_page(st_obj, pd_obj, core, db_path)
 
 
+def render_product_overview_page(st_obj, pd_obj, core, db_path=None):
+    m = importlib.import_module("product_overview_v0976")
+    return m.render_page(st_obj, pd_obj, core, db_path)
+
+
 def render_grouped_sidebar(st_obj, options, default_page=None):
     lock = importlib.import_module("sidebar_lock_v0921")
     lock.apply(st_obj)
     m = importlib.import_module("sidebar_groups_v0917")
+    overview = importlib.import_module("product_overview_v0976")
+    overview.apply_sidebar(m)
     return m.render_sidebar(st_obj, options, default_page)
 
 
 def patch_source(source: str) -> str:
-    """Route P&L pages, monthly closing, navigation, BOM UI, and snapshot binding."""
+    """Route P&L pages, product overview, monthly closing, navigation, BOM UI, and snapshots."""
     snapshot_fix = importlib.import_module("pnl_snapshot_fix_v0929")
     core_module = importlib.import_module("core")
     views_module = importlib.import_module("pnl_views_v0912")
@@ -97,7 +103,11 @@ def patch_source(source: str) -> str:
         1,
     )
 
+    overview = importlib.import_module("product_overview_v0976")
+    source = overview.patch_source(source)
+
     sidebar = importlib.import_module("sidebar_groups_v0917")
+    overview.apply_sidebar(sidebar)
     source = sidebar.patch_source(source)
     lock = importlib.import_module("sidebar_lock_v0921")
     source = lock.patch_source(source)
