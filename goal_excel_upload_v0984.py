@@ -1,0 +1,325 @@
+"""RG Manager v0.9.84 Excel target template download/upload workflow.
+
+The goal input tab is simplified to:
+- download an Excel template populated with active finished products
+- fill target figures in Excel
+- upload the workbook and save goals for the selected month by option ID
+
+The styled goal/performance comparison from v0.9.83 is preserved.
+"""
+from __future__ import annotations
+
+from io import BytesIO
+import importlib
+import math
+from typing import Any
+
+import pandas as pd
+
+
+_TEMPLATE_COLUMNS = [
+    "아이템",
+    "옵션ID",
+    "매출",
+    "단가",
+    "수량",
+    "수수료",
+    "입출고배송비",
+    "반품처리비",
+    "광고비",
+    "상품원가",
+    "매출이익",
+]
+_INPUT_COLUMNS = [
+    "매출",
+    "수량",
+    "수수료",
+    "입출고배송비",
+    "반품처리비",
+    "광고비",
+    "상품원가",
+    "매출이익",
+]
+
+
+def _clean_number(value: Any):
+    try:
+        if value is None or pd.isna(value):
+            return None
+    except Exception:
+        pass
+    if isinstance(value, str):
+        s = value.replace(",", "").replace("원", "").replace("개", "").strip()
+        if not s:
+            return None
+        value = s
+    try:
+        x = float(value)
+        return x if math.isfinite(x) else None
+    except Exception:
+        return None
+
+
+def _goal_template_dataframe(core, db, month: str, base, old) -> pd.DataFrame:
+    products = base._products(core, db, active_only=True)
+    goals = old._detail_goals(core, db, month, base)
+    goal_map = {int(r["product_id"]): r for r in goals.to_dict("records")}
+    rows = []
+    for p in products.itertuples(index=False):
+        pid = int(p.id)
+        oid = base._oid(getattr(p, "option_id", "")) or base._oid(getattr(p, "item_code", ""))
+        g = goal_map.get(pid)
+        if g:
+            revenue = old._num(g.get("target_revenue"))
+            qty = old._num(g.get("target_qty"))
+            unit = revenue / qty if abs(qty) > 1e-12 else 0.0
+            row = {
+                "아이템": str(p.name or ""),
+                "옵션ID": oid,
+                "매출": revenue,
+                "단가": unit,
+                "수량": qty,
+                "수수료": old._num(g.get("target_commission")),
+                "입출고배송비": old._num(g.get("target_rg_cost")),
+                "반품처리비": old._num(g.get("target_return_cost")),
+                "광고비": old._num(g.get("target_ad_spend")),
+                "상품원가": old._num(g.get("target_cogs")),
+                "매출이익": old._num(g.get("target_profit")),
+            }
+        else:
+            row = {c: None for c in _TEMPLATE_COLUMNS}
+            row["아이템"] = str(p.name or "")
+            row["옵션ID"] = oid
+        rows.append(row)
+    return pd.DataFrame(rows, columns=_TEMPLATE_COLUMNS)
+
+
+def _template_bytes(core, db, month: str, base, old) -> bytes:
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+
+    df = _goal_template_dataframe(core, db, month, base, old)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "목표입력"
+
+    header_fill = PatternFill("solid", fgColor="DCE8F6")
+    input_fill = PatternFill("solid", fgColor="FFF7DF")
+    id_fill = PatternFill("solid", fgColor="F3F4F6")
+    thin = Side(style="thin", color="CBD5E1")
+
+    for col_idx, header in enumerate(_TEMPLATE_COLUMNS, 1):
+        cell = ws.cell(row=1, column=col_idx, value=header)
+        cell.fill = header_fill
+        cell.font = Font(bold=True)
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    for row_idx, rec in enumerate(df.to_dict("records"), 2):
+        for col_idx, header in enumerate(_TEMPLATE_COLUMNS, 1):
+            value = rec.get(header)
+            cell = ws.cell(row=row_idx, column=col_idx, value=value)
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=(header == "아이템"))
+            cell.border = Border(left=thin, right=thin, top=thin, bottom=thin)
+            if header in _INPUT_COLUMNS or header == "단가":
+                cell.fill = input_fill
+            else:
+                cell.fill = id_fill
+            if header in _INPUT_COLUMNS or header == "단가":
+                cell.number_format = '#,##0.##'
+
+    widths = {
+        "A": 44,
+        "B": 16,
+        "C": 14,
+        "D": 12,
+        "E": 10,
+        "F": 13,
+        "G": 16,
+        "H": 14,
+        "I": 12,
+        "J": 13,
+        "K": 14,
+    }
+    for col, width in widths.items():
+        ws.column_dimensions[col].width = width
+    ws.freeze_panes = "A2"
+    ws.auto_filter.ref = f"A1:K{max(1, ws.max_row)}"
+    ws.sheet_view.showGridLines = False
+
+    bio = BytesIO()
+    wb.save(bio)
+    return bio.getvalue()
+
+
+def _row_has_input(row) -> bool:
+    return any(_clean_number(row.get(col)) is not None for col in _INPUT_COLUMNS)
+
+
+def _upload_rows(uploaded, base) -> pd.DataFrame:
+    uploaded.seek(0)
+    df = pd.read_excel(uploaded, sheet_name=0)
+    df.columns = [str(c).strip() for c in df.columns]
+    missing = [c for c in _TEMPLATE_COLUMNS if c not in df.columns]
+    if missing:
+        raise ValueError("필수 열이 없습니다: " + ", ".join(missing))
+    df = df[_TEMPLATE_COLUMNS].copy()
+    df["옵션ID"] = df["옵션ID"].map(base._oid)
+    df = df[df["옵션ID"].astype(str).str.strip() != ""]
+    return df
+
+
+def _save_uploaded_goals(core, db, month: str, df: pd.DataFrame, base, old):
+    products = base._products(core, db, active_only=True)
+    by_oid = {}
+    for p in products.itertuples(index=False):
+        oid = base._oid(getattr(p, "option_id", "")) or base._oid(getattr(p, "item_code", ""))
+        if oid:
+            by_oid[oid] = int(p.id)
+
+    seen = set()
+    saved = 0
+    skipped_blank = 0
+    unknown = []
+    duplicates = []
+
+    for _, r in df.iterrows():
+        oid = base._oid(r.get("옵션ID"))
+        if oid in seen:
+            duplicates.append(oid)
+            continue
+        seen.add(oid)
+        pid = by_oid.get(oid)
+        if pid is None:
+            unknown.append(oid)
+            continue
+        if not _row_has_input(r):
+            skipped_blank += 1
+            continue
+
+        revenue = _clean_number(r.get("매출"))
+        qty = _clean_number(r.get("수량"))
+        commission = _clean_number(r.get("수수료"))
+        rg = _clean_number(r.get("입출고배송비"))
+        returns = _clean_number(r.get("반품처리비"))
+        ad = _clean_number(r.get("광고비"))
+        cogs = _clean_number(r.get("상품원가"))
+        profit = _clean_number(r.get("매출이익"))
+
+        revenue = revenue or 0.0
+        qty = qty or 0.0
+        commission = commission or 0.0
+        rg = rg or 0.0
+        returns = returns or 0.0
+        ad = ad or 0.0
+        cogs = cogs or 0.0
+        if profit is None:
+            profit = revenue - commission - rg - returns - ad - cogs
+
+        payload = {
+            "목표매출": revenue,
+            "목표수량": qty,
+            "목표수수료": commission,
+            "목표입출고배송비": rg,
+            "목표반품처리비": returns,
+            "목표광고비": ad,
+            "목표상품원가": cogs,
+            "목표매출이익": profit,
+            "메모": "",
+        }
+        old._save_detail_goal(core, db, month, pid, payload, base)
+        saved += 1
+
+    return {
+        "saved": saved,
+        "skipped_blank": skipped_blank,
+        "unknown": sorted(set(unknown)),
+        "duplicates": sorted(set(duplicates)),
+    }
+
+
+def _render_excel_goal_input(st, core, db, month: str, base, old):
+    st.markdown("### 목표 엑셀 입력")
+    st.caption("양식을 내려받아 목표 숫자를 입력한 뒤 그대로 업로드하세요. 옵션ID 기준으로 자동 저장됩니다.")
+
+    try:
+        data = _template_bytes(core, db, month, base, old)
+        st.download_button(
+            "목표 엑셀 양식 다운로드",
+            data=data,
+            file_name=f"목표입력_{month}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            key=f"goal984_download_{month}",
+        )
+    except Exception as exc:
+        st.error(f"엑셀 양식을 만들지 못했습니다: {exc}")
+        return
+
+    uploaded = st.file_uploader(
+        "작성한 목표 엑셀 업로드",
+        type=["xlsx"],
+        key=f"goal984_upload_{month}",
+    )
+    if uploaded is None:
+        return
+
+    try:
+        df = _upload_rows(uploaded, base)
+    except Exception as exc:
+        st.error(f"엑셀을 읽지 못했습니다: {exc}")
+        return
+
+    st.success(f"엑셀 {len(df):,}행을 확인했습니다.")
+    if st.button(
+        f"{base._month_label(month)} 목표 저장",
+        type="primary",
+        use_container_width=True,
+        key=f"goal984_save_{month}",
+    ):
+        try:
+            result = _save_uploaded_goals(core, db, month, df, base, old)
+        except Exception as exc:
+            st.error(f"목표 저장 중 오류가 발생했습니다: {exc}")
+            return
+
+        st.success(f"목표 {result['saved']:,}개 상품을 저장했습니다.")
+        if result["unknown"]:
+            st.warning("ERP에 없는 옵션ID: " + ", ".join(result["unknown"][:20]))
+        if result["duplicates"]:
+            st.warning("중복 옵션ID는 첫 행만 반영했습니다: " + ", ".join(result["duplicates"][:20]))
+        st.rerun()
+
+
+def render_page(st, pd_obj, core, db_path=None):
+    base = importlib.import_module("goal_management_v0979")
+    old = importlib.import_module("goal_excel_view_v0981")
+    styled = importlib.import_module("goal_excel_view_v0983")
+    db = db_path or core.DEFAULT_DB
+    old._ensure_detail_schema(core, db, base)
+
+    st.markdown(base._SELECT_CSS, unsafe_allow_html=True)
+    st.markdown("## 🎯 목표·실적관리")
+    st.caption("목표와 잠정실적·확정실적을 엑셀처럼 한 표에서 비교합니다.")
+
+    months = base._month_options()
+    month = st.selectbox(
+        "목표·검증 월",
+        months,
+        index=0,
+        format_func=base._month_label,
+        key="goal_management_month_v0984",
+    )
+
+    tabs = st.tabs(["목표·실적표", "목표 입력", "월말검증", "목표이력"])
+    with tabs[0]:
+        styled._render_excel_comparison(st, core, db, month, base, old)
+    with tabs[1]:
+        _render_excel_goal_input(st, core, db, month, base, old)
+    with tabs[2]:
+        goals = base._goals(core, db, month)
+        actuals, source_label = base._actuals(core, db, month)
+        progress, _meta = base._build_progress(goals, actuals, month, core, db)
+        base._render_review(st, core, db, month, progress, source_label)
+    with tabs[3]:
+        base._render_history(st, core, db)
