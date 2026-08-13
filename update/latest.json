@@ -1,6 +1,6 @@
 {
-  "version": "0.9.82",
-  "message": "목표·실적관리의 확정실적이 아직 없는 월에서 빈값이 Pandas NaN으로 변환되며 'cannot convert float NaN to integer' 오류가 나던 문제를 수정합니다. 금액·수량 포맷과 숫자 변환을 NaN/None/무한값에 안전하게 보강해, 확정자료가 없으면 오류 없이 빈칸으로 표시합니다.",
+  "version": "0.9.83",
+  "message": "목표·실적관리 표를 엑셀처럼 보기 좋게 다듬습니다. 아이템명은 목표/잠정실적/확정실적 3행을 하나의 병합 셀처럼 표시하고 아이템 열은 넓게, 숫자 열은 좁게 조정합니다. 제목 행은 가운데 정렬·굵은 글씨·색상 배경을 적용하고 모든 셀을 가운데 정렬하며 목표/잠정실적/확정실적 행도 구분 색상을 적용합니다.",
   "files": [
     "app.py",
     "VERSION.txt",
@@ -34,6 +34,7 @@
     "dashboard_data_status_v0978.py",
     "goal_management_v0979.py",
     "goal_excel_view_v0981.py",
+    "goal_excel_view_v0983.py",
     "sales_pnl_ui_v098.py",
     "return_discount_v099.py",
     "sales_import_guard_v0941.py",
