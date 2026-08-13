@@ -1,8 +1,8 @@
-"""v0.9.77 safe monthly-default P&L routing + product integrated overview.
+"""v0.9.78 safe monthly-default routing + dashboard input coverage.
 
 This module is explicitly purged from sys.modules by app.py on every rerun.
-Existing P&L/BOM routing remains unchanged; v0.9.77 keeps the read-only finished-product
-overview page and routes it through the corrected period/selector presentation.
+Existing P&L/BOM/product-overview routing remains unchanged; v0.9.78 also inserts
+current-month sales/ad Excel coverage immediately above the dashboard monthly results.
 """
 from __future__ import annotations
 
@@ -58,6 +58,11 @@ def render_product_overview_page(st_obj, pd_obj, core, db_path=None):
     return m.render_page(st_obj, pd_obj, core, db_path)
 
 
+def render_dashboard_data_status(st_obj, core, db_path=None):
+    m = importlib.import_module("dashboard_data_status_v0978")
+    return m.render(st_obj, core, db_path)
+
+
 def render_grouped_sidebar(st_obj, options, default_page=None):
     lock = importlib.import_module("sidebar_lock_v0921")
     lock.apply(st_obj)
@@ -68,7 +73,7 @@ def render_grouped_sidebar(st_obj, options, default_page=None):
 
 
 def patch_source(source: str) -> str:
-    """Route P&L pages, product overview, monthly closing, navigation, BOM UI, and snapshots."""
+    """Route P&L/pages/navigation/BOM and add dashboard data-input coverage."""
     snapshot_fix = importlib.import_module("pnl_snapshot_fix_v0929")
     core_module = importlib.import_module("core")
     views_module = importlib.import_module("pnl_views_v0912")
@@ -105,6 +110,9 @@ def patch_source(source: str) -> str:
 
     overview = importlib.import_module("product_overview_v0977")
     source = overview.patch_source(source)
+
+    dashboard_status = importlib.import_module("dashboard_data_status_v0978")
+    source = dashboard_status.patch_source(source)
 
     sidebar = importlib.import_module("sidebar_groups_v0917")
     overview.apply_sidebar(sidebar)
