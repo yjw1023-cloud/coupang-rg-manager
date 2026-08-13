@@ -1,9 +1,10 @@
 {
-  "version": "0.9.86",
-  "message": "쿠팡 재고현황 판매통계 Excel 업로드 시 파일명에 포함된 시작일·종료일을 자동 인식하도록 수정합니다. 20260801_20260812, 2026-08-01~2026-08-12, 2026.08.01_2026.08.12 같은 형식을 지원하며, 파일명에서 기간을 읽으면 날짜 입력칸도 자동으로 맞추고 실제 저장 기간도 파일명 기준으로 기록합니다. 파일명에서 두 날짜를 찾지 못한 경우에만 기존 최근 완료 주간 기본값과 수기 수정 방식을 사용합니다.",
+  "version": "0.9.87",
+  "message": "새 자료 반영 화면의 광고 성과보고서도 파일명 날짜를 자동 인식하도록 수정합니다. 예: A00577001_pa_total_campaign_20260812_20260812.xlsx는 시작일과 종료일을 모두 2026-08-12로 자동 설정합니다. 판매통계 파일명 자동인식은 그대로 유지하며, 잠정손익 화면의 별도 광고성과보고서 업로더에는 영향을 주지 않습니다.",
   "files": [
     "app.py",
     "VERSION.txt",
+    "sitecustomize.py",
     "purchase_v08.py",
     "legacy_repair_v082.py",
     "erp_import_guard_v082.py",
@@ -13,6 +14,7 @@
     "item_delete_ui_v0944.py",
     "item_delete_fix_v0945.py",
     "sales_period_v087.py",
+    "ad_period_v0987.py",
     "inventory_flow_v088.py",
     "inventory_stocktake_v0968.py",
     "inventory_stocktake_v0969.py",
