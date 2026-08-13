@@ -1,10 +1,11 @@
-"""RG Manager v0.9.85 goal screen data coverage + immediate ad refresh.
+"""RG Manager goal screen data coverage + immediate ad refresh.
 
 - Shows sales/ad coverage dates for the selected month directly above the goal table.
 - Sales provisional values use the normal refreshed sales snapshot pipeline.
 - Advertising cost is always re-bound from the currently saved ad-performance reports,
   so a newly uploaded/deleted ad report is reflected immediately without waiting for
   a sales snapshot rebuild.
+- v0.9.92: item rows default to target quantity descending.
 """
 from __future__ import annotations
 
@@ -157,7 +158,9 @@ def _render_comparison(st, core, db, month: str, base, old, styled):
 
     def _sort_key(pid):
         meta = product_map.get(int(pid), {})
-        return (str(meta.get("name") or ""), str(meta.get("option_id") or ""))
+        target_qty = old._num(goal_map.get(int(pid), {}).get("target_qty"))
+        # Default order: larger target quantity first.  Ties use product name/option ID.
+        return (-target_qty, str(meta.get("name") or ""), str(meta.get("option_id") or ""))
 
     groups = []
     for pid in sorted(pids, key=_sort_key):
