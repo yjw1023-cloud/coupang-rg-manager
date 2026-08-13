@@ -10,8 +10,9 @@ Rules
   because that page already renders its own dedicated product search field.
 - Inventory tabs are wrapped before this module, so one search box filters the
   source inventory table and all warehouse tabs consistently.
-- v0.9.74: all Streamlit text/search inputs receive a clearly visible border so
-  search areas do not disappear into the light ERP background.
+- v0.9.75: all Streamlit text/search inputs receive a strong, always-visible
+  outline.  The style targets both BaseWeb wrappers and the actual input as a
+  fallback so BOM and other ERP searches remain visible across Streamlit DOM versions.
 """
 from __future__ import annotations
 
@@ -31,28 +32,81 @@ _SKIP_KEYS = {
 
 _SEARCH_INPUT_CSS = r"""
 <style>
-/* v0.9.74 — make ERP search/text input boundaries clearly visible. */
-div[data-testid="stTextInput"] div[data-baseweb="input"] {
-    border: 1.5px solid #8f9eaf !important;
-    border-radius: 8px !important;
-    background: #ffffff !important;
-    box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.025) !important;
+/* v0.9.75 — ERP 전체 검색/텍스트 입력창을 배경과 확실히 구분한다. */
+
+/* Streamlit text-input widget 자체 간격 */
+div[data-testid="stTextInput"] {
+    margin-bottom: 0.35rem !important;
+}
+
+/* 라벨 가독성 */
+div[data-testid="stTextInput"] label,
+div[data-testid="stTextInput"] label p {
+    color: #1f2937 !important;
+    font-weight: 600 !important;
+}
+
+/* 현재/구버전 Streamlit BaseWeb 입력 wrapper 모두 대응 */
+div[data-testid="stTextInput"] div[data-baseweb="input"],
+div[data-testid="stTextInput"] div[data-baseweb="base-input"] {
+    background-color: #ffffff !important;
+    border: 2px solid #718096 !important;
+    border-radius: 9px !important;
+    box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.08) !important;
+    outline: none !important;
     transition: border-color 0.12s ease, box-shadow 0.12s ease !important;
 }
-div[data-testid="stTextInput"] div[data-baseweb="input"]:hover {
-    border-color: #66788e !important;
+
+/* BaseWeb 내부 요소가 부모 테두리를 덮는 경우에도 흰 배경 유지 */
+div[data-testid="stTextInput"] div[data-baseweb="input"] > div,
+div[data-testid="stTextInput"] div[data-baseweb="base-input"] > div {
+    background-color: #ffffff !important;
+    border-radius: 7px !important;
 }
-div[data-testid="stTextInput"] div[data-baseweb="input"]:focus-within {
-    border: 2px solid #4f76ad !important;
-    box-shadow: 0 0 0 2px rgba(79, 118, 173, 0.13) !important;
-}
-div[data-testid="stTextInput"] div[data-baseweb="base-input"],
+
+/* 실제 input도 fallback으로 명확한 inset 선을 넣어 DOM 버전 차이를 막는다. */
 div[data-testid="stTextInput"] input {
-    background: transparent !important;
+    background-color: #ffffff !important;
+    color: #111827 !important;
+    border-radius: 7px !important;
+    box-shadow: inset 0 0 0 1px rgba(113, 128, 150, 0.55) !important;
 }
+
+/* 마우스를 올리면 더 진하게 */
+div[data-testid="stTextInput"] div[data-baseweb="input"]:hover,
+div[data-testid="stTextInput"] div[data-baseweb="base-input"]:hover {
+    border-color: #4b5f78 !important;
+    box-shadow: 0 0 0 1px rgba(75, 95, 120, 0.16) !important;
+}
+
+/* 클릭/포커스 시 파란색 강조 */
+div[data-testid="stTextInput"] div[data-baseweb="input"]:focus-within,
+div[data-testid="stTextInput"] div[data-baseweb="base-input"]:focus-within {
+    border: 2px solid #2563a6 !important;
+    box-shadow: 0 0 0 3px rgba(37, 99, 166, 0.18) !important;
+}
+
+div[data-testid="stTextInput"]:focus-within input {
+    box-shadow: inset 0 0 0 1px rgba(37, 99, 166, 0.35) !important;
+}
+
+/* placeholder도 흐리지 않게 */
 div[data-testid="stTextInput"] input::placeholder {
-    color: #697586 !important;
+    color: #5f6f82 !important;
     opacity: 1 !important;
+}
+
+/* Streamlit 버전에 따라 BaseWeb data 속성이 달라도 입력영역 경계가 남도록 fallback */
+div[data-testid="stTextInput"] > div:last-child:has(input) {
+    background-color: #ffffff !important;
+    border: 2px solid #718096 !important;
+    border-radius: 9px !important;
+    box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.08) !important;
+}
+
+div[data-testid="stTextInput"] > div:last-child:has(input):focus-within {
+    border-color: #2563a6 !important;
+    box-shadow: 0 0 0 3px rgba(37, 99, 166, 0.18) !important;
 }
 </style>
 """
@@ -172,7 +226,7 @@ def _should_search(data, kwargs) -> bool:
 def apply() -> None:
     global _APPLIED
 
-    # Inject the style before the one-time wrapper guard.  Streamlit reruns can
+    # Inject the style before the one-time wrapper guard. Streamlit reruns can
     # rebuild the DOM, while the CSS itself is harmless to inject repeatedly.
     _inject_search_input_style()
 
