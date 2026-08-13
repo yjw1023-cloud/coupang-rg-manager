@@ -1,6 +1,6 @@
 {
-  "version": "0.9.72",
-  "message": "v0.9.71에서 상품은 등록됐지만 BOM이 생성되지 않는 문제를 수정합니다. Streamlit 모듈 캐시 때문에 이전 inventory_stocktake_v0969 apply가 남을 수 있어 BOM 생성이 건너뛰어질 수 있었습니다. v0.9.72는 app.py가 매 실행마다 캐시 삭제 후 다시 불러오는 pnl_month_default_v0915 경로에서 새 BOM 복구 모듈을 직접 실행합니다. 완제품 95912623408은 동일명 자체창고 품목 2개, 95912717676과 95912816721은 각각 1개로 BOM을 생성/갱신한 뒤 DB에 실제 저장된 소요량까지 검증합니다. 재고수량과 과거 생산이력은 변경하지 않습니다.",
+  "version": "0.9.73",
+  "message": "v0.9.72에서도 신규 3개 상품의 BOM이 보이지 않는 문제를 다시 수정합니다. 이전 버전은 bom_items를 직접 INSERT했는데 로컬 legacy DB의 실제 BOM 스키마/제약과 다를 수 있었습니다. v0.9.73은 ERP 본래의 core.add_bom() 함수를 사용해 완제품 95912623408은 동일명 자체창고 품목 2개, 95912717676과 95912816721은 각각 1개로 BOM을 강제 재등록합니다. 등록 전 해당 신규 완제품의 기존 BOM만 제거하고, 등록 후 생산 엔진이 읽는 bom_items를 다시 열어 정확히 1개 구성품과 소요량 2/1/1이 저장됐는지 검증합니다. 실패 시 더 이상 조용히 숨기지 않고 잠정손익 화면에 실제 오류문구를 표시합니다.",
   "files": [
     "app.py",
     "VERSION.txt",
@@ -19,6 +19,7 @@
     "requested_product_seed_v0970.py",
     "requested_product_bom_seed_v0971.py",
     "requested_product_bom_repair_v0972.py",
+    "requested_product_bom_force_v0973.py",
     "purchase_batch_v089.py",
     "purchase_match_ui_v090.py",
     "purchase_match_ui_v091.py",
