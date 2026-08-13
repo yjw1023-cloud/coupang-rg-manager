@@ -1,9 +1,9 @@
-"""v0.9.80 safe monthly-default routing + product goals/performance management.
+"""v0.9.81 safe monthly-default routing + Excel-style goals/performance management.
 
 This module is explicitly purged from sys.modules by app.py on every rerun.
 Existing P&L/BOM/product-overview/dashboard-status routing remains unchanged;
-v0.9.80 also guarantees newly patched pages are present in the runtime sidebar
-option list even when the legacy sidebar menu list was cached by an older patch.
+v0.9.80 guarantees dynamic pages remain present in grouped sidebar options and
+v0.9.81 routes goal management to the Excel-style comparison screen.
 """
 from __future__ import annotations
 
@@ -65,7 +65,7 @@ def render_dashboard_data_status(st_obj, core, db_path=None):
 
 
 def render_goal_management_page(st_obj, pd_obj, core, db_path=None):
-    m = importlib.import_module("goal_management_v0979")
+    m = importlib.import_module("goal_excel_view_v0981")
     return m.render_page(st_obj, pd_obj, core, db_path)
 
 
