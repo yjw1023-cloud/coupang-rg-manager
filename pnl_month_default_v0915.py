@@ -1,11 +1,12 @@
-"""v0.9.85 safe monthly-default routing + goal data coverage/immediate ad refresh.
+"""v0.9.92 safe monthly-default routing + goal data coverage/immediate ad refresh.
 
 This module is explicitly purged from sys.modules by app.py on every rerun.
 Existing P&L/BOM/product-overview/dashboard-status routing remains unchanged;
 v0.9.80 guarantees dynamic pages remain present in grouped sidebar options,
 v0.9.83 keeps the styled merged comparison table, v0.9.84 adds Excel target
-upload, and v0.9.85 shows sales/ad coverage while rebinding current ad reports
-immediately in goal provisional performance.
+upload, v0.9.85 shows sales/ad coverage while rebinding current ad reports
+immediately in goal provisional performance, and v0.9.92 reloads the goal view
+so target-quantity default sorting is picked up immediately after update.
 """
 from __future__ import annotations
 
@@ -67,6 +68,11 @@ def render_dashboard_data_status(st_obj, core, db_path=None):
 
 
 def render_goal_management_page(st_obj, pd_obj, core, db_path=None):
+    # Goal screen changes should be visible immediately after the updater replaces
+    # the module, even when Streamlit keeps the Python process alive.
+    import sys
+    sys.modules.pop("goal_data_status_v0985", None)
+    importlib.invalidate_caches()
     m = importlib.import_module("goal_data_status_v0985")
     return m.render_page(st_obj, pd_obj, core, db_path)
 
