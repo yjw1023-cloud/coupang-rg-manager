@@ -10,6 +10,8 @@ Rules
   because that page already renders its own dedicated product search field.
 - Inventory tabs are wrapped before this module, so one search box filters the
   source inventory table and all warehouse tabs consistently.
+- v0.9.74: all Streamlit text/search inputs receive a clearly visible border so
+  search areas do not disappear into the light ERP background.
 """
 from __future__ import annotations
 
@@ -26,6 +28,41 @@ _APPLIED = False
 _SKIP_KEYS = {
     "_rg_purchase_history_list_v094",
 }
+
+_SEARCH_INPUT_CSS = r"""
+<style>
+/* v0.9.74 — make ERP search/text input boundaries clearly visible. */
+div[data-testid="stTextInput"] div[data-baseweb="input"] {
+    border: 1.5px solid #8f9eaf !important;
+    border-radius: 8px !important;
+    background: #ffffff !important;
+    box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.025) !important;
+    transition: border-color 0.12s ease, box-shadow 0.12s ease !important;
+}
+div[data-testid="stTextInput"] div[data-baseweb="input"]:hover {
+    border-color: #66788e !important;
+}
+div[data-testid="stTextInput"] div[data-baseweb="input"]:focus-within {
+    border: 2px solid #4f76ad !important;
+    box-shadow: 0 0 0 2px rgba(79, 118, 173, 0.13) !important;
+}
+div[data-testid="stTextInput"] div[data-baseweb="base-input"],
+div[data-testid="stTextInput"] input {
+    background: transparent !important;
+}
+div[data-testid="stTextInput"] input::placeholder {
+    color: #697586 !important;
+    opacity: 1 !important;
+}
+</style>
+"""
+
+
+def _inject_search_input_style() -> None:
+    # CSS is global to the page, so dedicated searches implemented outside this
+    # module (BOM, purchase history, returns, etc.) receive the same border too.
+    st.markdown(_SEARCH_INPUT_CSS, unsafe_allow_html=True)
+
 
 # Exact normalized names plus conservative suffix rules.  This avoids adding
 # search bars to ordinary accounting/date summary tables while still covering
@@ -134,6 +171,11 @@ def _should_search(data, kwargs) -> bool:
 
 def apply() -> None:
     global _APPLIED
+
+    # Inject the style before the one-time wrapper guard.  Streamlit reruns can
+    # rebuild the DOM, while the CSS itself is harmless to inject repeatedly.
+    _inject_search_input_style()
+
     if _APPLIED or getattr(st, "_rg_common_search_v096", False):
         return
 
