@@ -1,10 +1,11 @@
-"""v0.9.84 safe monthly-default routing + Excel target upload workflow.
+"""v0.9.85 safe monthly-default routing + goal data coverage/immediate ad refresh.
 
 This module is explicitly purged from sys.modules by app.py on every rerun.
 Existing P&L/BOM/product-overview/dashboard-status routing remains unchanged;
 v0.9.80 guarantees dynamic pages remain present in grouped sidebar options,
-v0.9.83 keeps the styled merged comparison table, and v0.9.84 adds Excel
-目标 template download/upload for monthly product targets.
+v0.9.83 keeps the styled merged comparison table, v0.9.84 adds Excel target
+upload, and v0.9.85 shows sales/ad coverage while rebinding current ad reports
+immediately in goal provisional performance.
 """
 from __future__ import annotations
 
@@ -66,7 +67,7 @@ def render_dashboard_data_status(st_obj, core, db_path=None):
 
 
 def render_goal_management_page(st_obj, pd_obj, core, db_path=None):
-    m = importlib.import_module("goal_excel_upload_v0984")
+    m = importlib.import_module("goal_data_status_v0985")
     return m.render_page(st_obj, pd_obj, core, db_path)
 
 
