@@ -1,16 +1,20 @@
-"""Weekly default period for 재고현황 판매통계 imports (v0.8.7).
+"""Weekly/default + filename-derived period for 재고현황 판매통계 imports.
 
-Rules:
+Rules
 - Only applies when the selected upload type is `재고현황 판매통계`.
-- Default period is the most recently completed Monday-Sunday week.
-- Start/end remain freely editable; month boundaries do not force a seven-day range.
-- If a different file already exists for the same period, require explicit replacement confirmation.
-- v0.9.7: render the existing-period notice only after the end date widget, so the
-  replacement checkbox is created exactly once per rerun.
+- v0.9.86: when the uploaded filename contains two dates, use them automatically
+  as the sales-stat period and persist that exact period on import.
+- Supported examples include 20260801_20260812, 2026-08-01~2026-08-12,
+  2026.08.01_2026.08.12, and Korean year/month/day separators.
+- If the filename period cannot be recognized, fall back to the most recently
+  completed Monday-Sunday week and keep the dates editable.
+- If a different file already exists for the same period, require explicit
+  replacement confirmation.
 """
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+import re
 from typing import Any
 
 import streamlit as st
@@ -42,6 +46,43 @@ def _as_date(value: Any) -> date | None:
         return None
 
 
+def _period_from_filename(name: str) -> tuple[date, date] | None:
+    """Read the first two valid full dates embedded in a filename."""
+    text = str(name or "")
+    found: list[tuple[int, date]] = []
+
+    compact = re.compile(r"(?<!\d)(20\d{2})(\d{2})(\d{2})(?!\d)")
+    separated = re.compile(
+        r"(?<!\d)(20\d{2})\s*[-_./년]\s*(\d{1,2})\s*[-_./월]\s*(\d{1,2})\s*일?(?!\d)"
+    )
+
+    for pattern in (compact, separated):
+        for match in pattern.finditer(text):
+            try:
+                d = date(int(match.group(1)), int(match.group(2)), int(match.group(3)))
+            except Exception:
+                continue
+            found.append((match.start(), d))
+
+    found.sort(key=lambda x: x[0])
+    dates = [d for _pos, d in found]
+    if len(dates) < 2:
+        return None
+
+    start, end = dates[0], dates[1]
+    if end < start:
+        start, end = end, start
+    return start, end
+
+
+def _filename_period() -> tuple[date, date] | None:
+    start = _as_date(st.session_state.get("_rg_sales_filename_period_start"))
+    end = _as_date(st.session_state.get("_rg_sales_filename_period_end"))
+    if start is None or end is None:
+        return None
+    return start, end
+
+
 def _replace_key(start: date, end: date) -> str:
     return f"_rg_replace_sales_stats_{start:%Y%m%d}_{end:%Y%m%d}"
 
@@ -62,10 +103,17 @@ def _render_period_notice(core_module, start: date | None, end: date | None) -> 
     if start is None or end is None:
         return
     if not _caption_rendered:
-        st.caption(
-            "기본 기간은 가장 최근에 끝난 월요일~일요일입니다. "
-            "월초·월말 등에는 시작일과 종료일을 직접 수정해도 됩니다."
-        )
+        auto = _filename_period()
+        file_name = str(st.session_state.get("_rg_sales_filename_name") or "").strip()
+        if auto and auto == (start, end) and file_name:
+            st.success(
+                f"파일명에서 기간 자동 인식: {start:%Y-%m-%d} ~ {end:%Y-%m-%d}"
+            )
+        else:
+            st.caption(
+                "파일명에서 기간을 찾지 못해 최근 완료된 월요일~일요일을 기본값으로 표시합니다. "
+                "필요하면 시작일과 종료일을 수정하세요."
+            )
         _caption_rendered = True
     if start > end:
         st.error("조회 시작일은 종료일보다 늦을 수 없습니다.")
@@ -102,8 +150,14 @@ def _set_selected(result, options) -> None:
         _caption_rendered = False
 
 
+def _first_uploaded(result):
+    if isinstance(result, (list, tuple)):
+        return result[0] if result else None
+    return result
+
+
 def apply(core_module) -> None:
-    """Patch Streamlit period widgets and guard same-period replacement."""
+    """Patch Streamlit upload/period widgets and guard same-period replacement."""
     global _PATCHED, _date_call_index, _caption_rendered
     _date_call_index = 0
     _caption_rendered = False
@@ -112,6 +166,7 @@ def apply(core_module) -> None:
 
     original_selectbox = st.selectbox
     original_radio = st.radio
+    original_file_uploader = st.file_uploader
     original_date_input = st.date_input
     original_import_sales_stats = core_module.import_sales_stats
 
@@ -125,13 +180,59 @@ def apply(core_module) -> None:
         _set_selected(result, _options_from_call(args, kwargs))
         return result
 
+    def file_uploader_wrapper(*args, **kwargs):
+        result = original_file_uploader(*args, **kwargs)
+        if not st.session_state.get("_rg_sales_stats_period_active", False):
+            return result
+
+        uploaded = _first_uploaded(result)
+        old_name = str(st.session_state.get("_rg_sales_filename_name") or "")
+        if uploaded is None:
+            if old_name:
+                for key in (
+                    "_rg_sales_filename_name",
+                    "_rg_sales_filename_period_start",
+                    "_rg_sales_filename_period_end",
+                    "_rg_sales_filename_period_changed",
+                ):
+                    st.session_state.pop(key, None)
+            return result
+
+        name = str(getattr(uploaded, "name", "") or "")
+        if name == old_name:
+            return result
+
+        st.session_state["_rg_sales_filename_name"] = name
+        parsed = _period_from_filename(name)
+        if parsed:
+            start, end = parsed
+            st.session_state["_rg_sales_filename_period_start"] = start
+            st.session_state["_rg_sales_filename_period_end"] = end
+            st.session_state["_rg_sales_filename_period_changed"] = True
+        else:
+            st.session_state.pop("_rg_sales_filename_period_start", None)
+            st.session_state.pop("_rg_sales_filename_period_end", None)
+            st.session_state["_rg_sales_filename_period_changed"] = False
+
+        # One rerun guarantees the date widgets also pick up the filename period
+        # even when the legacy screen happens to render them before the uploader.
+        try:
+            st.rerun()
+        except Exception:
+            pass
+        return result
+
     def date_input_wrapper(*args, **kwargs):
         global _date_call_index
         if not st.session_state.get("_rg_sales_stats_period_active", False):
             return original_date_input(*args, **kwargs)
 
         label = str(args[0] if args else kwargs.get("label", ""))
-        start_default, end_default = last_completed_week()
+        filename_period = _filename_period()
+        if filename_period:
+            start_default, end_default = filename_period
+        else:
+            start_default, end_default = last_completed_week()
 
         value = kwargs.get("value", args[1] if len(args) >= 2 else None)
         is_range = (
@@ -146,15 +247,29 @@ def apply(core_module) -> None:
         elif is_range:
             target = "range"
         else:
-            # Fallback for older UI labels: first two date widgets after selecting
-            # 재고현황 판매통계 are treated as start/end.
             target = "start" if _date_call_index == 0 else "end" if _date_call_index == 1 else "other"
 
         if target == "other":
             return original_date_input(*args, **kwargs)
 
         _date_call_index += 1
-        new_value = (start_default, end_default) if target == "range" else start_default if target == "start" else end_default
+        new_value = (
+            (start_default, end_default)
+            if target == "range"
+            else start_default
+            if target == "start"
+            else end_default
+        )
+
+        # If the legacy widget has an explicit key, update its session state only
+        # when a new filename was recognized. This preserves manual correction.
+        widget_key = kwargs.get("key")
+        filename_changed = bool(st.session_state.get("_rg_sales_filename_period_changed"))
+        if widget_key and filename_period and filename_changed:
+            try:
+                st.session_state[widget_key] = new_value
+            except Exception:
+                pass
 
         if len(args) >= 2:
             args = list(args)
@@ -172,10 +287,8 @@ def apply(core_module) -> None:
                 st.session_state["_rg_sales_period_start_value"] = start_value
                 st.session_state["_rg_sales_period_end_value"] = end_value
                 _render_period_notice(core_module, start_value, end_value)
+            st.session_state["_rg_sales_filename_period_changed"] = False
         elif target == "start":
-            # Store only. Rendering here used the previous end-date state and then
-            # rendered again when the end widget ran, creating the same checkbox
-            # key twice in one Streamlit rerun.
             start_value = _as_date(result)
             st.session_state["_rg_sales_period_start_value"] = start_value
         else:
@@ -183,14 +296,31 @@ def apply(core_module) -> None:
             st.session_state["_rg_sales_period_end_value"] = end_value
             start_value = _as_date(st.session_state.get("_rg_sales_period_start_value"))
             _render_period_notice(core_module, start_value, end_value)
+            st.session_state["_rg_sales_filename_period_changed"] = False
 
         return result
 
-    def import_sales_stats_guard(source, file_name: str, period_start: str, period_end: str, db_path=core_module.DEFAULT_DB):
-        start = _as_date(period_start)
-        end = _as_date(period_end)
+    def import_sales_stats_guard(
+        source,
+        file_name: str,
+        period_start: str,
+        period_end: str,
+        db_path=core_module.DEFAULT_DB,
+    ):
+        # Filename period is authoritative when two valid dates are present.
+        parsed = _period_from_filename(file_name)
+        if parsed:
+            start, end = parsed
+            period_start = start.isoformat()
+            period_end = end.isoformat()
+        else:
+            start = _as_date(period_start)
+            end = _as_date(period_end)
+
         if start is None or end is None:
-            return original_import_sales_stats(source, file_name, period_start, period_end, db_path)
+            return original_import_sales_stats(
+                source, file_name, period_start, period_end, db_path
+            )
         if start > end:
             raise ValueError("조회 시작일은 종료일보다 늦을 수 없습니다.")
 
@@ -212,10 +342,13 @@ def apply(core_module) -> None:
                         "'기존 기간 자료를 새 파일로 교체'를 체크한 뒤 다시 업로드해 주세요."
                     )
 
-        return original_import_sales_stats(source, file_name, period_start, period_end, db_path)
+        return original_import_sales_stats(
+            source, file_name, start.isoformat(), end.isoformat(), db_path
+        )
 
     st.selectbox = selectbox_wrapper
     st.radio = radio_wrapper
+    st.file_uploader = file_uploader_wrapper
     st.date_input = date_input_wrapper
     core_module.import_sales_stats = import_sales_stats_guard
     _PATCHED = True
