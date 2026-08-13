@@ -1,9 +1,8 @@
-"""v0.9.87 generic data-import advertising filename period detection.
+"""v0.9.90 generic data-import advertising filename period detection.
 
-The legacy '새 자료 반영' screen has a generic `광고 성과보고서` upload type whose
-start/end widgets were not connected to provisional_ad_report_v0956's filename
-parser.  This runtime patch mirrors the working sales-stat behavior for that
-specific generic uploader.
+The generic '새 자료 반영' screen must always display and use the period found
+in Coupang advertising-performance filenames.  This also overrides stale
+Streamlit date-widget state left by older versions.
 """
 from __future__ import annotations
 
@@ -59,7 +58,6 @@ def _label(args, kwargs):
 
 
 def _is_dedicated_pnl_uploader(args, kwargs):
-    # The separate 잠정손익 uploader already has its own correct filename parser.
     normalized = _label(args, kwargs).replace(" ", "").lower()
     return "광고성과보고서excel" in normalized
 
@@ -107,7 +105,6 @@ def apply():
         result = original_file_uploader(*args, **kwargs)
 
         if _is_dedicated_pnl_uploader(args, kwargs):
-            # Do not let a generic-data-page selection leak into the dedicated P&L uploader.
             st.session_state["_rg_ad_generic_period_active"] = False
             return result
 
@@ -128,27 +125,23 @@ def apply():
             return result
 
         name = str(getattr(uploaded, "name", "") or "")
-        if name == old_name:
-            return result
-
-        st.session_state["_rg_ad_filename_name"] = name
         parsed = _period_from_filename(name)
         if parsed:
             start, end = parsed
+            st.session_state["_rg_ad_filename_name"] = name
             st.session_state["_rg_ad_filename_period_start"] = start
             st.session_state["_rg_ad_filename_period_end"] = end
-            st.session_state["_rg_ad_filename_period_changed"] = True
+            if name != old_name:
+                st.session_state["_rg_ad_filename_period_changed"] = True
+                try:
+                    st.rerun()
+                except Exception:
+                    pass
         else:
+            st.session_state["_rg_ad_filename_name"] = name
             st.session_state.pop("_rg_ad_filename_period_start", None)
             st.session_state.pop("_rg_ad_filename_period_end", None)
             st.session_state["_rg_ad_filename_period_changed"] = False
-
-        # The legacy screen renders date widgets before the uploader, so rerun once
-        # after a new file is selected to push the filename dates into those widgets.
-        try:
-            st.rerun()
-        except Exception:
-            pass
         return result
 
     def date_input_wrapper(*args, **kwargs):
@@ -184,25 +177,27 @@ def apply():
             else end_default
         )
 
-        changed = bool(st.session_state.get("_rg_ad_filename_period_changed"))
+        # v0.9.90: stale widget state must never override explicit filename dates.
+        kwargs = dict(kwargs)
         widget_key = kwargs.get("key")
-        if widget_key and changed:
-            try:
-                st.session_state[widget_key] = new_value
-            except Exception:
-                pass
+        if not widget_key:
+            widget_key = f"_rg_ad_filename_forced_{target}"
+            kwargs["key"] = widget_key
+        try:
+            st.session_state[widget_key] = new_value
+        except Exception:
+            pass
 
         if len(args) >= 2:
             args = list(args)
             args[1] = new_value
             args = tuple(args)
         else:
-            kwargs = dict(kwargs)
             kwargs["value"] = new_value
 
         result = original_date_input(*args, **kwargs)
         if target in ("range", "end"):
-            if changed:
+            if bool(st.session_state.get("_rg_ad_filename_period_changed")):
                 st.success(
                     f"광고 파일명에서 기간 자동 인식: {start_default:%Y-%m-%d} ~ {end_default:%Y-%m-%d}"
                 )
