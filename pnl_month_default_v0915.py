@@ -1,44 +1,55 @@
-"""v0.9.72 safe monthly-default P&L routing + forced requested BOM repair.
+"""v0.9.73 safe monthly-default P&L routing + forced requested BOM repair.
 
-The monthly provisional page is rendered by pnl_month_v0967. It refreshes stale
-monthly snapshots before the proven v0.9.65 gross/cancel/net quantity and
-returned-item consolidation view is rendered.
-
-This module is explicitly purged from sys.modules by app.py on every rerun.  That
-makes it a reliable startup hook for the v0.9.72 BOM repair even when older
-inventory/stocktake modules remain cached in Streamlit's Python process.
+This module is explicitly purged from sys.modules by app.py on every rerun, so it
+is also used as a reliable startup repair hook for the three user-requested BOMs.
+v0.9.73 uses the ERP's own core.add_bom() path and exposes any failure instead of
+silently pretending the BOM was registered.
 """
 from __future__ import annotations
 
 import importlib
 
 
-# v0.9.72: force and verify the three user-requested BOMs from a module name that
-# did not exist in earlier versions.  Store diagnostics on core rather than making
-# an unrelated ERP page unavailable if a local legacy DB has an unexpected schema.
+# v0.9.73: apply the BOM candidate guard first so core.add_bom uses the same
+# validation rules as the production/BOM screen, then force/verify the requested
+# BOM rows through the official core writer.
 try:
-    _rg_core_v0972 = importlib.import_module("core")
-    _rg_bom_repair_v0972 = importlib.import_module("requested_product_bom_repair_v0972")
-    _rg_core_v0972._rg_requested_bom_repair_v0972_result = _rg_bom_repair_v0972.apply(_rg_core_v0972)
-    _rg_core_v0972._rg_requested_bom_repair_v0972_error = ""
-except Exception as _rg_bom_exc_v0972:
+    _rg_core_v0973 = importlib.import_module("core")
+    _rg_bom_guard_v0973 = importlib.import_module("bom_candidate_filter_v0927")
+    _rg_bom_guard_v0973.apply(_rg_core_v0973)
+    _rg_bom_force_v0973 = importlib.import_module("requested_product_bom_force_v0973")
+    _rg_core_v0973._rg_requested_bom_force_v0973_result = _rg_bom_force_v0973.apply(_rg_core_v0973)
+    _rg_core_v0973._rg_requested_bom_force_v0973_error = ""
+except Exception as _rg_bom_exc_v0973:
     try:
-        _rg_core_v0972._rg_requested_bom_repair_v0972_error = str(_rg_bom_exc_v0972)
+        _rg_core_v0973._rg_requested_bom_force_v0973_error = str(_rg_bom_exc_v0973)
     except Exception:
         pass
 
 
+def _show_bom_repair_error(st_obj, core):
+    err = str(getattr(core, "_rg_requested_bom_force_v0973_error", "") or "").strip()
+    if err:
+        st_obj.error(
+            "신규 3개 상품의 BOM 자동등록에 실패했습니다. "
+            "아래 오류를 그대로 알려주세요: " + err
+        )
+
+
 def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
+    _show_bom_repair_error(st_obj, core)
     m = importlib.import_module("pnl_month_v0967")
     return m.render_provisional_month_page(st_obj, pd_obj, core, db_path)
 
 
 def render_product_confirmed_page(st_obj, pd_obj, core, pnl_module, db_path=None):
+    _show_bom_repair_error(st_obj, core)
     m = importlib.import_module("monthly_closing_v0916")
     return m.render_product_confirmed_page(st_obj, pd_obj, core, pnl_module, db_path)
 
 
 def render_monthly_closing_page(st_obj, pd_obj, core, db_path=None):
+    _show_bom_repair_error(st_obj, core)
     m = importlib.import_module("monthly_closing_v0916")
     return m.render_monthly_closing_page(st_obj, pd_obj, core, db_path)
 
