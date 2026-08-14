@@ -8,6 +8,7 @@
 - v0.9.92: item rows default to target quantity descending.
 - v0.9.93: all active finished products are always shown, even with no saved goal/performance.
 - v0.9.94: goal-management exclusions are hidden from the table/totals and can be restored.
+- v0.9.96: reload styled table module so updated column order appears immediately.
 """
 from __future__ import annotations
 
@@ -194,6 +195,8 @@ def _render_comparison(st, core, db, month: str, base, old, styled):
 def render_page(st, pd_obj, core, db_path=None):
     base = importlib.import_module("goal_management_v0979")
     old = importlib.import_module("goal_excel_view_v0981")
+    sys.modules.pop("goal_excel_view_v0983", None)
+    importlib.invalidate_caches()
     styled = importlib.import_module("goal_excel_view_v0983")
     sys.modules.pop("goal_excel_upload_v0984", None)
     importlib.invalidate_caches()
