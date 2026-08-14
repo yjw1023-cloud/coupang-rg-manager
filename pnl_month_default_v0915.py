@@ -1,4 +1,4 @@
-"""v0.9.103 safe monthly-default routing + goal data coverage/immediate ad refresh.
+"""v0.9.115 safe monthly-default routing + live old-option ignore bootstrap.
 
 This module is explicitly purged from sys.modules by app.py on every rerun.
 Existing P&L/BOM/product-overview/dashboard-status routing remains unchanged;
@@ -6,11 +6,29 @@ v0.9.80 guarantees dynamic pages remain present in grouped sidebar options,
 v0.9.83 keeps the styled merged comparison table, v0.9.84 adds Excel target
 upload, v0.9.85 shows sales/ad coverage while rebinding current ad reports
 immediately in goal provisional performance, v0.9.92 reloads the goal view,
-and v0.9.103 applies idempotent advertising-report upload handling on every P&L rerun.
+v0.9.103 applies idempotent advertising-report upload handling on every P&L rerun,
+and v0.9.115 applies the two user-approved unmanaged old sales-option exclusions
+after the live return-sale wrapper chain is already installed.
 """
 from __future__ import annotations
 
 import importlib
+
+
+# v0.9.115: app.py imports/patches return_discount_v099 and return_sale_match_v0944
+# before this module. Because this module is forcibly reloaded on every Streamlit
+# rerun, applying the patch here reaches the actual live core.import_sales_stats
+# wrapper chain even after hot updates.
+try:
+    _rg_core_v09115 = importlib.import_module("core")
+    _rg_ignore_v09115 = importlib.import_module("sales_ignore_unmanaged_v09115")
+    _rg_ignore_v09115.apply(_rg_core_v09115)
+    _rg_core_v09115._rg_sales_ignore_unmanaged_v09115_error = ""
+except Exception as _rg_ignore_exc_v09115:
+    try:
+        _rg_core_v09115._rg_sales_ignore_unmanaged_v09115_error = str(_rg_ignore_exc_v09115)
+    except Exception:
+        pass
 
 
 # v0.9.73: apply the BOM candidate guard first so core.add_bom uses the same
