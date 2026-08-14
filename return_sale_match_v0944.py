@@ -1,16 +1,17 @@
-"""RG Manager v0.9.44 return-sale option matching.
+"""RG Manager v0.9.107 return-sale option matching.
 
 Business rule
 -------------
-- If Coupang sales data contains an option ID that exactly matches an ACTIVE ERP
-  product, it is an ordinary sale.
+- Exact ERP option IDs remain ordinary sales for managed normal products.
 - Explicit return_discount_aliases always remain returned-item discount sales.
-- An unknown/archived option may be auto-matched to a managed original only when
-  the product name is strongly similar AND its realized unit selling price is
-  lower than the original product's normal reference selling price.
-- Ambiguous/no-price cases are blocked rather than creating another managed SKU.
-- Once a return alias is posted, any auto-created child product row is archived
-  immediately so temporary Coupang return option IDs do not circulate in ERP.
+- User-marked return option IDs are never treated as normal parent products.
+- Historical/archived non-placeholder ERP products remain valid originals for old sales files.
+- When the same monthly sales file contains both the normal option and a cheaper
+  alternate option with the same full sales-stat name, map the cheaper option to
+  the normal ERP original before falling back to fuzzy matching.
+- A newly seen user-marked return option may inherit the same parent from an
+  already-known return alias when both have the same full sales-stat name.
+- Ambiguous/no-price cases are blocked rather than guessed.
 """
 from __future__ import annotations
 
@@ -40,6 +41,10 @@ def _name_core(name: Any) -> str:
     return re.sub(r"[^0-9a-z가-힣]+", "", s)
 
 
+def _full_name_key(name: Any) -> str:
+    return re.sub(r"[^0-9a-z가-힣]+", "", str(name or "").lower())
+
+
 def _name_score(a: Any, b: Any) -> float:
     aq, bq = _pack_qty(a), _pack_qty(b)
     if aq is not None and bq is not None and aq != bq:
@@ -55,6 +60,8 @@ def _name_score(a: Any, b: Any) -> float:
 
 
 def _row_unit_price(row) -> float | None:
+    if not row:
+        return None
     qty = abs(_num(row.get("qty")))
     amount = _num(row.get("amount"))
     if not bool(row.get("amount_known")) or qty <= 1e-12 or amount <= 0:
@@ -82,6 +89,14 @@ def _historical_price(rd, core, db, product_id: int) -> float | None:
         return None
 
 
+def _known_return_option_ids() -> set[str]:
+    try:
+        import product_visibility_v0995
+        return {str(x) for x in getattr(product_visibility_v0995, "KNOWN_RETURN_OPTION_IDS", set())}
+    except Exception:
+        return set()
+
+
 def apply(return_discount_module, core_module) -> None:
     global _APPLIED
     rd = return_discount_module
@@ -90,28 +105,53 @@ def apply(return_discount_module, core_module) -> None:
 
     original_post = rd._post_discount
 
-    def _managed_existing(p, aliases) -> bool:
+    def _managed_existing(p, aliases, known_returns) -> bool:
         if not p:
             return False
         oid = str(p.get("option_id") or "")
-        if oid and oid in aliases:
+        if oid and (oid in aliases or oid in known_returns):
             return False
-        return int(p.get("active") or 0) == 1
+        if int(p.get("active") or 0) == 1:
+            return True
+        try:
+            return not rd._placeholder(p)
+        except Exception:
+            return False
 
     def resolve(core, db, parsed):
         products = rd._load_products(core, db)
         by_oid = {str(p.get("option_id") or ""): p for p in products if p.get("option_id")}
         aliases = rd._alias_map(core, db)
+        known_returns = _known_return_option_ids()
 
-        managed = [p for p in products if p.get("option_id") and _managed_existing(p, aliases)]
+        managed = [
+            p for p in products
+            if p.get("option_id") and _managed_existing(p, aliases, known_returns)
+        ]
         parsed_by_oid = {str(r.get("option_id") or ""): r for r in parsed}
 
         same_file_price = {}
+        exact_same_file = {}
         for p in managed:
-            row = parsed_by_oid.get(str(p.get("option_id") or ""))
-            price = _row_unit_price(row) if row else None
+            poid = str(p.get("option_id") or "")
+            prow = parsed_by_oid.get(poid)
+            if not prow:
+                continue
+            price = _row_unit_price(prow)
             if price and price > 0:
                 same_file_price[int(p["id"])] = price
+            key = _full_name_key(prow.get("name"))
+            if key:
+                exact_same_file.setdefault(key, []).append(p)
+
+        alias_parent_by_name = {}
+        for alias_oid, parent_pid in aliases.items():
+            arow = parsed_by_oid.get(str(alias_oid))
+            if not arow:
+                continue
+            key = _full_name_key(arow.get("name"))
+            if key:
+                alias_parent_by_name.setdefault(key, set()).add(int(parent_pid))
 
         hist_cache = {}
         mappings, unresolved = {}, []
@@ -123,13 +163,43 @@ def apply(return_discount_module, core_module) -> None:
                 continue
 
             existing = by_oid.get(oid)
-            if _managed_existing(existing, aliases):
+            if _managed_existing(existing, aliases, known_returns):
                 continue
 
             discount_price = _row_unit_price(row)
+            full_key = _full_name_key(row.get("name"))
+
+            exact_candidates = []
+            for p in exact_same_file.get(full_key, []):
+                if existing and int(p["id"]) == int(existing["id"]):
+                    continue
+                ref = same_file_price.get(int(p["id"]))
+                if (
+                    discount_price is not None
+                    and ref is not None
+                    and discount_price < ref * 0.995
+                ):
+                    exact_candidates.append(p)
+            exact_ids = {int(p["id"]) for p in exact_candidates}
+            if len(exact_ids) == 1:
+                mappings[oid] = next(iter(exact_ids))
+                continue
+
+            inherited = alias_parent_by_name.get(full_key, set()) if oid in known_returns else set()
+            if len(inherited) == 1:
+                mappings[oid] = next(iter(inherited))
+                continue
+
             scored = []
             for p in managed:
-                score = _name_score(row.get("name"), p.get("name"))
+                poid = str(p.get("option_id") or "")
+                same_file_row = parsed_by_oid.get(poid)
+                candidate_name = (
+                    same_file_row.get("name")
+                    if same_file_row and same_file_row.get("name")
+                    else p.get("name")
+                )
+                score = _name_score(row.get("name"), candidate_name)
                 if score < 0.74:
                     continue
                 ref = same_file_price.get(int(p["id"]))
@@ -151,7 +221,9 @@ def apply(return_discount_module, core_module) -> None:
             if eligible:
                 top = eligible[0]
                 second_score = eligible[1][0] if len(eligible) > 1 else 0.0
-                if top[0] >= 0.80 and (len(eligible) == 1 or top[0] - second_score >= 0.06):
+                if top[0] >= 0.80 and (
+                    len(eligible) == 1 or top[0] - second_score >= 0.06
+                ):
                     chosen = top
 
             if chosen:
@@ -171,12 +243,13 @@ def apply(return_discount_module, core_module) -> None:
             unresolved.append((oid, str(row.get("name") or ""), reason))
 
         if unresolved:
-            lines = [f"{oid} | {name} ({reason})" for oid, name, reason in unresolved[:8]]
-            more = "" if len(unresolved) <= 8 else f" 외 {len(unresolved)-8}개"
+            lines = [f"{oid} | {name} ({reason})" for oid, name, reason in unresolved[:20]]
+            more = "" if len(unresolved) <= 20 else f" 외 {len(unresolved)-20}개"
             raise ValueError(
                 "ERP에 없는 쿠팡 옵션ID를 자동으로 새 품목 처리하지 않았습니다. "
-                "동일 옵션ID는 정상판매로 처리하고, 다른 옵션ID는 유사 상품명 + 할인단가가 "
-                "확인될 때만 반품 할인판매로 연결합니다.\n" + "\n".join(lines) + more
+                "동일 옵션ID는 정상판매로 처리하고, 다른 옵션ID는 같은 파일의 원상품/기존 "
+                "반품매칭/할인단가를 확인한 경우에만 반품 할인판매로 연결합니다.\n"
+                + "\n".join(lines) + more
             )
         return mappings
 
@@ -198,15 +271,11 @@ def apply(return_discount_module, core_module) -> None:
     rd._rg_return_sale_match_v0944_applied = True
     _APPLIED = True
 
-    # v0.9.47: user-supplied canonical Rocket Growth original-product registry.
     import canonical_rg_cleanup_v0947
     canonical_rg_cleanup_v0947.apply(core_module, rd)
 
-    # v0.9.48+: restore canonical originals and apply v0.9.49 baseline costs.
     import canonical_rg_restore_v0948
     canonical_rg_restore_v0948.apply(core_module, rd, canonical_rg_cleanup_v0947)
 
-    # v0.9.50: repair already-captured August provisional P&L rows whose unit cost
-    # was zero before the user-supplied baseline costs were entered.
     import august_cost_backfill_v0950
     august_cost_backfill_v0950.apply(core_module)
