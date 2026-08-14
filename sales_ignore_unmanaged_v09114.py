@@ -11,9 +11,10 @@ Option IDs:
 Safety rule:
 - If a real ERP product (including an archived non-placeholder product) exists for
   an option ID, do NOT ignore it.
-- If no real ERP product exists, allow the sales-stat import to continue, then
-  remove only that option's sales_stats/inventory posting from the just-created
-  import and deactivate only any zero-cost auto-created placeholder.
+- If no real ERP product exists, remove only that option from return-sale matching,
+  allow the sales-stat import to continue, then remove only that option's
+  sales_stats/inventory posting from the just-created import and deactivate only
+  any zero-cost auto-created placeholder.
 - No other unknown option is ignored.
 """
 from __future__ import annotations
@@ -126,6 +127,20 @@ def apply(core, return_discount_module, db_path=None):
 
     rd = return_discount_module
     db = db_path or core.DEFAULT_DB
+
+    # return_discount_v099 resolves unknown options before the base sales import.
+    # Filter only the explicitly approved IDs from that resolver when they do not
+    # exist as real ERP products; all other unresolved IDs keep blocking import.
+    previous_resolve = rd._resolve
+
+    def resolve(core_arg, db_arg, parsed):
+        ignored = _unmanaged_targets(rd, core_arg, db_arg)
+        if ignored:
+            parsed = [r for r in parsed if _oid(r.get("option_id")) not in ignored]
+        return previous_resolve(core_arg, db_arg, parsed)
+
+    rd._resolve = resolve
+
     previous_import = core.import_sales_stats
 
     def import_sales_stats(source, file_name, period_start, period_end, db_path=None):
