@@ -1,12 +1,35 @@
-"""v0.9.100 target Excel display/rounding fix.
+"""v0.9.101 target Excel display/rounding fix.
 
 - Remove trailing decimal points from numeric cells by using integer display format.
-- Round Excel-only helper unit columns (G/I/M) to whole won with ROUND(...,0).
+- Write Excel-only helper unit columns (G/I/M) as pre-calculated whole-won numbers,
+  not formulas.
 - Keep helper columns as display-only aids; upload/save behavior remains unchanged.
 """
 from __future__ import annotations
 
+from decimal import Decimal, ROUND_HALF_UP
 from io import BytesIO
+
+
+def _num(value) -> float:
+    try:
+        return float(value or 0)
+    except Exception:
+        return 0.0
+
+
+def _whole(value) -> int:
+    try:
+        return int(Decimal(str(value)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    except Exception:
+        return 0
+
+
+def _unit(total, qty) -> int:
+    q = _num(qty)
+    if abs(q) <= 1e-12:
+        return 0
+    return _whole(_num(total) / q)
 
 
 def apply(upload_module):
@@ -23,23 +46,16 @@ def apply(upload_module):
         wb = load_workbook(bio)
         ws = wb["목표입력"] if "목표입력" in wb.sheetnames else wb.active
 
-        # Whole-number presentation for target-entry convenience.
-        # Underlying stored target values are not altered here except the three
-        # helper formulas, which are explicitly rounded to whole won.
+        # G/I/M are convenience values calculated once when the workbook is made.
+        # They intentionally contain plain numbers rather than Excel formulas.
         numeric_cols = ("C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N")
         for row in range(2, ws.max_row + 1):
-            ws[f"G{row}"] = f"=IFERROR(ROUND(F{row}/E{row},0),0)"
-            ws[f"I{row}"] = f"=IFERROR(ROUND(H{row}/E{row},0),0)"
-            ws[f"M{row}"] = f"=IFERROR(ROUND(L{row}/E{row},0),0)"
+            qty = ws[f"E{row}"].value
+            ws[f"G{row}"] = _unit(ws[f"F{row}"].value, qty)
+            ws[f"I{row}"] = _unit(ws[f"H{row}"].value, qty)
+            ws[f"M{row}"] = _unit(ws[f"L{row}"].value, qty)
             for col in numeric_cols:
                 ws[f"{col}{row}"].number_format = "#,##0"
-
-        try:
-            wb.calculation.fullCalcOnLoad = True
-            wb.calculation.forceFullCalc = True
-            wb.calculation.calcMode = "auto"
-        except Exception:
-            pass
 
         out = BytesIO()
         wb.save(out)
