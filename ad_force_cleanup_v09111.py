@@ -1,16 +1,11 @@
-"""RG Manager v0.9.111 runtime cleanup for one explicitly authorized stale ad report.
+"""RG Manager v0.9.112 runtime advertising cleanup/bootstrap.
 
-Unlike v0.9.110, this migration is invoked directly from app.py on Streamlit rerun,
-so it does not depend on Python restarting and re-running sitecustomize.py.
+This module is invoked directly from app.py on every Streamlit rerun.
 
-It removes only:
-A00577001_pa_total_campaign_20260801_20260811.xlsx
-2026-08-01 ~ 2026-08-11
-
-The migration flag is written only after at least one matching row is actually
-deleted. Therefore a startup that runs before the stale row exists cannot consume
-the migration, while a later intentional re-upload after successful cleanup is
-not deleted again.
+It retains the v0.9.111 one-time cleanup for the explicitly authorized stale
+8/1~8/11 report, and from v0.9.112 also activates the unified Recent Input
+History patch so advertising reports uploaded from either ERP screen are shown
+in the same history table.
 """
 from __future__ import annotations
 
@@ -32,15 +27,30 @@ def _cols(c, table: str) -> set[str]:
     return {str(r["name"]) for r in c.execute(f'PRAGMA table_info("{table}")').fetchall()}
 
 
+def _apply_recent_input_unify(core):
+    try:
+        import recent_input_unify_v09112
+        return recent_input_unify_v09112.apply(core)
+    except Exception as exc:
+        print(f"RG Manager v0.9.112 recent-input unification failed: {exc}")
+        return {"patched": False, "error": str(exc)}
+
+
 def apply(core, db=None):
     db = db or core.DEFAULT_DB
     core.init_db(db)
+
+    # Must run even when the old one-time cleanup flag is already present.
+    # Streamlit updater reruns app.py without necessarily restarting Python.
+    recent_result = _apply_recent_input_unify(core)
+
     result = {
         "already_applied": False,
         "canonical_deleted": 0,
         "legacy_deleted": 0,
         "ad_rows_deleted": 0,
         "flag_written": False,
+        "recent_input_unify": recent_result,
     }
 
     with core._conn(db) as c:
