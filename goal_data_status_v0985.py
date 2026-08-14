@@ -9,6 +9,8 @@
 - v0.9.93: all active finished products are always shown, even with no saved goal/performance.
 - v0.9.94: goal-management exclusions are hidden from the table/totals and can be restored.
 - v0.9.96: reload styled table module so updated column order appears immediately.
+- v0.9.97: provisional goal performance uses the same final calculation path as
+  provisional P&L: current ad report, return-sale consolidation, and manual overrides.
 """
 from __future__ import annotations
 
@@ -93,32 +95,75 @@ def _render_coverage(st, core, db, month: str):
 
 
 def _fresh_provisional(core, db, month: str, base, old):
-    out = old._provisional_details(core, db, month, base)
+    """Build the exact final provisional view used by the monthly P&L screen."""
+    try:
+        importlib.import_module("pnl_snapshot_refresh_v0966").refresh_month(core, month, db)
+    except Exception:
+        pass
 
+    helper = importlib.import_module("pnl_month_default_v0914")
+    try:
+        rows, _excluded = helper._snapshot_rows_for_month(core, db, month)
+        view = helper._aggregate(rows)
+    except Exception:
+        view = None
+
+    if view is None or getattr(view, "empty", True):
+        return {}
+
+    # 1) current advertising report
     ad_mod = importlib.import_module("provisional_ad_report_v0956")
     try:
         dataset = ad_mod.load_month(core, month, db)
     except Exception:
         dataset = {"items": {}, "imports": []}
+    try:
+        view, _ad_meta = ad_mod.apply_to_view(view, dataset)
+    except Exception:
+        pass
 
-    for x in out.values():
-        old_ad = abs(old._num(x.get("ad")))
-        x["profit"] = old._num(x.get("profit")) + old_ad
-        x["ad"] = 0.0
+    # 2) gross/cancel/net quantity semantics + returned-item sale consolidation
+    try:
+        quantities = importlib.import_module("sales_quantity_v0965")
+        view, _qty_meta = quantities.annotate_month(core, db, month, view)
+    except Exception:
+        pass
+    try:
+        returns = importlib.import_module("return_sale_pnl_v0965")
+        view, _return_meta = returns.consolidate_month(core, db, month, view)
+    except Exception:
+        pass
+
+    # 3) the same manual unit-price / RG-cost overrides shown in provisional P&L
+    try:
+        manual_adjust = importlib.import_module("provisional_manual_adjust_v0952")
+        manual_net = importlib.import_module("provisional_manual_netqty_v0965")
+        manual_net.apply(manual_adjust)
+        adjustments = manual_adjust.load(core, month, db)
+        view, _adjust_meta = manual_adjust.apply_to_view(view, adjustments)
+    except Exception:
+        pass
 
     _by_pid, by_oid = old._product_maps(core, db, base)
-    for oid, item in dict(dataset.get("items") or {}).items():
-        pid = by_oid.get(base._oid(oid))
+    out = {}
+    for r in view.to_dict("records"):
+        oid = base._oid(r.get("옵션ID"))
+        pid = by_oid.get(oid)
         if pid is None:
             continue
-        ad = abs(old._num(item.get("ad_spend")))
         x = out.setdefault(
             int(pid),
             {"qty":0.0,"revenue":0.0,"commission":0.0,"rg":0.0,
              "returns":0.0,"ad":0.0,"cogs":0.0,"profit":0.0,"source":"잠정"},
         )
-        x["ad"] = ad
-        x["profit"] = old._num(x.get("profit")) - ad
+        x["qty"] += old._num(r.get("판매수량"))
+        x["revenue"] += old._num(r.get("예상매출"))
+        x["commission"] += abs(old._num(r.get("판매수수료")))
+        x["rg"] += abs(old._num(r.get("입출고비"))) + abs(old._num(r.get("배송비")))
+        x["returns"] += abs(old._num(r.get("반품충당")))
+        x["ad"] += abs(old._num(r.get("광고비")))
+        x["cogs"] += abs(old._num(r.get("매출원가")))
+        x["profit"] += old._num(r.get("예상이익"))
     return out
 
 
@@ -189,7 +234,7 @@ def _render_comparison(st, core, db, month: str, base, old, styled):
     if confirmed_available:
         st.caption("잠정실적은 판매자료와 현재 광고성과보고서를 기준으로 계산하며, 확정실적은 월 정산자료 기준입니다.")
     else:
-        st.caption("잠정실적은 판매자료와 현재 광고성과보고서를 즉시 반영합니다. 아직 확정 정산자료가 없으면 확정실적은 빈칸으로 표시됩니다.")
+        st.caption("잠정실적은 판매자료와 현재 광고성과보고서·수동조정값을 즉시 반영합니다. 아직 확정 정산자료가 없으면 확정실적은 빈칸으로 표시됩니다.")
 
 
 def render_page(st, pd_obj, core, db_path=None):
@@ -231,7 +276,12 @@ def render_page(st, pd_obj, core, db_path=None):
         goals = base._goals(core, db, month)
         if goals is not None and not goals.empty and "product_id" in goals.columns:
             goals = goals[~goals["product_id"].astype(int).isin(excluded_pids)].copy()
-        actuals, source_label = base._actuals(core, db, month)
+        current_month = date.today().strftime("%Y-%m")
+        if str(month) >= current_month:
+            actuals = _fresh_provisional(core, db, month, base, old)
+            source_label = "잠정"
+        else:
+            actuals, source_label = base._actuals(core, db, month)
         actuals = {int(pid): row for pid, row in actuals.items() if int(pid) not in excluded_pids}
         progress, _meta = base._build_progress(goals, actuals, month, core, db)
         base._render_review(st, core, db, month, progress, source_label)
