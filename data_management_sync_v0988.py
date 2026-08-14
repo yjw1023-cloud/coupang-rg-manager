@@ -1,12 +1,12 @@
-"""v0.9.90 repair and unify advertising-performance dates and provisional P&L data.
+"""v0.9.103 advertising-performance date and canonical sync.
 
 Key rules:
 - Filename dates win over stale date widgets for advertising performance reports.
-- Existing duplicate legacy imports with wrong periods are repaired in place.
-- Legacy ad_performance rows are mirrored into provisional_ad_report_* so
-  dashboard / goal / provisional P&L use the same data.
-- Repair runs at startup, so a previously misdated 8/12 file is corrected
-  without requiring the user to upload it again.
+- New legacy/generic ad imports are mirrored into provisional_ad_report_* so
+  dashboard / goal / provisional P&L use the same canonical data.
+- Do NOT remirror every historical legacy import at process startup. Replaying old
+  rows on every launch can overwrite a newer report for the same day and creates
+  confusing 'existing overlap' warnings in the provisional P&L uploader.
 """
 from __future__ import annotations
 
@@ -32,7 +32,13 @@ def _as_date(value: Any) -> date | None:
 
 
 def _canonical_module():
-    return importlib.import_module("provisional_ad_report_v0956")
+    mod = importlib.import_module("provisional_ad_report_v0956")
+    try:
+        patch = importlib.import_module("ad_upload_unify_v09103")
+        patch.apply(mod)
+    except Exception:
+        pass
+    return mod
 
 
 def _filename_period(file_name: str):
@@ -125,8 +131,8 @@ def _mirror_legacy_to_canonical(core, db, import_id: int, start: date, end: date
                 (digest,),
             ).fetchone()
 
-        # The legacy uploader replaces the same exact period. Mirror that rule
-        # so the canonical provisional source never double-counts one day/range.
+        # One exact date range = one canonical report. This path runs only when
+        # the generic/legacy uploader actually imports a file, never at startup.
         exact_rows = c.execute(
             """SELECT id FROM provisional_ad_report_imports
                WHERE period_start=? AND period_end=?""",
@@ -197,7 +203,7 @@ def _repair_one(core, db, import_id: int):
 
 
 def _repair_existing(core, db):
-    """Repair all prior advertising imports whose filenames contain periods."""
+    """Legacy manual repair helper retained for diagnostics; no startup call."""
     try:
         core.init_db(db)
         with core._conn(db) as c:
@@ -210,9 +216,9 @@ def _repair_existing(core, db):
             try:
                 _repair_one(core, db, int(r["id"]))
             except Exception as exc:
-                print(f"RG Manager v0.9.90 ad repair skipped import {r['id']}: {exc}")
+                print(f"RG Manager ad repair skipped import {r['id']}: {exc}")
     except Exception as exc:
-        print(f"RG Manager v0.9.90 ad repair failed: {exc}")
+        print(f"RG Manager ad repair failed: {exc}")
 
 
 def apply(core) -> None:
@@ -223,17 +229,13 @@ def apply(core) -> None:
 
     original_import = core.import_ad_performance
 
-    # Fix already-saved records before any page renders. This repairs the
-    # existing 8/12 file that v0.9.87~0.9.89 stored as 8/3~8/9 and mirrors
-    # its stored option-level spend into the provisional tables.
-    _repair_existing(core, core.DEFAULT_DB)
+    # v0.9.103: intentionally no _repair_existing() here. Historical imports
+    # must not be replayed on every ERP startup. Only a real new import below
+    # is mirrored to the canonical provisional-ad tables.
 
     def import_wrapper(source, file_name: str, period_start=None, period_end=None, db_path=None):
         db = db_path or core.DEFAULT_DB
 
-        # For advertising performance reports the Coupang filename is
-        # authoritative. Ignore stale UI date widgets when the filename has
-        # an explicit start/end period.
         parsed = _filename_period(file_name)
         if parsed:
             start, end = parsed
@@ -259,8 +261,6 @@ def apply(core) -> None:
                 if start is not None and end is not None:
                     if end < start:
                         start, end = end, start
-                    # Duplicate hashes in core return the pre-existing row
-                    # without updating its period, so repair it explicitly.
                     _repair_legacy_period(core, db, import_id, start, end)
                     _mirror_legacy_to_canonical(core, db, import_id, start, end)
                 else:
