@@ -13,6 +13,7 @@
   provisional P&L: current ad report, return-sale consolidation, and manual overrides.
 - v0.9.100: target Excel helper unit columns round to integers and numeric cells no longer
   display trailing decimal points.
+- v0.9.102: reload goal scope so user-confirmed normal option IDs are restored immediately.
 """
 from __future__ import annotations
 
@@ -113,7 +114,6 @@ def _fresh_provisional(core, db, month: str, base, old):
     if view is None or getattr(view, "empty", True):
         return {}
 
-    # 1) current advertising report
     ad_mod = importlib.import_module("provisional_ad_report_v0956")
     try:
         dataset = ad_mod.load_month(core, month, db)
@@ -124,7 +124,6 @@ def _fresh_provisional(core, db, month: str, base, old):
     except Exception:
         pass
 
-    # 2) gross/cancel/net quantity semantics + returned-item sale consolidation
     try:
         quantities = importlib.import_module("sales_quantity_v0965")
         view, _qty_meta = quantities.annotate_month(core, db, month, view)
@@ -136,7 +135,6 @@ def _fresh_provisional(core, db, month: str, base, old):
     except Exception:
         pass
 
-    # 3) the same manual unit-price / RG-cost overrides shown in provisional P&L
     try:
         manual_adjust = importlib.import_module("provisional_manual_adjust_v0952")
         manual_net = importlib.import_module("provisional_manual_netqty_v0965")
@@ -250,7 +248,14 @@ def render_page(st, pd_obj, core, db_path=None):
     upload = importlib.import_module("goal_excel_upload_v0984")
     excel_format = importlib.import_module("goal_excel_format_v09100")
     excel_format.apply(upload)
+
+    # Reload the scope + canonical visibility repair so updater reruns do not keep
+    # the pre-v0.9.102 cached filters in the current Streamlit process.
+    sys.modules.pop("goal_scope_v0994", None)
+    sys.modules.pop("canonical_visible_products_v09102", None)
+    importlib.invalidate_caches()
     scope = importlib.import_module("goal_scope_v0994")
+
     db = db_path or core.DEFAULT_DB
     old._ensure_detail_schema(core, db, base)
     scope.ensure_schema(core, db)
