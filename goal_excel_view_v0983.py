@@ -1,7 +1,8 @@
-"""RG Manager v0.9.83 styled Excel-like goal/performance comparison.
+"""RG Manager v0.9.96 styled Excel-like goal/performance comparison.
 
 Presentation-only layer over goal_excel_view_v0981:
 - merged item cell across 목표/잠정실적/확정실적
+- item column first, then 구분, then numeric metrics
 - wider item column and compact numeric columns
 - centered/bold colored headers and centered cells
 - subtle row colors for target/provisional/confirmed states
@@ -131,13 +132,13 @@ def _detail_table(old, groups) -> str:
         '<div class="rg-goal-wrap">',
         '<table class="rg-goal-table">',
         '<colgroup>'
-        '<col style="width:78px">'
         '<col style="width:310px">'
+        '<col style="width:78px">'
         '<col style="width:88px"><col style="width:78px"><col style="width:62px">'
         '<col style="width:82px"><col style="width:108px"><col style="width:98px">'
         '<col style="width:78px"><col style="width:88px"><col style="width:90px">'
         '</colgroup>',
-        '<thead><tr><th>구분</th><th>아이템</th>'
+        '<thead><tr><th>아이템</th><th>구분</th>'
         + ''.join(f'<th>{_esc(name)}</th>' for name, _kind in _COLUMNS)
         + '</tr></thead><tbody>',
     ]
@@ -150,9 +151,9 @@ def _detail_table(old, groups) -> str:
         for idx, (label, cls, metrics) in enumerate(row_defs):
             group_cls = " group-start" if idx == 0 else ""
             parts.append(f'<tr class="{cls}{group_cls}">')
-            parts.append(f'<td class="kind">{_esc(label)}</td>')
             if idx == 0:
                 parts.append(f'<td class="item" rowspan="3">{_esc(item_label)}</td>')
+            parts.append(f'<td class="kind">{_esc(label)}</td>')
             if metrics is None:
                 values = {name: "" for name, _kind in _COLUMNS}
             else:
