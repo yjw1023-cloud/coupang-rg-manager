@@ -14,6 +14,8 @@
 - v0.9.100: target Excel helper unit columns round to integers and numeric cells no longer
   display trailing decimal points.
 - v0.9.102: reload goal scope so user-confirmed normal option IDs are restored immediately.
+- v0.9.116: if every target quantity in the selected month is zero, item rows sort by
+  provisional sales quantity descending; months with any target quantity keep target sorting.
 """
 from __future__ import annotations
 
@@ -208,10 +210,17 @@ def _render_comparison(st, core, db, month: str, base, old, styled):
     )
     words = str(q or "").strip().lower().split()
 
+    has_target_qty = any(
+        abs(old._num(goal_map.get(int(pid), {}).get("target_qty"))) > 1e-12
+        for pid in pids
+    )
+
     def _sort_key(pid):
         meta = product_map.get(int(pid), {})
         target_qty = old._num(goal_map.get(int(pid), {}).get("target_qty"))
-        return (-target_qty, str(meta.get("name") or ""), str(meta.get("option_id") or ""))
+        provisional_qty = old._num(provisional.get(int(pid), {}).get("qty"))
+        primary_qty = target_qty if has_target_qty else provisional_qty
+        return (-primary_qty, str(meta.get("name") or ""), str(meta.get("option_id") or ""))
 
     groups = []
     for pid in sorted(pids, key=_sort_key):
