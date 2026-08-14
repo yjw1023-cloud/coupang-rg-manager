@@ -11,6 +11,8 @@
 - v0.9.96: reload styled table module so updated column order appears immediately.
 - v0.9.97: provisional goal performance uses the same final calculation path as
   provisional P&L: current ad report, return-sale consolidation, and manual overrides.
+- v0.9.100: target Excel helper unit columns round to integers and numeric cells no longer
+  display trailing decimal points.
 """
 from __future__ import annotations
 
@@ -246,6 +248,8 @@ def render_page(st, pd_obj, core, db_path=None):
     sys.modules.pop("goal_excel_upload_v0984", None)
     importlib.invalidate_caches()
     upload = importlib.import_module("goal_excel_upload_v0984")
+    excel_format = importlib.import_module("goal_excel_format_v09100")
+    excel_format.apply(upload)
     scope = importlib.import_module("goal_scope_v0994")
     db = db_path or core.DEFAULT_DB
     old._ensure_detail_schema(core, db, base)
