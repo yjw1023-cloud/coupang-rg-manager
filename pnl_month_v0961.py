@@ -1,7 +1,9 @@
-"""v0.9.61 monthly provisional P&L client-side sortable table.
+"""v0.9.98 monthly provisional P&L client-side sortable table.
 
 Keeps the v0.9.59 visual table but performs sorting entirely inside an embedded
 HTML/JavaScript component so clicking a header never reloads or reruns the ERP.
+v0.9.98 pins the operator's key columns first and makes the product-name column
+more compact so the main monthly P&L is easier to scan.
 """
 from __future__ import annotations
 
@@ -26,9 +28,23 @@ _NUMERIC_COLS = {
     "입출고비", "배송비", "반품충당", "광고비", "광고제외이익", "예상이익", "이익률(%)", "RG비용",
 }
 
+_PRIMARY_COL_ORDER = [
+    "옵션ID",
+    "상품명",
+    "판매수량",
+    "취소수량",
+    "순판매수량",
+    "예상 실현단가",
+    "예상매출",
+    "광고비",
+    "광고제외이익",
+    "예상이익",
+    "이익률(%)",
+]
+
 
 def _fmt(col, v):
-    if col == "판매수량":
+    if col in {"판매수량", "취소수량", "순판매수량", "반품판매수량", "반품판매취소"}:
         x = _num(v)
         return f"{int(round(x)):,}" if abs(x-round(x)) < 1e-9 else f"{x:,.1f}"
     if col == "이익률(%)":
@@ -38,12 +54,19 @@ def _fmt(col, v):
     return str(v if v is not None else "")
 
 
+def _ordered_columns(df):
+    current = list(df.columns)
+    first = [c for c in _PRIMARY_COL_ORDER if c in current]
+    rest = [c for c in current if c not in first]
+    return first + rest
+
+
 def _render_table(st_obj, df):
     if df is None or df.empty:
         st_obj.info("표시할 상품이 없습니다.")
         return
 
-    cols = list(df.columns)
+    cols = _ordered_columns(df)
     head = []
     for idx, c in enumerate(cols):
         cls = " product" if c == "상품명" else ""
@@ -59,11 +82,16 @@ def _render_table(st_obj, df):
         for c in cols:
             value = r.get(c)
             text = html.escape(_fmt(c, value))
-            cls = ' class="product"' if c == "상품명" else ""
             raw = _num(value) if c in _NUMERIC_COLS else str(value if value is not None else "").lower()
-            cells.append(
-                f'<td{cls} data-sort={json.dumps(str(raw), ensure_ascii=False)}>{text}</td>'
-            )
+            if c == "상품명":
+                title = html.escape(str(value if value is not None else ""), quote=True)
+                cells.append(
+                    f'<td class="product" title="{title}" data-sort={json.dumps(str(raw), ensure_ascii=False)}>{text}</td>'
+                )
+            else:
+                cells.append(
+                    f'<td data-sort={json.dumps(str(raw), ensure_ascii=False)}>{text}</td>'
+                )
         rows.append("<tr>" + "".join(cells) + "</tr>")
 
     table_html = f"""
@@ -74,13 +102,14 @@ def _render_table(st_obj, df):
 <style>
 html,body{{margin:0;padding:0;background:transparent;font-family:Arial,'Noto Sans KR',sans-serif;color:#10233f}}
 .wrap{{width:100%;overflow-x:auto;overflow-y:visible;border:1px solid #cfd8e6;border-radius:10px;background:#fff;box-sizing:border-box}}
-table{{border-collapse:collapse;min-width:1520px;width:max-content;font-size:13px}}
-th{{background:#cfe3ff;color:#0d3768;font-weight:900;text-align:center;white-space:nowrap;padding:11px 10px;border-right:1px solid #b9cce5;border-bottom:2px solid #8fb3dc;cursor:pointer;user-select:none}}
+table{{border-collapse:collapse;min-width:1320px;width:max-content;font-size:13px}}
+th{{background:#cfe3ff;color:#0d3768;font-weight:900;text-align:center;white-space:nowrap;padding:11px 9px;border-right:1px solid #b9cce5;border-bottom:2px solid #8fb3dc;cursor:pointer;user-select:none}}
 th:hover{{background:#b9d7ff}}
 th .arrow{{display:inline-block;min-width:14px;margin-left:4px;font-size:11px}}
-td{{text-align:center;white-space:nowrap;padding:9px 10px;border-right:1px solid #d8e0ea;border-bottom:1px solid #d8e0ea;background:#fff}}
+td{{text-align:center;white-space:nowrap;padding:9px 9px;border-right:1px solid #d8e0ea;border-bottom:1px solid #d8e0ea;background:#fff}}
 tbody tr:nth-child(even) td{{background:#f8fbff}}
-th.product,td.product{{text-align:left!important;padding-left:24px!important;min-width:430px}}
+th.product{{text-align:center!important;width:250px;min-width:250px;max-width:250px;font-size:12px}}
+td.product{{text-align:left!important;padding-left:10px!important;width:250px;min-width:250px;max-width:250px;white-space:normal!important;overflow-wrap:anywhere;word-break:keep-all;font-size:11px;line-height:1.25}}
 tbody tr:hover td{{background:#eef6ff}}
 </style>
 </head>
@@ -124,7 +153,7 @@ tbody tr:hover td{{background:#eef6ff}}
 
     try:
         import streamlit.components.v1 as components
-        height = max(230, 39 * (len(df) + 1) + 12)
+        height = max(250, 52 * (len(df) + 1) + 16)
         components.html(table_html, height=height, scrolling=False)
     except Exception:
         st_obj.markdown(
