@@ -1,8 +1,9 @@
 """RG Manager runtime patch bootstrap.
 
 Keeps the v0.8 purchase import hook, v0.9.87 generic advertising-report
-filename period detection, v0.9.103 canonical advertising-data sync/upload
-rules, and v0.9.95 user-facing product visibility guard active from startup.
+filename period detection, v0.9.103 canonical advertising-data sync/upload,
+v0.9.95 user-facing product visibility guard, and v0.9.106 dormant-stock
+production support active from startup.
 """
 import importlib
 import sys
@@ -38,12 +39,26 @@ def _apply_product_visibility(module):
     return module
 
 
+def _apply_dormant_production(module):
+    if module is None:
+        return module
+    try:
+        core = _original_import_module("core")
+        patch = _original_import_module("production_dormant_stock_v09106")
+        patch.apply(core, module)
+    except Exception as exc:
+        print(f"RG Manager v0.9.106 dormant-stock production patch failed: {exc}", file=sys.stderr)
+    return module
+
+
 def _rg_import_module(name, package=None):
     module = _original_import_module(name, package)
     if name == "purchase_v06":
         _apply_purchase_v08(module)
     elif name in ("item_ui_v086", "goal_management_v0979"):
         _apply_product_visibility(module)
+    elif name == "production_batch_v095":
+        _apply_dormant_production(module)
     return module
 
 
@@ -52,6 +67,7 @@ if not getattr(importlib, "_rg_v08_patched", False):
     importlib._rg_v08_patched = True
 
 _apply_purchase_v08(sys.modules.get("purchase_v06"))
+_apply_dormant_production(sys.modules.get("production_batch_v095"))
 
 # v0.9.87: the legacy '새 자료 반영' advertising uploader is separate from
 # provisional_ad_report_v0956, so patch its filename/date widgets here.
