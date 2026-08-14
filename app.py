@@ -146,6 +146,12 @@ production_bom_link_v0940.apply(core, production_batch_v095)
 production_dormant_stock_v09106 = _original_import_module("production_dormant_stock_v09106")
 production_dormant_stock_v09106.apply(core, production_batch_v095)
 
+# v0.9.106: this update was explicitly requested to produce exactly three current
+# RG products once. The operation is transactional and DB-idempotent. Any missing
+# BOM or zero raw-material ERP cost aborts the whole operation before stock moves.
+auto_produce_requested_v09106 = _original_import_module("auto_produce_requested_v09106")
+AUTO_PRODUCTION_V09106_RESULT = auto_produce_requested_v09106.apply(core, production_batch_v095)
+
 # v0.9.6 reusable search boxes for product/item list tables.
 search_ui_v096 = _original_import_module("search_ui_v096")
 search_ui_v096.apply()
@@ -259,4 +265,5 @@ globals()["provisional_pnl_ui_v0913"] = provisional_pnl_ui_v0913
 globals()["pnl_month_default_v0914"] = pnl_month_default_v0914
 globals()["pnl_month_default_v0915"] = pnl_month_default_v0915
 globals()["bom_candidate_filter_v0927"] = bom_candidate_filter_v0927
+globals()["AUTO_PRODUCTION_V09106_RESULT"] = AUTO_PRODUCTION_V09106_RESULT
 exec(compile(source, str(LOADER), "exec"), globals(), globals())
