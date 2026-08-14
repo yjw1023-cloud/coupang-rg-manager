@@ -279,3 +279,10 @@ def apply(return_discount_module, core_module) -> None:
 
     import august_cost_backfill_v0950
     august_cost_backfill_v0950.apply(core_module)
+
+    # v0.9.114: user-approved exception for two old Tesla door-guard options.
+    # If no real ERP product exists for them, skip only those rows instead of
+    # blocking the entire monthly sales-stat import. All other unknown options
+    # remain strict and continue to block ambiguous imports.
+    import sales_ignore_unmanaged_v09114
+    sales_ignore_unmanaged_v09114.apply(core_module, rd)
