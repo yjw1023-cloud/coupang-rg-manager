@@ -1,4 +1,4 @@
-"""v0.9.118 safe monthly-default routing + live product-overview reload.
+"""v0.9.119 safe monthly-default routing + live product-overview reload.
 
 This module is explicitly purged from sys.modules by app.py on every rerun.
 Existing P&L/BOM/dashboard-status routing remains unchanged; product overview is
@@ -77,11 +77,16 @@ def render_monthly_closing_page(st_obj, pd_obj, core, db_path=None):
 
 
 def render_product_overview_page(st_obj, pd_obj, core, db_path=None):
-    # v0.9.118: hot updater replaces this file while Streamlit keeps its Python
-    # process alive. Reload the overview module every time the page is opened.
+    # Hot updater replaces this file while Streamlit keeps its Python process
+    # alive. Reload the overview module every time the page is opened.
     sys.modules.pop("product_overview_v0977", None)
     importlib.invalidate_caches()
     m = importlib.import_module("product_overview_v0977")
+
+    # v0.9.119: top '자체창고재고' must summarize the selected product's BOM/raw
+    # stock, not the finished product's own-warehouse balance.
+    stock_patch = importlib.import_module("product_overview_stock_v09119")
+    stock_patch.apply(m)
     return m.render_page(st_obj, pd_obj, core, db_path)
 
 
