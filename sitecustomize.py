@@ -3,8 +3,9 @@
 Keeps the v0.8 purchase import hook, v0.9.87 generic advertising-report
 filename period detection, v0.9.103 canonical advertising-data sync/upload,
 v0.9.95 user-facing product visibility guard, v0.9.106 dormant-stock
-production support, v0.9.108 safe advertising deletion, and v0.9.109
-advertising source audit/orphan cleanup active from startup.
+production support, v0.9.108 safe advertising deletion, v0.9.109
+advertising source audit/orphan cleanup, and v0.9.110 exact one-time ad cleanup
+active from startup.
 """
 import importlib
 import sys
@@ -110,6 +111,17 @@ try:
     _ad_orphan_v09109.apply(_core_v09109, _ad_report_for_source)
 except Exception as exc:
     print(f"RG Manager v0.9.109 ad source audit failed: {exc}", file=sys.stderr)
+
+# v0.9.110: user explicitly authorized deletion of exactly one stale report.
+# Remove that exact 2026-08-01~2026-08-11 file once from both canonical and
+# generic history, then record a DB migration flag so a future intentional
+# re-upload is never deleted again.
+try:
+    _core_v09110 = _original_import_module("core")
+    _ad_force_v09110 = _original_import_module("ad_force_cleanup_v09110")
+    _core_v09110.AD_FORCE_CLEANUP_V09110_RESULT = _ad_force_v09110.apply(_core_v09110)
+except Exception as exc:
+    print(f"RG Manager v0.9.110 exact ad cleanup failed: {exc}", file=sys.stderr)
 
 # v0.9.95: report-only/return option IDs remain available internally for
 # matching and settlement, but never appear as normal ERP items to the user.
