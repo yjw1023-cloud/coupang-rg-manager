@@ -21,6 +21,8 @@ for _rg_mod in (
     "pnl_month_v0961",
     "ad_force_cleanup_v09111",
     "recent_input_unify_v09112",
+    "return_discount_v099",
+    "return_sale_match_v0944",
 ):
     sys.modules.pop(_rg_mod, None)
 importlib.invalidate_caches()
@@ -170,11 +172,14 @@ pnl_views_v0912.apply(core)
 sales_pnl_ui_v098 = _original_import_module("sales_pnl_ui_v098")
 sales_pnl_ui_v098.apply()
 
-# v0.9.9 returned-item discount resale.
+# v0.9.9 returned-item discount resale.  v0.9.113 purges this module together
+# with return_sale_match_v0944 before import so the latest matching rule is used
+# immediately after a Streamlit updater refresh.
 return_discount_v099 = _original_import_module("return_discount_v099")
 return_discount_v099.apply(core)
 
-# v0.9.44 exact ERP option = normal sale; unknown similar + discounted option = return sale.
+# v0.9.107 matching rule: exact ERP option = normal sale; safe same-file / known
+# return aliases + discounted price can map a return-resale option to its original.
 return_sale_match_v0944 = _original_import_module("return_sale_match_v0944")
 return_sale_match_v0944.apply(return_discount_v099, core)
 
