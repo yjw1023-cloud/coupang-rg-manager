@@ -1,19 +1,13 @@
-"""v0.9.117 safe monthly-default routing + live old-option ignore bootstrap.
+"""v0.9.118 safe monthly-default routing + live product-overview reload.
 
 This module is explicitly purged from sys.modules by app.py on every rerun.
-Existing P&L/BOM/product-overview/dashboard-status routing remains unchanged;
-v0.9.80 guarantees dynamic pages remain present in grouped sidebar options,
-v0.9.83 keeps the styled merged comparison table, v0.9.84 adds Excel target
-upload, v0.9.85 shows sales/ad coverage while rebinding current ad reports
-immediately in goal provisional performance, v0.9.92 reloads the goal view,
-v0.9.103 applies idempotent advertising-report upload handling on every P&L rerun,
-v0.9.115 applies the two user-approved unmanaged old sales-option exclusions
-after the live return-sale wrapper chain is already installed, and v0.9.117
-hides archived finished products from the Product Overview selector.
+Existing P&L/BOM/dashboard-status routing remains unchanged; product overview is
+also reloaded on entry so updater UI changes appear without a Python restart.
 """
 from __future__ import annotations
 
 import importlib
+import sys
 
 
 # v0.9.115: app.py imports/patches return_discount_v099 and return_sale_match_v0944
@@ -83,24 +77,12 @@ def render_monthly_closing_page(st_obj, pd_obj, core, db_path=None):
 
 
 def render_product_overview_page(st_obj, pd_obj, core, db_path=None):
+    # v0.9.118: hot updater replaces this file while Streamlit keeps its Python
+    # process alive. Reload the overview module every time the page is opened.
+    sys.modules.pop("product_overview_v0977", None)
+    importlib.invalidate_caches()
     m = importlib.import_module("product_overview_v0977")
-    base = getattr(m, "_base", None)
-    original_finished = getattr(base, "_finished_products", None) if base is not None else None
-
-    def _active_finished_products(core_arg, db_arg):
-        df = original_finished(core_arg, db_arg)
-        if df is None or getattr(df, "empty", True) or "active" not in df.columns:
-            return df
-        active = pd_obj.to_numeric(df["active"], errors="coerce").fillna(0).astype(int)
-        return df.loc[active.eq(1)].copy()
-
-    if original_finished is not None:
-        base._finished_products = _active_finished_products
-    try:
-        return m.render_page(st_obj, pd_obj, core, db_path)
-    finally:
-        if original_finished is not None:
-            base._finished_products = original_finished
+    return m.render_page(st_obj, pd_obj, core, db_path)
 
 
 def render_dashboard_data_status(st_obj, core, db_path=None):
@@ -109,7 +91,6 @@ def render_dashboard_data_status(st_obj, core, db_path=None):
 
 
 def render_goal_management_page(st_obj, pd_obj, core, db_path=None):
-    import sys
     sys.modules.pop("goal_data_status_v0985", None)
     importlib.invalidate_caches()
     m = importlib.import_module("goal_data_status_v0985")
