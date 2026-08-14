@@ -7,6 +7,7 @@ The goal input tab is simplified to:
 - upload the workbook and save goals for the selected month by option ID
 
 v0.9.94 excludes goal-management-excluded products from the template and upload save path.
+v0.9.99 adds Excel-only unit helper columns for commission, RG logistics and COGS.
 """
 from __future__ import annotations
 
@@ -25,12 +26,20 @@ _TEMPLATE_COLUMNS = [
     "단가",
     "수량",
     "수수료",
+    "수수료단가",
     "입출고배송비",
+    "입출고배송비단가",
     "반품처리비",
     "광고비",
     "상품원가",
+    "상품원가단가",
     "매출이익",
 ]
+_HELPER_COLUMNS = {
+    "수수료단가",
+    "입출고배송비단가",
+    "상품원가단가",
+}
 _INPUT_COLUMNS = [
     "매출",
     "수량",
@@ -41,6 +50,7 @@ _INPUT_COLUMNS = [
     "상품원가",
     "매출이익",
 ]
+_REQUIRED_UPLOAD_COLUMNS = ["아이템", "옵션ID"] + _INPUT_COLUMNS
 
 
 def _clean_number(value: Any):
@@ -85,6 +95,9 @@ def _goal_template_dataframe(core, db, month: str, base, old) -> pd.DataFrame:
         if g:
             revenue = old._num(g.get("target_revenue"))
             qty = old._num(g.get("target_qty"))
+            commission = old._num(g.get("target_commission"))
+            rg_cost = old._num(g.get("target_rg_cost"))
+            cogs = old._num(g.get("target_cogs"))
             unit = revenue / qty if abs(qty) > 1e-12 else 0.0
             row = {
                 "아이템": str(p.name or ""),
@@ -92,11 +105,14 @@ def _goal_template_dataframe(core, db, month: str, base, old) -> pd.DataFrame:
                 "매출": revenue,
                 "단가": unit,
                 "수량": qty,
-                "수수료": old._num(g.get("target_commission")),
-                "입출고배송비": old._num(g.get("target_rg_cost")),
+                "수수료": commission,
+                "수수료단가": commission / qty if abs(qty) > 1e-12 else 0.0,
+                "입출고배송비": rg_cost,
+                "입출고배송비단가": rg_cost / qty if abs(qty) > 1e-12 else 0.0,
                 "반품처리비": old._num(g.get("target_return_cost")),
                 "광고비": old._num(g.get("target_ad_spend")),
-                "상품원가": old._num(g.get("target_cogs")),
+                "상품원가": cogs,
+                "상품원가단가": cogs / qty if abs(qty) > 1e-12 else 0.0,
                 "매출이익": old._num(g.get("target_profit")),
             }
         else:
@@ -118,6 +134,7 @@ def _template_bytes(core, db, month: str, base, old) -> bytes:
 
     header_fill = PatternFill("solid", fgColor="DCE8F6")
     input_fill = PatternFill("solid", fgColor="FFF7DF")
+    helper_fill = PatternFill("solid", fgColor="EAF4EA")
     id_fill = PatternFill("solid", fgColor="F3F4F6")
     thin = Side(style="thin", color="CBD5E1")
 
@@ -129,16 +146,23 @@ def _template_bytes(core, db, month: str, base, old) -> bytes:
         cell.border = Border(left=thin, right=thin, top=thin, bottom=thin)
 
     for row_idx, rec in enumerate(df.to_dict("records"), 2):
+        helper_formulas = {
+            "수수료단가": f"=IFERROR(F{row_idx}/E{row_idx},0)",
+            "입출고배송비단가": f"=IFERROR(H{row_idx}/E{row_idx},0)",
+            "상품원가단가": f"=IFERROR(L{row_idx}/E{row_idx},0)",
+        }
         for col_idx, header in enumerate(_TEMPLATE_COLUMNS, 1):
-            value = rec.get(header)
+            value = helper_formulas.get(header, rec.get(header))
             cell = ws.cell(row=row_idx, column=col_idx, value=value)
             cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=(header == "아이템"))
             cell.border = Border(left=thin, right=thin, top=thin, bottom=thin)
-            if header in _INPUT_COLUMNS or header == "단가":
+            if header in _HELPER_COLUMNS:
+                cell.fill = helper_fill
+            elif header in _INPUT_COLUMNS or header == "단가":
                 cell.fill = input_fill
             else:
                 cell.fill = id_fill
-            if header in _INPUT_COLUMNS or header == "단가":
+            if header in _INPUT_COLUMNS or header == "단가" or header in _HELPER_COLUMNS:
                 cell.number_format = '#,##0.##'
 
     widths = {
@@ -148,16 +172,19 @@ def _template_bytes(core, db, month: str, base, old) -> bytes:
         "D": 12,
         "E": 10,
         "F": 13,
-        "G": 16,
-        "H": 14,
-        "I": 12,
-        "J": 13,
-        "K": 14,
+        "G": 13,
+        "H": 16,
+        "I": 18,
+        "J": 14,
+        "K": 12,
+        "L": 13,
+        "M": 15,
+        "N": 14,
     }
     for col, width in widths.items():
         ws.column_dimensions[col].width = width
     ws.freeze_panes = "A2"
-    ws.auto_filter.ref = f"A1:K{max(1, ws.max_row)}"
+    ws.auto_filter.ref = f"A1:N{max(1, ws.max_row)}"
     ws.sheet_view.showGridLines = False
 
     bio = BytesIO()
@@ -173,9 +200,14 @@ def _upload_rows(uploaded, base) -> pd.DataFrame:
     uploaded.seek(0)
     df = pd.read_excel(uploaded, sheet_name=0)
     df.columns = [str(c).strip() for c in df.columns]
-    missing = [c for c in _TEMPLATE_COLUMNS if c not in df.columns]
+    missing = [c for c in _REQUIRED_UPLOAD_COLUMNS if c not in df.columns]
     if missing:
         raise ValueError("필수 열이 없습니다: " + ", ".join(missing))
+    # Excel-only helper columns are optional on upload so older target templates
+    # remain compatible. They are display/calculation aids and are never saved.
+    for col in _TEMPLATE_COLUMNS:
+        if col not in df.columns:
+            df[col] = None
     df = df[_TEMPLATE_COLUMNS].copy()
     df["옵션ID"] = df["옵션ID"].map(base._oid)
     df = df[df["옵션ID"].astype(str).str.strip() != ""]
@@ -271,7 +303,8 @@ def _render_excel_goal_input(st, core, db, month: str, base, old):
     st.markdown("### 목표 엑셀 입력")
     st.caption(
         "양식을 내려받아 목표 숫자를 입력한 뒤 그대로 업로드하세요. "
-        "목표·실적표와 같은 순서이며 옵션ID 기준으로 자동 저장됩니다."
+        "목표·실적표와 같은 순서이며 옵션ID 기준으로 자동 저장됩니다. "
+        "수수료단가·입출고배송비단가·상품원가단가는 엑셀에서 자동 계산되는 참고용 열입니다."
     )
 
     try:
