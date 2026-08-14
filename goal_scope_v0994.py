@@ -1,11 +1,17 @@
-"""RG Manager v0.9.94 goal-management product scope.
+"""RG Manager v0.9.95 goal-management product scope.
 
 Stores a non-destructive list of products excluded from goal/performance management.
-ERP product, inventory, BOM, sales and historical goal data are never deleted.
+System-only return/report option IDs are also filtered from all goal selectors, while
+ERP inventory, sales, settlement and historical calculation data remain intact.
 """
 from __future__ import annotations
 
 from datetime import datetime
+import importlib
+
+
+def _visibility():
+    return importlib.import_module("product_visibility_v0995")
 
 
 def _now(core) -> str:
@@ -24,6 +30,9 @@ def ensure_schema(core, db):
                    excluded_at TEXT NOT NULL
                )"""
         )
+    # Also apply the system-level visibility guard in a currently-running
+    # Streamlit process so an updater rerun does not require a full restart.
+    _visibility().apply_runtime(core)
 
 
 def excluded_ids(core, db) -> set[int]:
@@ -32,12 +41,18 @@ def excluded_ids(core, db) -> set[int]:
         rows = c.execute(
             "SELECT product_id FROM goal_management_exclusions"
         ).fetchall()
-    return {int(r["product_id"]) for r in rows}
+    manual = {int(r["product_id"]) for r in rows}
+    system_hidden = _visibility().hidden_ids(core, db)
+    return manual | system_hidden
 
 
 def set_excluded(core, db, product_id: int, excluded: bool):
     ensure_schema(core, db)
     pid = int(product_id)
+    # System-hidden return/report IDs cannot be restored through goal settings.
+    # They are not user items and must remain invisible.
+    if pid in _visibility().hidden_ids(core, db):
+        return
     with core._conn(db) as c:
         if excluded:
             c.execute(
@@ -55,7 +70,9 @@ def set_excluded(core, db, product_id: int, excluded: bool):
 
 
 def managed_products(core, db, base):
+    ensure_schema(core, db)
     products = base._products(core, db, active_only=True)
+    products = _visibility().visible_products_df(core, db, products)
     if products is None or products.empty:
         return products
     excluded = excluded_ids(core, db)
@@ -73,13 +90,17 @@ def _product_label(p, base) -> str:
 def render_controls(st, core, db, base):
     """Render global exclude/restore controls without deleting any ERP/history data."""
     ensure_schema(core, db)
+    visibility = _visibility()
+    visibility.apply_goal_module(base, core)
+
     products = base._products(core, db, active_only=True)
+    products = visibility.visible_products_df(core, db, products)
     excluded = excluded_ids(core, db)
 
     with st.expander("⚙️ 목표관리 상품 설정"):
         st.caption(
-            "목표관리가 필요 없는 상품만 목록에서 제외합니다. "
-            "ERP 상품·재고·매출·BOM·과거 목표이력은 삭제되지 않습니다."
+            "목표관리가 필요 없는 등록상품만 목록에서 제외합니다. "
+            "반품 재판매용 옵션ID와 보고서 전용 ID는 시스템에서 자동으로 숨깁니다."
         )
         if products is None or products.empty:
             st.info("등록된 활성 완제품이 없습니다.")
@@ -107,12 +128,12 @@ def render_controls(st, core, db, base):
                     "제외할 상품",
                     included_options,
                     format_func=lambda x: labels.get(int(x), str(x)),
-                    key="goal_scope_exclude_product_v0994",
+                    key="goal_scope_exclude_product_v0995",
                 )
                 if st.button(
                     "선택 상품 제외",
                     use_container_width=True,
-                    key="goal_scope_exclude_button_v0994",
+                    key="goal_scope_exclude_button_v0995",
                 ):
                     set_excluded(core, db, int(pid), True)
                     st.success(f"{labels.get(int(pid), '')}을(를) 목표관리에서 제외했습니다.")
@@ -127,12 +148,12 @@ def render_controls(st, core, db, base):
                     "복원할 상품",
                     excluded_options,
                     format_func=lambda x: labels.get(int(x), str(x)),
-                    key="goal_scope_restore_product_v0994",
+                    key="goal_scope_restore_product_v0995",
                 )
                 if st.button(
                     "선택 상품 복원",
                     use_container_width=True,
-                    key="goal_scope_restore_button_v0994",
+                    key="goal_scope_restore_button_v0995",
                 ):
                     set_excluded(core, db, int(pid), False)
                     st.success(f"{labels.get(int(pid), '')}을(를) 목표관리 대상으로 복원했습니다.")
