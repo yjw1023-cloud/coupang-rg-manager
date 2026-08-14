@@ -105,6 +105,11 @@ item_delete_fix_v0945.apply(item_ui_v086, item_delete_ui_v0944, core)
 sales_period_v087 = _original_import_module("sales_period_v087")
 sales_period_v087.apply(core)
 
+# v0.9.104: after a successful upload, the retained same file must be shown as
+# already reflected, not as a different-file replacement warning.
+sales_period_samefile_v09104 = _original_import_module("sales_period_samefile_v09104")
+sales_period_samefile_v09104.apply(sales_period_v087, core)
+
 # v0.8.8 actual-event inventory rule: production/sales are posted even when
 # stock is insufficient, so shortages remain visible as negative inventory.
 inventory_flow_v088 = _original_import_module("inventory_flow_v088")
