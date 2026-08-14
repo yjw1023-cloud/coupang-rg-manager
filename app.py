@@ -12,14 +12,15 @@ if str(ROOT) not in sys.path:
 
 # v0.9.62: Streamlit reruns reuse Python's module cache.  The updater replaces
 # files on disk, but without clearing these modules an already-running ERP can
-# keep executing the previous P&L renderer until the whole process is restarted.
-# Purge only the monthly provisional renderer chain on every app rerun so the
-# freshly downloaded implementation is used immediately after an update.
+# keep executing the previous implementation until the whole process is restarted.
+# Purge modules that must take effect immediately after an updater refresh.
 for _rg_mod in (
     "pnl_month_default_v0915",
     "pnl_month_v0959",
     "pnl_month_v0960",
     "pnl_month_v0961",
+    "ad_force_cleanup_v09111",
+    "recent_input_unify_v09112",
 ):
     sys.modules.pop(_rg_mod, None)
 importlib.invalidate_caches()
@@ -110,9 +111,8 @@ sales_period_v087.apply(core)
 sales_period_samefile_v09104 = _original_import_module("sales_period_samefile_v09104")
 sales_period_samefile_v09104.apply(sales_period_v087, core)
 
-# v0.9.111: run the explicitly authorized 2026-08-01~2026-08-11 advertising
-# cleanup from app.py itself. This executes on Streamlit rerun immediately after
-# an updater refresh, without requiring the Python process/sitecustomize to restart.
+# v0.9.111/v0.9.112: run advertising cleanup/bootstrap from app.py itself so
+# updater refreshes take effect on Streamlit rerun without a Python restart.
 ad_force_cleanup_v09111 = _original_import_module("ad_force_cleanup_v09111")
 AD_FORCE_CLEANUP_V09111_RESULT = ad_force_cleanup_v09111.apply(core)
 
