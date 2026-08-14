@@ -3,7 +3,8 @@
 Keeps the v0.8 purchase import hook, v0.9.87 generic advertising-report
 filename period detection, v0.9.103 canonical advertising-data sync/upload,
 v0.9.95 user-facing product visibility guard, v0.9.106 dormant-stock
-production support, and v0.9.108 safe advertising deletion active from startup.
+production support, v0.9.108 safe advertising deletion, and v0.9.109
+advertising source audit/orphan cleanup active from startup.
 """
 import importlib
 import sys
@@ -97,6 +98,18 @@ try:
     _ad_sync_v0988.apply(_core_v0988)
 except Exception as exc:
     print(f"RG Manager ad data sync patch failed: {exc}", file=sys.stderr)
+
+# v0.9.109: old direct provisional-ad uploads did not appear in Recent Input
+# History. Audit the exact user-reported 2026-08-01~2026-08-11 row and remove it
+# only when no matching generic input-history record exists. Also tag source
+# origin on future direct/generic ad imports.
+try:
+    _core_v09109 = _original_import_module("core")
+    _ad_report_for_source = _original_import_module("provisional_ad_report_v0956")
+    _ad_orphan_v09109 = _original_import_module("ad_orphan_cleanup_v09109")
+    _ad_orphan_v09109.apply(_core_v09109, _ad_report_for_source)
+except Exception as exc:
+    print(f"RG Manager v0.9.109 ad source audit failed: {exc}", file=sys.stderr)
 
 # v0.9.95: report-only/return option IDs remain available internally for
 # matching and settlement, but never appear as normal ERP items to the user.
