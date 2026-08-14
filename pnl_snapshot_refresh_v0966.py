@@ -1,26 +1,26 @@
-"""v0.9.66 refresh stale monthly provisional P&L snapshots.
+"""v0.9.105 refresh stale monthly provisional P&L snapshots.
 
 Problem fixed
 -------------
-The monthly screen historically refreshed only *missing* snapshots.  After later
-sales-import or P&L-rule fixes, quantity columns could be read from current
-sales_stats while expected revenue/cost still came from an old snapshot.  That
-mixed two different source states in one row.
+Monthly provisional snapshots can become stale after sales imports or P&L rule
+changes. v0.9.105 also changes the automatic expected realized sale unit from the
+latest single settlement row to cumulative weighted average realized sale unit.
 
 Rules
 -----
 - For each selected month, build a fingerprint from the current sales-stat imports.
-- v0.9.66 itself is part of that fingerprint, forcing one clean rebuild after update.
-- If the fingerprint changed, rebuild every wholly-contained sales-stat snapshot
-  using the same current estimated-P&L pipeline used by auto-backfill.
-- Manual monthly overrides and advertising-report data are stored separately and
-  are therefore not deleted by the refresh.
+- v0.9.105 rule version is part of that fingerprint, forcing one clean rebuild.
+- Before rebuilding, apply cumulative realized sale unit = total realized sales /
+  total positive sold quantity. Manual expected sale unit still has priority.
+- Manual monthly overrides and advertising-report data remain stored separately.
 """
 from __future__ import annotations
 
 import hashlib
 import json
 from calendar import monthrange
+
+_RULE_VERSION = "0.9.105-realized-unit-average"
 
 
 def _month_bounds(month: str) -> tuple[str, str]:
@@ -91,7 +91,7 @@ def _imports(core, db, month: str):
 
 def _fingerprint(imports) -> str:
     payload = {
-        "version": "0.9.66",
+        "version": _RULE_VERSION,
         "imports": imports,
     }
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
@@ -119,16 +119,23 @@ def _save_state(core, db, month: str, fingerprint: str):
                  version_tag=excluded.version_tag,
                  source_fingerprint=excluded.source_fingerprint,
                  refreshed_at=excluded.refreshed_at""",
-            (str(month), "0.9.66", str(fingerprint), core.now_iso()),
+            (str(month), _RULE_VERSION, str(fingerprint), core.now_iso()),
         )
 
 
 def refresh_month(core, month: str, db_path=None) -> dict:
     db = db_path or core.DEFAULT_DB
+
+    # v0.9.105: install the weighted-average realized unit rule before any
+    # estimated_pnl call. core.estimated_pnl already gives manual_expected_sale
+    # priority through _effective(manual, historical).
+    import realized_sale_unit_avg_v09105 as unit_avg
+    unit_avg.apply(core)
+
     imports = _imports(core, db, month)
     fingerprint = _fingerprint(imports)
     state = _current_state(core, db, month)
-    if state and str(state.get("version_tag")) == "0.9.66" and str(state.get("source_fingerprint")) == fingerprint:
+    if state and str(state.get("version_tag")) == _RULE_VERSION and str(state.get("source_fingerprint")) == fingerprint:
         return {"needed": False, "attempted": 0, "saved": 0, "failed": []}
 
     import pnl_month_autobackfill_v0932 as bf
