@@ -110,6 +110,12 @@ sales_period_v087.apply(core)
 sales_period_samefile_v09104 = _original_import_module("sales_period_samefile_v09104")
 sales_period_samefile_v09104.apply(sales_period_v087, core)
 
+# v0.9.111: run the explicitly authorized 2026-08-01~2026-08-11 advertising
+# cleanup from app.py itself. This executes on Streamlit rerun immediately after
+# an updater refresh, without requiring the Python process/sitecustomize to restart.
+ad_force_cleanup_v09111 = _original_import_module("ad_force_cleanup_v09111")
+AD_FORCE_CLEANUP_V09111_RESULT = ad_force_cleanup_v09111.apply(core)
+
 # v0.8.8 actual-event inventory rule: production/sales are posted even when
 # stock is insufficient, so shortages remain visible as negative inventory.
 inventory_flow_v088 = _original_import_module("inventory_flow_v088")
@@ -266,4 +272,5 @@ globals()["pnl_month_default_v0914"] = pnl_month_default_v0914
 globals()["pnl_month_default_v0915"] = pnl_month_default_v0915
 globals()["bom_candidate_filter_v0927"] = bom_candidate_filter_v0927
 globals()["AUTO_PRODUCTION_V09106_RESULT"] = AUTO_PRODUCTION_V09106_RESULT
+globals()["AD_FORCE_CLEANUP_V09111_RESULT"] = AD_FORCE_CLEANUP_V09111_RESULT
 exec(compile(source, str(LOADER), "exec"), globals(), globals())
