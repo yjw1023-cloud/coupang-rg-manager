@@ -1,12 +1,12 @@
-"""v0.9.92 safe monthly-default routing + goal data coverage/immediate ad refresh.
+"""v0.9.103 safe monthly-default routing + goal data coverage/immediate ad refresh.
 
 This module is explicitly purged from sys.modules by app.py on every rerun.
 Existing P&L/BOM/product-overview/dashboard-status routing remains unchanged;
 v0.9.80 guarantees dynamic pages remain present in grouped sidebar options,
 v0.9.83 keeps the styled merged comparison table, v0.9.84 adds Excel target
 upload, v0.9.85 shows sales/ad coverage while rebinding current ad reports
-immediately in goal provisional performance, and v0.9.92 reloads the goal view
-so target-quantity default sorting is picked up immediately after update.
+immediately in goal provisional performance, v0.9.92 reloads the goal view,
+and v0.9.103 applies idempotent advertising-report upload handling on every P&L rerun.
 """
 from __future__ import annotations
 
@@ -41,6 +41,14 @@ def _show_bom_repair_error(st_obj, core):
 
 def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
     _show_bom_repair_error(st_obj, core)
+    # v0.9.103: updater may replace files while Streamlit keeps running. Apply
+    # the current ad-upload patch on every rerun before the P&L renderer imports it.
+    try:
+        ad = importlib.import_module("provisional_ad_report_v0956")
+        ad_patch = importlib.import_module("ad_upload_unify_v09103")
+        ad_patch.apply(ad)
+    except Exception:
+        pass
     m = importlib.import_module("pnl_month_v0967")
     return m.render_provisional_month_page(st_obj, pd_obj, core, db_path)
 
@@ -68,8 +76,6 @@ def render_dashboard_data_status(st_obj, core, db_path=None):
 
 
 def render_goal_management_page(st_obj, pd_obj, core, db_path=None):
-    # Goal screen changes should be visible immediately after the updater replaces
-    # the module, even when Streamlit keeps the Python process alive.
     import sys
     sys.modules.pop("goal_data_status_v0985", None)
     importlib.invalidate_caches()
@@ -86,9 +92,6 @@ def render_grouped_sidebar(st_obj, options, default_page=None):
     goals = importlib.import_module("goal_management_v0979")
     goals.apply_sidebar(m)
 
-    # The grouped sidebar only renders labels that are present in `options`.
-    # Older patched legacy menu lists can survive without newly-added labels,
-    # so force the current dynamic pages into the runtime option list here.
     runtime_options = [str(x) for x in list(options or [])]
     for label in (overview.PAGE_LABEL, goals.PAGE_LABEL):
         if label not in runtime_options:
