@@ -1,12 +1,17 @@
-"""v0.9.103 advertising-performance date and canonical sync.
+"""v0.9.108 advertising-performance date and canonical sync.
 
 Key rules:
 - Filename dates win over stale date widgets for advertising performance reports.
+- Advertising reports must stay inside one calendar month. Cross-month files are
+  rejected before any DB write because their option-level totals cannot be split
+  safely after import.
 - New legacy/generic ad imports are mirrored into provisional_ad_report_* so
   dashboard / goal / provisional P&L use the same canonical data.
-- Do NOT remirror every historical legacy import at process startup. Replaying old
-  rows on every launch can overwrite a newer report for the same day and creates
-  confusing 'existing overlap' warnings in the provisional P&L uploader.
+- If a new same-month report fully covers older canonical partial reports, those
+  older canonical rows are removed automatically before the new report is mirrored.
+- If an existing overlap extends outside the new report range, block the import
+  rather than deleting data that cannot be reconstructed safely.
+- Historical legacy imports are not replayed automatically at startup.
 """
 from __future__ import annotations
 
@@ -104,6 +109,65 @@ def _repair_legacy_period(core, db, import_id: int, start: date, end: date):
         )
 
 
+def _canonical_overlaps(core, db, start: date, end: date):
+    ad = _canonical_module()
+    ad._ensure_schema(core, db)
+    with core._conn(db) as c:
+        rows = c.execute(
+            """SELECT id,file_name,file_hash,period_start,period_end,total_ad_spend
+               FROM provisional_ad_report_imports
+               WHERE period_end>=? AND period_start<=?
+               ORDER BY period_start,period_end,id""",
+            (start.isoformat(), end.isoformat()),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def _delete_canonical_rows(core, db, rows):
+    if not rows:
+        return 0
+    with core._conn(db) as c:
+        for r in rows:
+            rid = int(r["id"])
+            c.execute("DELETE FROM provisional_ad_report_items WHERE import_id=?", (rid,))
+            c.execute("DELETE FROM provisional_ad_report_imports WHERE id=?", (rid,))
+    return len(rows)
+
+
+def _validate_new_period_against_existing(core, db, start: date, end: date):
+    if start.strftime("%Y-%m") != end.strftime("%Y-%m"):
+        raise ValueError(
+            "광고성과보고서는 한 달 안의 기간으로 나눠 업로드해 주세요. "
+            f"현재 파일 기간은 {start.isoformat()} ~ {end.isoformat()}입니다."
+        )
+
+    overlaps = _canonical_overlaps(core, db, start, end)
+    unsafe = []
+    covered = []
+    for r in overlaps:
+        rs = _as_date(r.get("period_start"))
+        re = _as_date(r.get("period_end"))
+        if rs is None or re is None:
+            unsafe.append(r)
+            continue
+        if start <= rs and re <= end:
+            covered.append(r)
+        else:
+            unsafe.append(r)
+
+    if unsafe:
+        names = ", ".join(
+            f"{r.get('period_start')}~{r.get('period_end')} {r.get('file_name')}"
+            for r in unsafe[:3]
+        )
+        raise ValueError(
+            "기존 광고자료가 새 파일 범위를 넘어가 일부 기간만 겹칩니다. "
+            "ERP에는 일자별 광고비가 남아 있지 않아 자동으로 잘라 보존할 수 없습니다. "
+            f"먼저 기존 자료를 삭제한 뒤 월별로 나눠 다시 올려 주세요: {names}"
+        )
+    return covered
+
+
 def _mirror_legacy_to_canonical(core, db, import_id: int, start: date, end: date):
     row = _legacy_import_row(core, db, import_id)
     if not row:
@@ -131,8 +195,6 @@ def _mirror_legacy_to_canonical(core, db, import_id: int, start: date, end: date
                 (digest,),
             ).fetchone()
 
-        # One exact date range = one canonical report. This path runs only when
-        # the generic/legacy uploader actually imports a file, never at startup.
         exact_rows = c.execute(
             """SELECT id FROM provisional_ad_report_imports
                WHERE period_start=? AND period_end=?""",
@@ -229,10 +291,6 @@ def apply(core) -> None:
 
     original_import = core.import_ad_performance
 
-    # v0.9.103: intentionally no _repair_existing() here. Historical imports
-    # must not be replayed on every ERP startup. Only a real new import below
-    # is mirrored to the canonical provisional-ad tables.
-
     def import_wrapper(source, file_name: str, period_start=None, period_end=None, db_path=None):
         db = db_path or core.DEFAULT_DB
 
@@ -246,6 +304,14 @@ def apply(core) -> None:
         else:
             start = _as_date(period_start)
             end = _as_date(period_end)
+            if start is not None and end is not None and end < start:
+                start, end = end, start
+                period_start = start.isoformat()
+                period_end = end.isoformat()
+
+        covered = []
+        if start is not None and end is not None:
+            covered = _validate_new_period_against_existing(core, db, start, end)
 
         result = original_import(
             source,
@@ -259,10 +325,13 @@ def apply(core) -> None:
         if import_id:
             try:
                 if start is not None and end is not None:
-                    if end < start:
-                        start, end = end, start
                     _repair_legacy_period(core, db, import_id, start, end)
+                    if covered:
+                        _delete_canonical_rows(core, db, covered)
                     _mirror_legacy_to_canonical(core, db, import_id, start, end)
+                    if covered:
+                        result = dict(result or {})
+                        result["replaced_covered_ad_reports"] = len(covered)
                 else:
                     _repair_one(core, db, import_id)
             except Exception as exc:
