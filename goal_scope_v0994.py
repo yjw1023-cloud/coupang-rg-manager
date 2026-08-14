@@ -1,8 +1,11 @@
-"""RG Manager v0.9.95 goal-management product scope.
+"""RG Manager v0.9.102 goal-management product scope.
 
 Stores a non-destructive list of products excluded from goal/performance management.
-System-only return/report option IDs are also filtered from all goal selectors, while
+System-only return/report option IDs are filtered from all goal selectors, while
 ERP inventory, sales, settlement and historical calculation data remain intact.
+
+v0.9.102 restores the user-confirmed side-mirror and sax-neck-strap normal option
+IDs before filtering so they remain visible in the goal table and target Excel.
 """
 from __future__ import annotations
 
@@ -30,6 +33,14 @@ def ensure_schema(core, db):
                    excluded_at TEXT NOT NULL
                )"""
         )
+
+    # v0.9.102: these two option IDs are user-confirmed normal ERP products.
+    # Repair any stale system-hidden/false-return state before visibility filters run.
+    try:
+        importlib.import_module("canonical_visible_products_v09102").apply(core, db)
+    except Exception:
+        pass
+
     # Also apply the system-level visibility guard in a currently-running
     # Streamlit process so an updater rerun does not require a full restart.
     _visibility().apply_runtime(core)
