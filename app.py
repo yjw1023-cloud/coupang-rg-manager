@@ -141,6 +141,11 @@ production_batch_v095 = _original_import_module("production_batch_v095")
 production_bom_link_v0940 = _original_import_module("production_bom_link_v0940")
 production_bom_link_v0940.apply(core, production_batch_v095)
 
+# v0.9.106: an explicitly selected dormant-stock fill posts only the current
+# production shortage into 자체창고 at the raw material's registered ERP cost.
+production_dormant_stock_v09106 = _original_import_module("production_dormant_stock_v09106")
+production_dormant_stock_v09106.apply(core, production_batch_v095)
+
 # v0.9.6 reusable search boxes for product/item list tables.
 search_ui_v096 = _original_import_module("search_ui_v096")
 search_ui_v096.apply()
