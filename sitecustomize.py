@@ -2,8 +2,8 @@
 
 Keeps the v0.8 purchase import hook, v0.9.87 generic advertising-report
 filename period detection, v0.9.103 canonical advertising-data sync/upload,
-v0.9.95 user-facing product visibility guard, and v0.9.106 dormant-stock
-production support active from startup.
+v0.9.95 user-facing product visibility guard, v0.9.106 dormant-stock
+production support, and v0.9.108 safe advertising deletion active from startup.
 """
 import importlib
 import sys
@@ -78,23 +78,25 @@ except Exception as exc:
     print(f"RG Manager v0.9.87 ad period patch failed: {exc}", file=sys.stderr)
 
 # v0.9.103: exact same period is one logical ad report; same file is idempotent.
-# Apply this before the generic uploader sync wrapper asks for the canonical module.
+# v0.9.108: deleting the canonical report also removes the mirrored legacy import.
 try:
     _ad_report_v09103 = _original_import_module("provisional_ad_report_v0956")
     _ad_unify_v09103 = _original_import_module("ad_upload_unify_v09103")
     _ad_unify_v09103.apply(_ad_report_v09103)
+    _ad_delete_v09108 = _original_import_module("ad_delete_cleanup_v09108")
+    _ad_delete_v09108.apply(_ad_report_v09103)
 except Exception as exc:
-    print(f"RG Manager v0.9.103 ad upload unification failed: {exc}", file=sys.stderr)
+    print(f"RG Manager advertising patch failed: {exc}", file=sys.stderr)
 
-# Generic Coupang data-management advertising uploads still feed the same
-# canonical provisional-ad tables, but v0.9.103 no longer replays all old
-# advertising imports on every program startup.
+# Generic Coupang data-management advertising uploads feed the same canonical
+# provisional-ad tables. v0.9.108 also rejects cross-month reports and unsafe
+# partial overlaps before any DB write.
 try:
     _core_v0988 = _original_import_module("core")
     _ad_sync_v0988 = _original_import_module("data_management_sync_v0988")
     _ad_sync_v0988.apply(_core_v0988)
 except Exception as exc:
-    print(f"RG Manager v0.9.103 ad data sync patch failed: {exc}", file=sys.stderr)
+    print(f"RG Manager ad data sync patch failed: {exc}", file=sys.stderr)
 
 # v0.9.95: report-only/return option IDs remain available internally for
 # matching and settlement, but never appear as normal ERP items to the user.
