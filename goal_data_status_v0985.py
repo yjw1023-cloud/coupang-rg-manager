@@ -7,6 +7,7 @@
   a sales snapshot rebuild.
 - v0.9.92: item rows default to target quantity descending.
 - v0.9.93: all active finished products are always shown, even with no saved goal/performance.
+- v0.9.94: goal-management exclusions are hidden from the table/totals and can be restored.
 """
 from __future__ import annotations
 
@@ -90,20 +91,14 @@ def _render_coverage(st, core, db, month: str):
 
 
 def _fresh_provisional(core, db, month: str, base, old):
-    # Sales/revenue/cost/profit base: existing snapshot logic.  This call itself
-    # invokes pnl_snapshot_refresh_v0966.refresh_month(), so new sales imports are
-    # rebuilt before the table is rendered.
     out = old._provisional_details(core, db, month, base)
 
-    # Replace whatever ad value is embedded in the snapshot with the ad reports
-    # currently stored in provisional_ad_report_* tables.
     ad_mod = importlib.import_module("provisional_ad_report_v0956")
     try:
         dataset = ad_mod.load_month(core, month, db)
     except Exception:
         dataset = {"items": {}, "imports": []}
 
-    # First remove the snapshot ad effect from profit.
     for x in out.values():
         old_ad = abs(old._num(x.get("ad")))
         x["profit"] = old._num(x.get("profit")) + old_ad
@@ -126,6 +121,9 @@ def _fresh_provisional(core, db, month: str, base, old):
 
 
 def _render_comparison(st, core, db, month: str, base, old, styled):
+    scope = importlib.import_module("goal_scope_v0994")
+    scope.ensure_schema(core, db)
+
     goals = old._detail_goals(core, db, month, base)
     provisional = _fresh_provisional(core, db, month, base, old)
     confirmed = old._confirmed_details(core, db, month, provisional, base)
@@ -138,9 +136,10 @@ def _render_comparison(st, core, db, month: str, base, old, styled):
         for pid, meta in product_map.items()
         if int(old._num(meta.get("active", 1))) == 1
     }
-    pids = active_pids | set(goal_map) | set(provisional) | set(confirmed)
+    excluded_pids = scope.excluded_ids(core, db)
+    pids = (active_pids | set(goal_map) | set(provisional) | set(confirmed)) - excluded_pids
     if not pids:
-        st.info("등록된 활성 완제품이 없습니다.")
+        st.info("목표관리 대상으로 설정된 활성 완제품이 없습니다.")
         return
 
     target_total = old._sum_metrics(old._target_metrics(goal_map[pid]) for pid in pids if pid in goal_map)
@@ -165,7 +164,6 @@ def _render_comparison(st, core, db, month: str, base, old, styled):
     def _sort_key(pid):
         meta = product_map.get(int(pid), {})
         target_qty = old._num(goal_map.get(int(pid), {}).get("target_qty"))
-        # Default order: larger target quantity first.  Ties use product name/option ID.
         return (-target_qty, str(meta.get("name") or ""), str(meta.get("option_id") or ""))
 
     groups = []
@@ -197,8 +195,10 @@ def render_page(st, pd_obj, core, db_path=None):
     old = importlib.import_module("goal_excel_view_v0981")
     styled = importlib.import_module("goal_excel_view_v0983")
     upload = importlib.import_module("goal_excel_upload_v0984")
+    scope = importlib.import_module("goal_scope_v0994")
     db = db_path or core.DEFAULT_DB
     old._ensure_detail_schema(core, db, base)
+    scope.ensure_schema(core, db)
 
     st.markdown(base._SELECT_CSS, unsafe_allow_html=True)
     st.markdown("## 🎯 목표·실적관리")
@@ -216,12 +216,17 @@ def render_page(st, pd_obj, core, db_path=None):
     tabs = st.tabs(["목표·실적표", "목표 입력", "월말검증", "목표이력"])
     with tabs[0]:
         _render_coverage(st, core, db, month)
+        scope.render_controls(st, core, db, base)
         _render_comparison(st, core, db, month, base, old, styled)
     with tabs[1]:
         upload._render_excel_goal_input(st, core, db, month, base, old)
     with tabs[2]:
+        excluded_pids = scope.excluded_ids(core, db)
         goals = base._goals(core, db, month)
+        if goals is not None and not goals.empty and "product_id" in goals.columns:
+            goals = goals[~goals["product_id"].astype(int).isin(excluded_pids)].copy()
         actuals, source_label = base._actuals(core, db, month)
+        actuals = {int(pid): row for pid, row in actuals.items() if int(pid) not in excluded_pids}
         progress, _meta = base._build_progress(goals, actuals, month, core, db)
         base._render_review(st, core, db, month, progress, source_label)
     with tabs[3]:
