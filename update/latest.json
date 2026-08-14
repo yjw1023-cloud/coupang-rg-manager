@@ -1,6 +1,6 @@
 {
-  "version": "0.9.110",
-  "message": "8/1~8/11 광고성과보고서 잔존자료를 사용자의 명시적 지시에 따라 1회 강제 정리합니다. A00577001_pa_total_campaign_20260801_20260811.xlsx / 2026-08-01~2026-08-11 자료만 대상으로 canonical 광고자료와 최근 입력 이력(imports/ad_performance) 양쪽에서 삭제합니다. 삭제 후 DB에 1회 실행 플래그를 남겨 이후 같은 기간/파일을 사용자가 의도적으로 다시 업로드하더라도 자동 삭제되지 않습니다. 다른 광고자료는 건드리지 않습니다.",
+  "version": "0.9.111",
+  "message": "8/1~8/11 광고성과보고서 잔존자료 정리를 app.py 본 실행부로 옮겼습니다. 이전 v0.9.110은 sitecustomize.py 재실행에 의존해 Streamlit 업데이트만으로는 즉시 실행되지 않을 수 있었습니다. 이제 업데이트 후 Streamlit이 다시 실행되는 즉시 A00577001_pa_total_campaign_20260801_20260811.xlsx / 2026-08-01~2026-08-11 자료만 canonical 광고자료와 최근 입력 이력에서 삭제합니다. 실제 삭제가 일어난 뒤에만 1회 실행 플래그를 남기므로, 삭제 전에 플래그만 소진되는 문제도 막았습니다. 다른 광고자료는 건드리지 않습니다.",
   "files": [
     "app.py",
     "VERSION.txt",
@@ -9,6 +9,7 @@
     "ad_delete_cleanup_v09108.py",
     "ad_orphan_cleanup_v09109.py",
     "ad_force_cleanup_v09110.py",
+    "ad_force_cleanup_v09111.py",
     "purchase_v08.py",
     "legacy_repair_v082.py",
     "erp_import_guard_v082.py",
