@@ -1,8 +1,8 @@
 """RG Manager runtime patch bootstrap.
 
 Keeps the v0.8 purchase import hook, v0.9.87 generic advertising-report
-filename period detection, v0.9.88 canonical advertising-data sync, and
-v0.9.95 user-facing product visibility guard active from process startup.
+filename period detection, v0.9.103 canonical advertising-data sync/upload
+rules, and v0.9.95 user-facing product visibility guard active from startup.
 """
 import importlib
 import sys
@@ -54,22 +54,31 @@ if not getattr(importlib, "_rg_v08_patched", False):
 _apply_purchase_v08(sys.modules.get("purchase_v06"))
 
 # v0.9.87: the legacy '새 자료 반영' advertising uploader is separate from
-# provisional_ad_report_v0956, so patch its selector/uploader/date widgets here.
+# provisional_ad_report_v0956, so patch its filename/date widgets here.
 try:
     _ad_period = _original_import_module("ad_period_v0987")
     _ad_period.apply()
 except Exception as exc:
     print(f"RG Manager v0.9.87 ad period patch failed: {exc}", file=sys.stderr)
 
-# v0.9.88: make the generic Coupang data-management advertising uploader write
-# the same canonical provisional-ad tables used by dashboard/goal/P&L screens,
-# and make its status card display that same canonical source.
+# v0.9.103: exact same period is one logical ad report; same file is idempotent.
+# Apply this before the generic uploader sync wrapper asks for the canonical module.
+try:
+    _ad_report_v09103 = _original_import_module("provisional_ad_report_v0956")
+    _ad_unify_v09103 = _original_import_module("ad_upload_unify_v09103")
+    _ad_unify_v09103.apply(_ad_report_v09103)
+except Exception as exc:
+    print(f"RG Manager v0.9.103 ad upload unification failed: {exc}", file=sys.stderr)
+
+# Generic Coupang data-management advertising uploads still feed the same
+# canonical provisional-ad tables, but v0.9.103 no longer replays all old
+# advertising imports on every program startup.
 try:
     _core_v0988 = _original_import_module("core")
     _ad_sync_v0988 = _original_import_module("data_management_sync_v0988")
     _ad_sync_v0988.apply(_core_v0988)
 except Exception as exc:
-    print(f"RG Manager v0.9.88 ad data sync patch failed: {exc}", file=sys.stderr)
+    print(f"RG Manager v0.9.103 ad data sync patch failed: {exc}", file=sys.stderr)
 
 # v0.9.95: report-only/return option IDs remain available internally for
 # matching and settlement, but never appear as normal ERP items to the user.
