@@ -14,6 +14,7 @@ from __future__ import annotations
 import calendar
 from datetime import date, timedelta
 import importlib
+import sys
 
 
 def _month_bounds(month: str):
@@ -194,6 +195,8 @@ def render_page(st, pd_obj, core, db_path=None):
     base = importlib.import_module("goal_management_v0979")
     old = importlib.import_module("goal_excel_view_v0981")
     styled = importlib.import_module("goal_excel_view_v0983")
+    sys.modules.pop("goal_excel_upload_v0984", None)
+    importlib.invalidate_caches()
     upload = importlib.import_module("goal_excel_upload_v0984")
     scope = importlib.import_module("goal_scope_v0994")
     db = db_path or core.DEFAULT_DB
