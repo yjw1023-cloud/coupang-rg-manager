@@ -1,6 +1,6 @@
 {
-  "version": "0.9.99",
-  "message": "목표입력용 Excel 양식에 작성 편의를 위한 자동계산 보조열 3개를 추가했습니다. G열 수수료단가=F열 수수료/E열 수량, I열 입출고배송비단가=H열 입출고배송비/E열 수량, M열 상품원가단가=L열 상품원가/E열 수량으로 Excel 수식이 자동 입력됩니다. 수량이나 비용총액을 수정하면 단가도 즉시 다시 계산됩니다. 이 3개 보조열은 Excel에서만 보이며 ERP 목표·실적표에는 표시하거나 저장하지 않습니다. 기존 목표입력 Excel도 계속 업로드할 수 있습니다.",
+  "version": "0.9.100",
+  "message": "목표입력 Excel의 숫자 표시를 정리했습니다. 정수 뒤에 불필요한 마침표가 붙지 않도록 숫자 셀 표시형식을 정수형으로 변경했고, G열 수수료단가·I열 입출고배송비단가·M열 상품원가단가는 각각 ROUND(금액/수량,0) 수식으로 원 단위 반올림되도록 수정했습니다. 세 보조단가열은 계속 Excel 작성 편의용으로만 사용되며 ERP 목표·실적표에는 표시하거나 저장하지 않습니다. Excel을 열 때 자동 재계산도 요청하도록 설정했습니다.",
   "files": [
     "app.py",
     "VERSION.txt",
@@ -41,6 +41,7 @@
     "goal_excel_view_v0981.py",
     "goal_excel_view_v0983.py",
     "goal_excel_upload_v0984.py",
+    "goal_excel_format_v09100.py",
     "goal_data_status_v0985.py",
     "sales_pnl_ui_v098.py",
     "return_discount_v099.py",
