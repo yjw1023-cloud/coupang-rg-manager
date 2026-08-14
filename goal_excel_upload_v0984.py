@@ -1,11 +1,12 @@
-"""RG Manager v0.9.84 Excel target template download/upload workflow.
+"""RG Manager Excel target template download/upload workflow.
 
 The goal input tab is simplified to:
-- download an Excel template populated with active finished products
+- download an Excel template populated with goal-managed active finished products
+- keep the same product order as the goal/performance table
 - fill target figures in Excel
 - upload the workbook and save goals for the selected month by option ID
 
-The styled goal/performance comparison from v0.9.83 is preserved.
+v0.9.94 excludes goal-management-excluded products from the template and upload save path.
 """
 from __future__ import annotations
 
@@ -61,11 +62,23 @@ def _clean_number(value: Any):
 
 
 def _goal_template_dataframe(core, db, month: str, base, old) -> pd.DataFrame:
-    products = base._products(core, db, active_only=True)
+    scope = importlib.import_module("goal_scope_v0994")
+    products = scope.managed_products(core, db, base)
     goals = old._detail_goals(core, db, month, base)
     goal_map = {int(r["product_id"]): r for r in goals.to_dict("records")}
+
+    product_records = list(products.itertuples(index=False)) if products is not None else []
+
+    def _sort_key(p):
+        pid = int(p.id)
+        oid = base._oid(getattr(p, "option_id", "")) or base._oid(getattr(p, "item_code", ""))
+        target_qty = old._num(goal_map.get(pid, {}).get("target_qty"))
+        return (-target_qty, str(getattr(p, "name", "") or ""), str(oid or ""))
+
+    product_records.sort(key=_sort_key)
+
     rows = []
-    for p in products.itertuples(index=False):
+    for p in product_records:
         pid = int(p.id)
         oid = base._oid(getattr(p, "option_id", "")) or base._oid(getattr(p, "item_code", ""))
         g = goal_map.get(pid)
@@ -170,17 +183,27 @@ def _upload_rows(uploaded, base) -> pd.DataFrame:
 
 
 def _save_uploaded_goals(core, db, month: str, df: pd.DataFrame, base, old):
-    products = base._products(core, db, active_only=True)
+    scope = importlib.import_module("goal_scope_v0994")
+    all_products = base._products(core, db, active_only=True)
+    excluded_pids = scope.excluded_ids(core, db)
+
     by_oid = {}
-    for p in products.itertuples(index=False):
+    excluded_by_oid = {}
+    for p in all_products.itertuples(index=False):
         oid = base._oid(getattr(p, "option_id", "")) or base._oid(getattr(p, "item_code", ""))
-        if oid:
-            by_oid[oid] = int(p.id)
+        if not oid:
+            continue
+        pid = int(p.id)
+        if pid in excluded_pids:
+            excluded_by_oid[oid] = pid
+        else:
+            by_oid[oid] = pid
 
     seen = set()
     saved = 0
     skipped_blank = 0
     unknown = []
+    excluded = []
     duplicates = []
 
     for _, r in df.iterrows():
@@ -189,6 +212,11 @@ def _save_uploaded_goals(core, db, month: str, df: pd.DataFrame, base, old):
             duplicates.append(oid)
             continue
         seen.add(oid)
+
+        if oid in excluded_by_oid:
+            excluded.append(oid)
+            continue
+
         pid = by_oid.get(oid)
         if pid is None:
             unknown.append(oid)
@@ -234,13 +262,17 @@ def _save_uploaded_goals(core, db, month: str, df: pd.DataFrame, base, old):
         "saved": saved,
         "skipped_blank": skipped_blank,
         "unknown": sorted(set(unknown)),
+        "excluded": sorted(set(excluded)),
         "duplicates": sorted(set(duplicates)),
     }
 
 
 def _render_excel_goal_input(st, core, db, month: str, base, old):
     st.markdown("### 목표 엑셀 입력")
-    st.caption("양식을 내려받아 목표 숫자를 입력한 뒤 그대로 업로드하세요. 옵션ID 기준으로 자동 저장됩니다.")
+    st.caption(
+        "양식을 내려받아 목표 숫자를 입력한 뒤 그대로 업로드하세요. "
+        "목표·실적표와 같은 순서이며 옵션ID 기준으로 자동 저장됩니다."
+    )
 
     try:
         data = _template_bytes(core, db, month, base, old)
@@ -284,6 +316,11 @@ def _render_excel_goal_input(st, core, db, month: str, base, old):
             return
 
         st.success(f"목표 {result['saved']:,}개 상품을 저장했습니다.")
+        if result["excluded"]:
+            st.warning(
+                "목표관리 제외 상품은 저장하지 않았습니다: "
+                + ", ".join(result["excluded"][:20])
+            )
         if result["unknown"]:
             st.warning("ERP에 없는 옵션ID: " + ", ".join(result["unknown"][:20]))
         if result["duplicates"]:
