@@ -6,6 +6,7 @@
   so a newly uploaded/deleted ad report is reflected immediately without waiting for
   a sales snapshot rebuild.
 - v0.9.92: item rows default to target quantity descending.
+- v0.9.93: all active finished products are always shown, even with no saved goal/performance.
 """
 from __future__ import annotations
 
@@ -132,9 +133,14 @@ def _render_comparison(st, core, db, month: str, base, old, styled):
     product_map, _ = old._product_maps(core, db, base)
     goal_map = {int(r["product_id"]): r for r in goals.to_dict("records")}
 
-    pids = set(goal_map) | set(provisional) | set(confirmed)
+    active_pids = {
+        int(pid)
+        for pid, meta in product_map.items()
+        if int(old._num(meta.get("active", 1))) == 1
+    }
+    pids = active_pids | set(goal_map) | set(provisional) | set(confirmed)
     if not pids:
-        st.info("선택한 월에 목표 또는 실적 자료가 없습니다. '목표 입력' 탭에서 목표를 먼저 입력하세요.")
+        st.info("등록된 활성 완제품이 없습니다.")
         return
 
     target_total = old._sum_metrics(old._target_metrics(goal_map[pid]) for pid in pids if pid in goal_map)
