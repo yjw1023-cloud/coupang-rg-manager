@@ -1,9 +1,9 @@
-"""v0.9.121 safe monthly-default routing + live hot-update patches.
+"""v0.9.122 safe monthly-default routing + live hot-update patches.
 
 This module is explicitly purged from sys.modules by app.py on every rerun.
 Existing P&L/BOM/dashboard-status routing remains unchanged; product overview,
-provisional summary quantity, and item cleanup patches are applied live after
-updater refreshes.
+provisional summary quantity, item cleanup, and live overview P&L patches are
+applied after updater refreshes.
 """
 from __future__ import annotations
 
@@ -106,11 +106,18 @@ def render_monthly_closing_page(st_obj, pd_obj, core, db_path=None):
 
 
 def render_product_overview_page(st_obj, pd_obj, core, db_path=None):
-    # Hot updater replaces this file while Streamlit keeps its Python process
-    # alive. Reload the overview module every time the page is opened.
+    # Hot updater replaces these files while Streamlit keeps its Python process
+    # alive. Reload the overview and v0.9.122 P&L patch every time the page opens.
     sys.modules.pop("product_overview_v0977", None)
+    sys.modules.pop("product_overview_live_pnl_v09122", None)
     importlib.invalidate_caches()
     m = importlib.import_module("product_overview_v0977")
+
+    # v0.9.122: product overview revenue/profit must use the same current
+    # provisional-P&L pipeline as the monthly 잠정손익 screen, including current
+    # ad-performance reports, return-sale consolidation and manual adjustments.
+    live_pnl_patch = importlib.import_module("product_overview_live_pnl_v09122")
+    live_pnl_patch.apply(m)
 
     # v0.9.119: top '자체창고재고' must summarize the selected product's BOM/raw
     # stock, not the finished product's own-warehouse balance.
