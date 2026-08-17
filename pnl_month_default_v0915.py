@@ -1,8 +1,8 @@
-"""v0.9.119 safe monthly-default routing + live product-overview reload.
+"""v0.9.120 safe monthly-default routing + live hot-update patches.
 
 This module is explicitly purged from sys.modules by app.py on every rerun.
-Existing P&L/BOM/dashboard-status routing remains unchanged; product overview is
-also reloaded on entry so updater UI changes appear without a Python restart.
+Existing P&L/BOM/dashboard-status routing remains unchanged; product overview and
+provisional summary quantity patches are applied live after updater refreshes.
 """
 from __future__ import annotations
 
@@ -60,6 +60,17 @@ def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
         ad_patch.apply(ad)
     except Exception:
         pass
+
+    # v0.9.120: the visible 판매수량 is gross while financial arithmetic uses
+    # 순판매수량. Patch the already-loaded presentation module on every rerun so
+    # the summary card uses the same net quantity basis as revenue/profit.
+    try:
+        ui = importlib.import_module("provisional_pnl_ui_v0913")
+        qty_patch = importlib.import_module("provisional_summary_qty_v09120")
+        qty_patch.apply(ui)
+    except Exception:
+        pass
+
     m = importlib.import_module("pnl_month_v0967")
     return m.render_provisional_month_page(st_obj, pd_obj, core, db_path)
 
