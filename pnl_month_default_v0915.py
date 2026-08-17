@@ -1,8 +1,9 @@
-"""v0.9.120 safe monthly-default routing + live hot-update patches.
+"""v0.9.121 safe monthly-default routing + live hot-update patches.
 
 This module is explicitly purged from sys.modules by app.py on every rerun.
-Existing P&L/BOM/dashboard-status routing remains unchanged; product overview and
-provisional summary quantity patches are applied live after updater refreshes.
+Existing P&L/BOM/dashboard-status routing remains unchanged; product overview,
+provisional summary quantity, and item cleanup patches are applied live after
+updater refreshes.
 """
 from __future__ import annotations
 
@@ -39,6 +40,23 @@ try:
 except Exception as _rg_bom_exc_v0973:
     try:
         _rg_core_v0973._rg_requested_bom_force_v0973_error = str(_rg_bom_exc_v0973)
+    except Exception:
+        pass
+
+
+# v0.9.121: obsolete items imported from the old ERP may still carry accounting
+# stock even though physical stock is actually zero. Reload and patch the item
+# cleanup page on every rerun so updater changes take effect without restart.
+try:
+    sys.modules.pop("item_archive_cleanup_v09121", None)
+    importlib.invalidate_caches()
+    _rg_item_delete_v09121 = importlib.import_module("item_delete_ui_v0944")
+    _rg_item_archive_v09121 = importlib.import_module("item_archive_cleanup_v09121")
+    _rg_item_archive_v09121.apply(_rg_item_delete_v09121)
+    _rg_item_delete_v09121._rg_item_archive_cleanup_v09121_error = ""
+except Exception as _rg_item_archive_exc_v09121:
+    try:
+        _rg_item_delete_v09121._rg_item_archive_cleanup_v09121_error = str(_rg_item_archive_exc_v09121)
     except Exception:
         pass
 
