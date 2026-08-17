@@ -6,7 +6,7 @@ The monthly provisional P&L table intentionally exposes three quantities:
 - 순판매수량: signed net units used for P&L and inventory arithmetic
 
 Before this patch the top summary card summed the visible gross 판매수량 while
-labelling it as 순판매수량.  This patch keeps the detailed table unchanged but
+labelling it as 순판매수량. This patch keeps the detailed table unchanged but
 makes the summary use 순판매수량, shows gross/cancel counts underneath, and
 surfaces a warning if gross - cancel != net.
 """
@@ -60,8 +60,8 @@ def apply(ui_module: Any):
 
         gap = (gross - cancel) - net if verifiable else 0.0
 
-        # The financial values in the provisional P&L are based on signed net
-        # quantity.  The summary quantity must therefore use the same basis.
+        # Financial values in provisional P&L use signed net quantity, so the
+        # summary quantity must use the same basis.
         s["qty"] = net
         s["gross_qty"] = gross
         s["cancel_qty"] = cancel
@@ -97,8 +97,6 @@ def apply(ui_module: Any):
                 f'수량 검산 오류: 총 판매 {gross_text} - 취소/환불 {cancel_text} ≠ 순판매 {net_text} '
                 f'(차이 {gap:,.1f}개). 판매통계 원본을 확인하세요.'</n                'div>'
             )
-            # Insert the warning inside the summary wrapper, just before its
-            # final closing div.
             pos = out.rfind("</div>")
             if pos >= 0:
                 out = out[:pos] + warning + out[pos:]
