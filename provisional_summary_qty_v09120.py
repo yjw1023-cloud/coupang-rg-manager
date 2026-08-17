@@ -95,7 +95,8 @@ def apply(ui_module: Any):
                 '<div style="margin-top:10px;padding:9px 11px;border:1px solid #fecaca;'
                 'background:#fff1f2;border-radius:10px;color:#b91c1c;font-size:12px;font-weight:700;">'
                 f'수량 검산 오류: 총 판매 {gross_text} - 취소/환불 {cancel_text} ≠ 순판매 {net_text} '
-                f'(차이 {gap:,.1f}개). 판매통계 원본을 확인하세요.'</n                'div>'
+                f'(차이 {gap:,.1f}개). 판매통계 원본을 확인하세요.'
+                '</div>'
             )
             pos = out.rfind("</div>")
             if pos >= 0:
