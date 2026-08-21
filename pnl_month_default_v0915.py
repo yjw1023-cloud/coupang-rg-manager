@@ -1,4 +1,4 @@
-"""v0.9.123 safe monthly-default routing + live hot-update patches.
+"""v0.9.124 safe monthly-default routing + live hot-update patches.
 
 This module is explicitly purged from sys.modules by app.py on every rerun.
 Existing P&L/BOM/dashboard-status routing remains unchanged; product overview,
@@ -27,19 +27,21 @@ except Exception as _rg_ignore_exc_v09115:
         pass
 
 
-# v0.9.123: if a newly seen Coupang sales option cannot be safely matched to an
-# ERP product, ask the user whether to exclude that option and import the rest.
-# This is applied from the always-reloaded monthly router so the live import
-# wrapper is reached immediately after an updater refresh without a restart.
+# v0.9.124: reload this patch on every Streamlit rerun so an updater refresh can
+# replace the v0.9.123 implementation without requiring a full Python restart.
+# The v0.9.124 wrapper physically removes user-approved unmatched rows from an
+# in-memory workbook copy before the normal sales-import pipeline runs.
 try:
-    _rg_core_v09123 = importlib.import_module("core")
-    _rg_return_v09123 = importlib.import_module("return_discount_v099")
-    _rg_unmatched_v09123 = importlib.import_module("sales_unmatched_confirm_v09123")
-    _rg_unmatched_v09123.apply(_rg_core_v09123, _rg_return_v09123)
-    _rg_core_v09123._rg_sales_unmatched_confirm_v09123_error = ""
-except Exception as _rg_unmatched_exc_v09123:
+    sys.modules.pop("sales_unmatched_confirm_v09123", None)
+    importlib.invalidate_caches()
+    _rg_core_v09124 = importlib.import_module("core")
+    _rg_return_v09124 = importlib.import_module("return_discount_v099")
+    _rg_unmatched_v09124 = importlib.import_module("sales_unmatched_confirm_v09123")
+    _rg_unmatched_v09124.apply(_rg_core_v09124, _rg_return_v09124)
+    _rg_core_v09124._rg_sales_unmatched_confirm_v09124_error = ""
+except Exception as _rg_unmatched_exc_v09124:
     try:
-        _rg_core_v09123._rg_sales_unmatched_confirm_v09123_error = str(_rg_unmatched_exc_v09123)
+        _rg_core_v09124._rg_sales_unmatched_confirm_v09124_error = str(_rg_unmatched_exc_v09124)
     except Exception:
         pass
 
