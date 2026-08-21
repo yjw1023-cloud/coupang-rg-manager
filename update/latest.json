@@ -1,6 +1,6 @@
 {
-  "version": "0.9.122",
-  "message": "상품 통합현황의 매출·이익을 저장된 과거 잠정손익 스냅샷이 아니라 현재 잠정손익과 동일한 계산 흐름으로 다시 계산하도록 수정했습니다. 최신 광고성과보고서, 반품 할인판매 원상품 합산, 수동 예상단가/비용 조정을 함께 반영합니다. 특히 조회기간을 '이번 달'로 선택하면 해당 상품의 매출·이익이 월 잠정손익과 같은 기준으로 계산됩니다.",
+  "version": "0.9.123",
+  "message": "재고현황 판매통계에 품목관리와 안전하게 매칭되지 않는 옵션이 있으면 전체 업로드를 막는 대신 해당 옵션ID·상품명·판매수량·매칭 실패 이유를 먼저 보여주고 사용자에게 확인하도록 변경했습니다. 사용자가 '매칭 안 되는 항목 제외하고 입력'을 선택한 경우에만 그 옵션의 판매수량·매출·재고·손익 반영을 제거하고 나머지 정상 데이터는 그대로 입력합니다. 취소하면 아무 자료도 임의 처리하지 않습니다.",
   "files": [
     "app.py",
     "VERSION.txt",
@@ -56,8 +56,9 @@
     "goal_data_status_v0985.py",
     "sales_pnl_ui_v098.py",
     "return_discount_v099.py",
-    "sales_import_guard_v0941.py",
+    "sales_unmatched_confirm_v09123.py",
     "return_sale_match_v0944.py",
+    "sales_import_guard_v0941.py",
     "sales_ignore_unmanaged_v09114.py",
     "sales_ignore_unmanaged_v09115.py",
     "return_sale_pnl_v0963.py",
