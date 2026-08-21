@@ -1,9 +1,9 @@
-"""v0.9.122 safe monthly-default routing + live hot-update patches.
+"""v0.9.123 safe monthly-default routing + live hot-update patches.
 
 This module is explicitly purged from sys.modules by app.py on every rerun.
 Existing P&L/BOM/dashboard-status routing remains unchanged; product overview,
-provisional summary quantity, item cleanup, and live overview P&L patches are
-applied after updater refreshes.
+provisional summary quantity, item cleanup, live overview P&L patches, and
+user-confirmed unmatched-sales skipping are applied after updater refreshes.
 """
 from __future__ import annotations
 
@@ -23,6 +23,23 @@ try:
 except Exception as _rg_ignore_exc_v09115:
     try:
         _rg_core_v09115._rg_sales_ignore_unmanaged_v09115_error = str(_rg_ignore_exc_v09115)
+    except Exception:
+        pass
+
+
+# v0.9.123: if a newly seen Coupang sales option cannot be safely matched to an
+# ERP product, ask the user whether to exclude that option and import the rest.
+# This is applied from the always-reloaded monthly router so the live import
+# wrapper is reached immediately after an updater refresh without a restart.
+try:
+    _rg_core_v09123 = importlib.import_module("core")
+    _rg_return_v09123 = importlib.import_module("return_discount_v099")
+    _rg_unmatched_v09123 = importlib.import_module("sales_unmatched_confirm_v09123")
+    _rg_unmatched_v09123.apply(_rg_core_v09123, _rg_return_v09123)
+    _rg_core_v09123._rg_sales_unmatched_confirm_v09123_error = ""
+except Exception as _rg_unmatched_exc_v09123:
+    try:
+        _rg_core_v09123._rg_sales_unmatched_confirm_v09123_error = str(_rg_unmatched_exc_v09123)
     except Exception:
         pass
 
