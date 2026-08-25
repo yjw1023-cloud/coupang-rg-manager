@@ -19,6 +19,9 @@ for _rg_mod in (
     "pnl_month_v0959",
     "pnl_month_v0960",
     "pnl_month_v0961",
+    "pnl_month_v0965",
+    "pnl_month_v0967",
+    "sales_quantity_v0965",
     "ad_force_cleanup_v09111",
     "recent_input_unify_v09112",
     "return_discount_v099",
@@ -258,24 +261,3 @@ source = source.replace(
     1,
 )
 globals()["LEGACY_REPAIR_RESULT"] = LEGACY_REPAIR_RESULT
-globals()["item_ui_v086"] = item_ui_v086
-globals()["item_delete_ui_v0944"] = item_delete_ui_v0944
-globals()["item_delete_fix_v0945"] = item_delete_fix_v0945
-globals()["purchase_history_v092"] = purchase_history_v092
-globals()["purchase_history_v094"] = purchase_history_v094
-globals()["return_management_v093"] = return_management_v093
-globals()["production_batch_v095"] = production_batch_v095
-globals()["search_ui_v096"] = search_ui_v096
-globals()["pnl_views_v0912"] = pnl_views_v0912
-globals()["sales_pnl_ui_v098"] = sales_pnl_ui_v098
-globals()["return_discount_v099"] = return_discount_v099
-globals()["return_sale_match_v0944"] = return_sale_match_v0944
-globals()["pnl_cost_commission_v0911"] = pnl_cost_commission_v0911
-globals()["sales_pnl_zero_v0910"] = sales_pnl_zero_v0910
-globals()["provisional_pnl_ui_v0913"] = provisional_pnl_ui_v0913
-globals()["pnl_month_default_v0914"] = pnl_month_default_v0914
-globals()["pnl_month_default_v0915"] = pnl_month_default_v0915
-globals()["bom_candidate_filter_v0927"] = bom_candidate_filter_v0927
-globals()["AUTO_PRODUCTION_V09106_RESULT"] = AUTO_PRODUCTION_V09106_RESULT
-globals()["AD_FORCE_CLEANUP_V09111_RESULT"] = AD_FORCE_CLEANUP_V09111_RESULT
-exec(compile(source, str(LOADER), "exec"), globals(), globals())
