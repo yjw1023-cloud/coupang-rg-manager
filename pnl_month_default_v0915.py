@@ -1,4 +1,4 @@
-"""v0.9.124 safe monthly-default routing + live hot-update patches.
+"""v0.9.126 safe monthly-default routing + live hot-update patches.
 
 This module is explicitly purged from sys.modules by app.py on every rerun.
 Existing P&L/BOM/dashboard-status routing remains unchanged; product overview,
@@ -105,6 +105,15 @@ def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
         ui = importlib.import_module("provisional_pnl_ui_v0913")
         qty_patch = importlib.import_module("provisional_summary_qty_v09120")
         qty_patch.apply(ui)
+    except Exception:
+        pass
+
+    # v0.9.126: pnl_month_v0965 is normally cached after the first page visit.
+    # Reload it on every rerun so the return-count/rate presentation is applied
+    # immediately after an in-app update without requiring a Python restart.
+    try:
+        sys.modules.pop("pnl_month_v0965", None)
+        importlib.invalidate_caches()
     except Exception:
         pass
 
