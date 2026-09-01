@@ -1,10 +1,15 @@
-"""Inventory/item-master presentation for RG Manager v0.9.43.
+"""Inventory/item-master presentation for RG Manager v0.9.137.
 
 - Keep warehouse tabs: all / own / Coupang RG / returns.
 - Hide internal CP- prefix from user-facing product codes.
 - Item master shows basis cost plus source-specific cost history:
   * own/raw items: latest purchase cost + quantity-weighted average purchase cost
   * Coupang RG/finished items: latest production cost + quantity-weighted average production cost
+- Item Master warehouse tabs are registration/category tabs, not positive-stock-only tabs:
+  * 자체창고 shows every registered raw/self-warehouse item even when stock is 0.
+  * 쿠팡RG shows every registered finished/Coupang item even when RG stock is 0.
+  * 반품창고 remains a stock-state tab and shows only non-zero return stock.
+- Inventory-page warehouse tabs continue to show only products with non-zero stock.
 - If a Coupang RG item has basis cost 0 but has a positive production-cost history,
   show a visible warning/status instead of silently hiding that information.
 - Inventory warehouse tabs show basis cost and inventory value.
@@ -275,11 +280,21 @@ def _tab_frame(df: pd.DataFrame, warehouse: str, item_master: bool) -> pd.DataFr
             if c in df.columns:
                 base_cols.append(c)
     base_cols.append(warehouse)
+
+    if item_master and warehouse == "자체창고":
+        mask = df["구분"].fillna("").astype(str).eq("자체창고")
+    elif item_master and warehouse == "쿠팡RG":
+        mask = df["구분"].fillna("").astype(str).eq("쿠팡RG")
+    else:
+        mask = qty.abs() > 1e-12
+
     out = df.loc[
-        qty.abs() > 1e-12,
+        mask,
         [c for c in base_cols if c in df.columns],
     ].copy()
     out = out.rename(columns={warehouse: "현재고"})
+    if "현재고" in out.columns:
+        out["현재고"] = pd.to_numeric(out["현재고"], errors="coerce").fillna(0)
     if not item_master:
         out["재고금액"] = (
             pd.to_numeric(out["현재고"], errors="coerce").fillna(0)
@@ -324,7 +339,12 @@ def apply():
                 sub = _tab_frame(view, warehouse, item_master)
                 with tab:
                     if sub.empty:
-                        st.info(f"{warehouse}에 현재 재고가 있는 상품이 없습니다.")
+                        if item_master and warehouse == "자체창고":
+                            st.info("등록된 자체창고 품목이 없습니다.")
+                        elif item_master and warehouse == "쿠팡RG":
+                            st.info("등록된 쿠팡RG 판매상품이 없습니다.")
+                        else:
+                            st.info(f"{warehouse}에 현재 재고가 있는 상품이 없습니다.")
                     else:
                         original_dataframe(
                             sub, *args, **_frame_kwargs(kwargs, len(sub))
