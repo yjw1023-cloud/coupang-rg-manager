@@ -1,17 +1,9 @@
-"""RG Manager v0.9.133 seed for ten newly listed Coupang finished products.
+"""RG Manager requested Coupang finished-product/BOM seed.
 
-User-requested rules
-- Register the ten supplied Coupang option IDs as finished products.
-- Reuse a suitable existing own-warehouse/raw item when one already exists.
-- Otherwise create one JDS#### raw/base item for normal products.
-- BOM is normally 1 base unit -> 1 finished unit.
-- Needle threader uses 50 base units -> 1 finished unit.
-- Stainless cleaning-tool holder MUST reuse the existing old/dormant holder item:
-  2 old holder units -> 1 new 2-pack finished unit. No duplicate raw item is created.
-  The old item's ERP stock may be zero; the existing dormant-stock production option
-  can fill only the production shortage into own stock and consume it atomically.
-- Every parent BOM is replaced with exactly the requested single component/quantity.
-- The routine is idempotent and never creates inventory quantities by itself.
+The seed is idempotent and runs on app startup/rerun. v0.9.139 additionally
+repairs the three blackout-blind BOMs after seeding, because their first temporary
+raw rows were created at cost 0 before the later purchase Excel created/updated
+the actual purchased JDS rows.
 """
 from __future__ import annotations
 
@@ -74,20 +66,12 @@ REQUESTS = [
         "raw_name": None,
         "qty": 2.0,
         "aliases": [
-            "스테인레스 청소 도구 걸이",
-            "스테인레스 청소도구 걸이",
-            "스테인리스 청소 도구 걸이",
-            "스테인리스 청소도구 걸이",
-            "스테인레스 청소도구 홀더",
-            "스테인리스 청소도구 홀더",
-            "스테인레스 대걸레 홀더",
-            "스테인리스 대걸레 홀더",
-            "대걸레 걸이",
-            "대걸레 홀더",
-            "밀대 걸이",
-            "밀대 홀더",
-            "청소 도구 걸이",
-            "청소도구 걸이",
+            "스테인레스 청소 도구 걸이", "스테인레스 청소도구 걸이",
+            "스테인리스 청소 도구 걸이", "스테인리스 청소도구 걸이",
+            "스테인레스 청소도구 홀더", "스테인리스 청소도구 홀더",
+            "스테인레스 대걸레 홀더", "스테인리스 대걸레 홀더",
+            "대걸레 걸이", "대걸레 홀더", "밀대 걸이", "밀대 홀더",
+            "청소 도구 걸이", "청소도구 걸이",
         ],
         "tokens": ["청소", "걸이"],
         "dormant_existing_only": True,
@@ -149,44 +133,34 @@ def _ensure_finished(core_module, con, req):
     name = req["finished_name"]
     now = core_module.now_iso()
     row = con.execute(
-        """SELECT id,item_code,option_id,name,item_type,active
-           FROM products
+        """SELECT id,item_code,option_id,name,item_type,active FROM products
            WHERE CAST(option_id AS TEXT)=?
-           ORDER BY CASE WHEN item_type='finished' THEN 0 ELSE 1 END,id
-           LIMIT 1""",
+           ORDER BY CASE WHEN item_type='finished' THEN 0 ELSE 1 END,id LIMIT 1""",
         (oid,),
     ).fetchone()
     if row:
         pid = int(row["id"])
         con.execute(
-            """UPDATE products
-               SET item_code=?,option_id=?,name=?,item_type='finished',active=1,updated_at=?
-               WHERE id=?""",
+            "UPDATE products SET item_code=?,option_id=?,name=?,item_type='finished',active=1,updated_at=? WHERE id=?",
             (f"CP-{oid}", oid, name, now, pid),
         )
         return pid, "existing"
 
     code = f"CP-{oid}"
-    by_code = con.execute(
-        "SELECT id,option_id FROM products WHERE item_code=? ORDER BY id LIMIT 1",
-        (code,),
-    ).fetchone()
+    by_code = con.execute("SELECT id,option_id FROM products WHERE item_code=? ORDER BY id LIMIT 1", (code,)).fetchone()
     if by_code:
         existing_oid = str(by_code["option_id"] or "").strip()
         if existing_oid and existing_oid != oid:
             raise RuntimeError(f"{code}가 다른 옵션ID {existing_oid}에 이미 연결되어 있습니다.")
         pid = int(by_code["id"])
         con.execute(
-            """UPDATE products
-               SET option_id=?,name=?,item_type='finished',active=1,updated_at=?
-               WHERE id=?""",
+            "UPDATE products SET option_id=?,name=?,item_type='finished',active=1,updated_at=? WHERE id=?",
             (oid, name, now, pid),
         )
         return pid, "reused"
 
     cur = con.execute(
-        """INSERT INTO products(item_code,option_id,name,item_type,unit_cost,active,updated_at)
-           VALUES(?,?,?,?,0,1,?)""",
+        "INSERT INTO products(item_code,option_id,name,item_type,unit_cost,active,updated_at) VALUES(?,?,?,?,0,1,?)",
         (code, oid, name, "finished", now),
     )
     return int(cur.lastrowid), "created"
@@ -195,21 +169,13 @@ def _ensure_finished(core_module, con, req):
 def _component_candidates(con, parent_id: int):
     return con.execute(
         """SELECT p.id,p.item_code,p.name,p.item_type,p.active,
-                  COALESCE((
-                      SELECT SUM(t.qty_delta)
-                      FROM inventory_txns t
-                      JOIN warehouses w ON w.id=t.warehouse_id
-                      WHERE t.product_id=p.id AND w.name='자체창고'
-                  ),0) AS own_stock,
-                  EXISTS(
-                      SELECT 1
-                      FROM inventory_txns t
-                      JOIN warehouses w ON w.id=t.warehouse_id
-                      WHERE t.product_id=p.id AND w.name='자체창고'
-                  ) AS own_history
-           FROM products p
-           WHERE p.id<>? AND p.option_id IS NULL
-           ORDER BY p.id""",
+                  COALESCE((SELECT SUM(t.qty_delta) FROM inventory_txns t
+                            JOIN warehouses w ON w.id=t.warehouse_id
+                            WHERE t.product_id=p.id AND w.name='자체창고'),0) AS own_stock,
+                  EXISTS(SELECT 1 FROM inventory_txns t
+                         JOIN warehouses w ON w.id=t.warehouse_id
+                         WHERE t.product_id=p.id AND w.name='자체창고') AS own_history
+           FROM products p WHERE p.id<>? AND p.option_id IS NULL ORDER BY p.id""",
         (int(parent_id),),
     ).fetchall()
 
@@ -240,15 +206,13 @@ def _score_candidate(row, req) -> int:
         score += 20
     if int(row["own_history"] or 0):
         score += 25
-    stock = float(row["own_stock"] or 0)
-    if stock > 0:
+    if float(row["own_stock"] or 0) > 0:
         score += 35
     if req.get("dormant_existing_only"):
         if int(row["active"] or 0) == 0:
             score += 45
     elif int(row["active"] or 0) == 1:
         score += 10
-
     if not exact and score < 280:
         return -1
     return score
@@ -259,19 +223,13 @@ def _resolve_existing_component(con, parent_id: int, req):
     if raw_name:
         exact_rows = con.execute(
             """SELECT p.id,p.item_code,p.name,p.item_type,p.active,
-                      COALESCE((
-                          SELECT SUM(t.qty_delta)
-                          FROM inventory_txns t
-                          JOIN warehouses w ON w.id=t.warehouse_id
-                          WHERE t.product_id=p.id AND w.name='자체창고'
-                      ),0) AS own_stock,
-                      EXISTS(
-                          SELECT 1 FROM inventory_txns t
-                          JOIN warehouses w ON w.id=t.warehouse_id
-                          WHERE t.product_id=p.id AND w.name='자체창고'
-                      ) AS own_history
-               FROM products p
-               WHERE p.id<>? AND p.option_id IS NULL AND p.name=?
+                      COALESCE((SELECT SUM(t.qty_delta) FROM inventory_txns t
+                                JOIN warehouses w ON w.id=t.warehouse_id
+                                WHERE t.product_id=p.id AND w.name='자체창고'),0) AS own_stock,
+                      EXISTS(SELECT 1 FROM inventory_txns t
+                             JOIN warehouses w ON w.id=t.warehouse_id
+                             WHERE t.product_id=p.id AND w.name='자체창고') AS own_history
+               FROM products p WHERE p.id<>? AND p.option_id IS NULL AND p.name=?
                ORDER BY CASE WHEN p.item_type='raw' THEN 0 ELSE 1 END,
                         CASE WHEN p.active=1 THEN 0 ELSE 1 END,p.id""",
             (int(parent_id), raw_name),
@@ -295,19 +253,11 @@ def _resolve_existing_component(con, parent_id: int, req):
 def _create_raw(core_module, con, raw_name: str):
     code = _next_jds_code(con)
     cur = con.execute(
-        """INSERT INTO products(item_code,option_id,name,item_type,unit_cost,active,updated_at)
-           VALUES(?,NULL,?,'raw',0,1,?)""",
+        "INSERT INTO products(item_code,option_id,name,item_type,unit_cost,active,updated_at) VALUES(?,NULL,?,'raw',0,1,?)",
         (code, raw_name, core_module.now_iso()),
     )
-    return {
-        "id": int(cur.lastrowid),
-        "item_code": code,
-        "name": raw_name,
-        "item_type": "raw",
-        "active": 1,
-        "own_stock": 0.0,
-        "own_history": 0,
-    }
+    return {"id": int(cur.lastrowid), "item_code": code, "name": raw_name,
+            "item_type": "raw", "active": 1, "own_stock": 0.0, "own_history": 0}
 
 
 def _prepare_component(core_module, con, req, parent_id: int):
@@ -318,12 +268,9 @@ def _prepare_component(core_module, con, req, parent_id: int):
             return None, f"{reason}; 새 JDS 기초품목은 만들지 않았습니다."
         component = _create_raw(core_module, con, str(req["raw_name"]))
         return component, "created"
-
     if not req.get("dormant_existing_only"):
-        con.execute(
-            """UPDATE products SET item_type='raw',active=1,updated_at=? WHERE id=?""",
-            (core_module.now_iso(), int(component["id"])),
-        )
+        con.execute("UPDATE products SET item_type='raw',active=1,updated_at=? WHERE id=?",
+                    (core_module.now_iso(), int(component["id"])))
     return component, how or "matched"
 
 
@@ -331,17 +278,13 @@ def _add_exact_bom(core_module, db, parent_id: int, component, qty: float, prese
     cid = int(component["id"])
     if int(parent_id) == cid:
         raise RuntimeError("완제품과 BOM 구성품이 동일합니다.")
-
     old_active = int(component["active"] or 0)
     old_type = str(component["item_type"] or "")
     with core_module._conn(db) as con:
         con.execute("DELETE FROM bom_items WHERE parent_product_id=?", (int(parent_id),))
         if preserve_component_state:
-            con.execute(
-                "UPDATE products SET item_type='raw',active=1,updated_at=? WHERE id=?",
-                (core_module.now_iso(), cid),
-            )
-
+            con.execute("UPDATE products SET item_type='raw',active=1,updated_at=? WHERE id=?",
+                        (core_module.now_iso(), cid))
     try:
         if hasattr(core_module, "add_bom"):
             try:
@@ -350,26 +293,18 @@ def _add_exact_bom(core_module, db, parent_id: int, component, qty: float, prese
                 core_module.add_bom(int(parent_id), cid, float(qty))
         else:
             with core_module._conn(db) as con:
-                con.execute(
-                    """INSERT INTO bom_items(parent_product_id,component_product_id,qty_per)
-                       VALUES(?,?,?)""",
-                    (int(parent_id), cid, float(qty)),
-                )
+                con.execute("INSERT INTO bom_items(parent_product_id,component_product_id,qty_per) VALUES(?,?,?)",
+                            (int(parent_id), cid, float(qty)))
     finally:
         if preserve_component_state:
             with core_module._conn(db) as con:
-                con.execute(
-                    "UPDATE products SET item_type=?,active=?,updated_at=? WHERE id=?",
-                    (old_type, old_active, core_module.now_iso(), cid),
-                )
-
+                con.execute("UPDATE products SET item_type=?,active=?,updated_at=? WHERE id=?",
+                            (old_type, old_active, core_module.now_iso(), cid))
     with core_module._conn(db) as con:
         rows = con.execute(
             """SELECT b.component_product_id,b.qty_per,c.item_code,c.name
-               FROM bom_items b
-               JOIN products c ON c.id=b.component_product_id
-               WHERE b.parent_product_id=?
-               ORDER BY b.rowid""",
+               FROM bom_items b JOIN products c ON c.id=b.component_product_id
+               WHERE b.parent_product_id=? ORDER BY b.rowid""",
             (int(parent_id),),
         ).fetchall()
     if len(rows) != 1:
@@ -384,61 +319,51 @@ def apply(core_module, db_path=None):
     db = db_path or core_module.DEFAULT_DB
     core_module.init_db(db)
     result = {"finished": [], "bom": [], "unresolved": []}
-
     prepared = []
+
     with core_module._conn(db) as con:
         for req in REQUESTS:
             pid, pstatus = _ensure_finished(core_module, con, req)
             component, cstatus = _prepare_component(core_module, con, req, pid)
-            result["finished"].append(
-                {
-                    "option_id": req["option_id"],
-                    "name": req["finished_name"],
-                    "product_id": pid,
-                    "status": pstatus,
-                }
-            )
+            result["finished"].append({
+                "option_id": req["option_id"], "name": req["finished_name"],
+                "product_id": pid, "status": pstatus,
+            })
             if component is None:
-                result["unresolved"].append(
-                    {
-                        "option_id": req["option_id"],
-                        "name": req["finished_name"],
-                        "reason": cstatus,
-                    }
-                )
+                result["unresolved"].append({
+                    "option_id": req["option_id"], "name": req["finished_name"], "reason": cstatus,
+                })
                 continue
             prepared.append((req, pid, dict(component), cstatus))
 
     for req, pid, component, cstatus in prepared:
         try:
-            row = _add_exact_bom(
-                core_module,
-                db,
-                pid,
-                component,
-                float(req["qty"]),
-                preserve_component_state=bool(req.get("dormant_existing_only")),
-            )
-            result["bom"].append(
-                {
-                    "option_id": req["option_id"],
-                    "name": req["finished_name"],
-                    "component_id": int(row["component_product_id"]),
-                    "component_code": str(row["item_code"] or ""),
-                    "component_name": str(row["name"] or ""),
-                    "qty": float(row["qty_per"] or 0),
-                    "component_status": cstatus,
-                    "dormant_reuse": bool(req.get("dormant_existing_only")),
-                }
-            )
+            row = _add_exact_bom(core_module, db, pid, component, float(req["qty"]),
+                                 preserve_component_state=bool(req.get("dormant_existing_only")))
+            result["bom"].append({
+                "option_id": req["option_id"], "name": req["finished_name"],
+                "component_id": int(row["component_product_id"]),
+                "component_code": str(row["item_code"] or ""),
+                "component_name": str(row["name"] or ""),
+                "qty": float(row["qty_per"] or 0), "component_status": cstatus,
+                "dormant_reuse": bool(req.get("dormant_existing_only")),
+            })
         except Exception as exc:
-            result["unresolved"].append(
-                {
-                    "option_id": req["option_id"],
-                    "name": req["finished_name"],
-                    "reason": f"BOM 등록 실패: {exc}",
-                }
-            )
+            result["unresolved"].append({
+                "option_id": req["option_id"], "name": req["finished_name"],
+                "reason": f"BOM 등록 실패: {exc}",
+            })
+
+    # v0.9.139: the seed above intentionally preserves the original idempotent
+    # behavior, then corrects only the three blackout BOMs if a different JDS row
+    # now owns real purchase history/cost. This must run AFTER the seed, otherwise
+    # a later seed pass would reconnect the zero-cost temporary component.
+    try:
+        import blackout_bom_cost_repair_v09139 as _blackout_repair
+        result["blackout_bom_cost_repair"] = _blackout_repair.apply(core_module, db)
+    except Exception as exc:
+        result["unresolved"].append({"reason": f"암막 BOM 원가 연결 복구 실패: {exc}"})
+
     result["ok"] = len(result["unresolved"]) == 0
     result["finished_count"] = len(result["finished"])
     result["bom_count"] = len(result["bom"])
