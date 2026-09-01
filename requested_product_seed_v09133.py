@@ -6,8 +6,10 @@ User-requested rules
 - Otherwise create one JDS#### raw/base item for normal products.
 - BOM is normally 1 base unit -> 1 finished unit.
 - Needle threader uses 50 base units -> 1 finished unit.
-- Stainless cleaning-tool holder MUST reuse existing dormant stock:
+- Stainless cleaning-tool holder MUST reuse the existing old/dormant holder item:
   2 old holder units -> 1 new 2-pack finished unit. No duplicate raw item is created.
+  The old item's ERP stock may be zero; the existing dormant-stock production option
+  can fill only the production shortage into own stock and consume it atomically.
 - Every parent BOM is replaced with exactly the requested single component/quantity.
 - The routine is idempotent and never creates inventory quantities by itself.
 """
@@ -244,8 +246,6 @@ def _score_candidate(row, req) -> int:
     if req.get("dormant_existing_only"):
         if int(row["active"] or 0) == 0:
             score += 45
-        if stock <= 0:
-            return -1
     elif int(row["active"] or 0) == 1:
         score += 10
 
@@ -314,7 +314,7 @@ def _prepare_component(core_module, con, req, parent_id: int):
     component, how = _resolve_existing_component(con, parent_id, req)
     if component is None:
         if req.get("dormant_existing_only"):
-            reason = "후보가 여러 개" if how == "ambiguous" else "일치하는 자체창고 불용재고를 찾지 못함"
+            reason = "후보가 여러 개" if how == "ambiguous" else "일치하는 기존 불용재고 품목을 찾지 못함"
             return None, f"{reason}; 새 JDS 기초품목은 만들지 않았습니다."
         component = _create_raw(core_module, con, str(req["raw_name"]))
         return component, "created"
