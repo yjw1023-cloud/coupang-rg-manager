@@ -1,4 +1,4 @@
-"""v0.9.126 safe monthly-default routing + live hot-update patches.
+"""v0.9.129 safe monthly-default routing + live hot-update patches.
 
 This module is explicitly purged from sys.modules by app.py on every rerun.
 Existing P&L/BOM/dashboard-status routing remains unchanged; product overview,
@@ -155,7 +155,12 @@ def render_product_overview_page(st_obj, pd_obj, core, db_path=None):
 
 
 def render_dashboard_data_status(st_obj, core, db_path=None):
-    m = importlib.import_module("dashboard_data_status_v0978")
+    # v0.9.129: a new calendar month must not hide the previous month's last
+    # entered date. Reload the small dashboard module on every render so an
+    # in-app updater refresh is visible without restarting the ERP process.
+    sys.modules.pop("dashboard_data_status_v09129", None)
+    importlib.invalidate_caches()
+    m = importlib.import_module("dashboard_data_status_v09129")
     return m.render(st_obj, core, db_path)
 
 
