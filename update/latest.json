@@ -1,6 +1,6 @@
 {
-  "version": "0.9.134",
-  "message": "v0.9.133 신규 상품/BOM 등록이 sitecustomize 시작 시점에만 실행되어 프로그램 업데이트만으로는 현재 실행 중인 ERP DB에 반영되지 않을 수 있던 문제를 수정했습니다. 이제 app.py가 매 Streamlit 재실행마다 불러오는 런타임 bootstrap에서 신규 쿠팡 완제품 10개와 BOM 등록을 즉시 실행하므로 업데이트 후 화면 재실행만으로 로컬 DB에 반영됩니다. 매입 Excel로 등록되는 JDS/기초품목은 자체창고 품목이며, 미매칭/확인필요 행이 남아 최종 매입확정을 하지 않은 파일은 아직 DB에 저장되지 않습니다.",
+  "version": "0.9.135",
+  "message": "경영현황의 자료입력 현황에서 dashboard_data_status_v09129 모듈을 매 렌더마다 sys.modules에서 삭제 후 재import하던 방식이 Streamlit ScriptRunner 간 경합으로 KeyError를 만들 수 있던 문제를 수정했습니다. 이제 대시보드 생성 소스가 일반 Python import로 v0.9.129 화면을 직접 호출하여 모듈 삭제 경쟁이 없습니다. 또한 동일한 안전한 화면 재실행 단계에서 신규 쿠팡 완제품 10개/BOM seed를 idempotent하게 실행하므로 sitecustomize 재시작에 의존하지 않고 로컬 DB에 반영됩니다.",
   "files": [
     "app.py",
     "VERSION.txt",
