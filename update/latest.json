@@ -1,6 +1,6 @@
 {
-  "version": "0.9.138",
-  "message": "신규 매입품목을 화면상 매칭 완료로 표시했지만 최종 매입 저장 엔진의 숨은 기존 Selectbox에는 그 매칭값이 늦게 전달되어 purchase_lines가 0건 저장될 수 있던 문제를 수정했습니다. 이제 신규 JDS/영구 매칭값을 기존 매입 Selectbox가 렌더링되기 전에 먼저 주입하여 최종 매입확정 엔진이 화면과 동일한 product_id를 사용합니다. 따라서 최종 확정 시 매입이력과 자체창고 입고가 정상 생성됩니다. v0.9.137의 품목관리 자체창고/쿠팡RG 0재고 표시와 v0.9.136의 신규 JDS 영구저장·중복방지 기능은 그대로 유지됩니다.",
+  "version": "0.9.139",
+  "message": "암막 블라인드 1m/2m/4m의 실제 매입은 정상 저장됐지만 BOM이 최초 생성된 원가 0원 임시 JDS 구성품에 계속 연결되어 구성품원가가 0원으로 보이던 문제를 수정했습니다. 업데이트 후 신규상품 seed가 실행된 직후 각 암막 사이즈별 purchase_lines를 검사하여 실제 매입이력과 양수 원가가 있는 동일 사이즈 JDS가 하나로 확인되면 BOM을 그 JDS로 자동 재연결합니다. 매입이력·재고수량·원가를 복사하거나 조작하지 않고 BOM 연결만 교정합니다. 삼각대/실끼우개처럼 이미 BOM 구성품 자체에 정상 매입이력이 있는 상품은 변경하지 않습니다.",
   "files": [
     "app.py",
     "VERSION.txt",
@@ -31,6 +31,7 @@
     "requested_product_bom_repair_v0972.py",
     "requested_product_bom_force_v0973.py",
     "requested_product_seed_v09133.py",
+    "blackout_bom_cost_repair_v09139.py",
     "purchase_batch_v089.py",
     "purchase_match_ui_v090.py",
     "purchase_match_ui_v091.py",
