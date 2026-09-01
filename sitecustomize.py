@@ -4,8 +4,8 @@ Keeps the v0.8 purchase import hook, v0.9.87 generic advertising-report
 filename period detection, v0.9.103 canonical advertising-data sync/upload,
 v0.9.95 user-facing product visibility guard, v0.9.106 dormant-stock
 production support, v0.9.108 safe advertising deletion, v0.9.109
-advertising source audit/orphan cleanup, and v0.9.110 exact one-time ad cleanup
-active from startup.
+advertising source audit/orphan cleanup, v0.9.110 exact one-time ad cleanup,
+and v0.9.133 user-requested Coupang product/BOM registration active from startup.
 """
 import importlib
 import sys
@@ -133,3 +133,15 @@ try:
     _visibility_v0995.apply_goal_module(sys.modules.get("goal_management_v0979"), _core_v0995)
 except Exception as exc:
     print(f"RG Manager v0.9.95 product visibility startup failed: {exc}", file=sys.stderr)
+
+# v0.9.133: register the ten user-supplied Coupang finished products and exact BOMs.
+# Normal base items reuse an existing own/raw item when possible, otherwise receive
+# the first unused JDS#### code. The stainless 2-pack intentionally reuses existing
+# own-warehouse dormant stock at 2 old units per 1 new finished unit; it never
+# creates a duplicate JDS component for that product.
+try:
+    _core_v09133 = _original_import_module("core")
+    _seed_v09133 = _original_import_module("requested_product_seed_v09133")
+    _core_v09133.REQUESTED_PRODUCT_SEED_V09133_RESULT = _seed_v09133.apply(_core_v09133)
+except Exception as exc:
+    print(f"RG Manager v0.9.133 requested product/BOM seed failed: {exc}", file=sys.stderr)
