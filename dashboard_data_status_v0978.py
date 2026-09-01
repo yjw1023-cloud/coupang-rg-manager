@@ -1,9 +1,11 @@
-"""RG Manager v0.9.78 dashboard current-month input coverage.
+"""RG Manager dashboard data-status source patch.
 
-Shows, immediately above the dashboard monthly performance section, how far the
-current month's sales-stat Excel and advertising-performance Excel have been
-continuously entered from the 1st.  The next required input date is based on
-continuous coverage, so a later file never hides a gap in the middle of the month.
+v0.9.135 fixes a Streamlit import race introduced by the old hot-reload route.
+The generated dashboard now calls dashboard_data_status_v09129 directly through
+Python's normal import path instead of a helper that deletes the module from
+sys.modules before every render.  The same safe source-patch phase also applies
+the user-requested v0.9.133 product/BOM seed so an in-app updater refresh writes
+the ten new Coupang products without relying on sitecustomize/process restart.
 """
 from __future__ import annotations
 
@@ -170,7 +172,7 @@ def _card(st_obj, column, title: str, status, month_start: date, today: date):
 
 
 def render(st_obj, core, db_path=None):
-    """Render current-month sales/ad upload coverage cards."""
+    """Legacy current-month renderer retained for compatibility."""
     db = db_path or core.DEFAULT_DB
     today = date.today()
     month_start = today.replace(day=1)
@@ -194,8 +196,27 @@ def render(st_obj, core, db_path=None):
     _card(st_obj, c2, "📣 광고비 Excel", ads, month_start, today)
 
 
+def _apply_requested_products_v09133() -> None:
+    """Apply the idempotent product/BOM seed during normal app reruns."""
+    try:
+        # Use builtin __import__ so this does not recurse through app.py's
+        # importlib.import_module compatibility wrapper.
+        core = __import__("core")
+        seed = __import__("requested_product_seed_v09133")
+        result = seed.apply(core)
+        core.REQUESTED_PRODUCT_SEED_V09133_RESULT = result
+        core.REQUESTED_PRODUCT_SEED_V09133_ERROR = ""
+    except Exception as exc:
+        try:
+            core.REQUESTED_PRODUCT_SEED_V09133_ERROR = str(exc)
+        except Exception:
+            pass
+
+
 def patch_source(source: str) -> str:
-    """Insert the status cards immediately before every dashboard 월별 실적 branch."""
+    """Insert safe dashboard status rendering and apply requested product seed."""
+    _apply_requested_products_v09133()
+
     if _MARKER in source:
         return source
 
@@ -206,8 +227,13 @@ def patch_source(source: str) -> str:
 
     def repl(match):
         indent = match.group(1)
+        # IMPORTANT: do not call pnl_month_default_v0915.render_dashboard_data_status.
+        # That helper deletes dashboard_data_status_v09129 from sys.modules on every
+        # render, which can race with another Streamlit ScriptRunner and raise
+        # KeyError('dashboard_data_status_v09129'). Normal builtin import is safe and
+        # returns the already-loaded module when present.
         return (
-            f"{indent}pnl_month_default_v0915.render_dashboard_data_status(st, core)\n"
+            f"{indent}__import__('dashboard_data_status_v09129').render(st, core)\n"
             f"{indent}{match.group(2)}"
         )
 
