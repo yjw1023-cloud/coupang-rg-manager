@@ -1,9 +1,8 @@
-"""v0.9.129 safe monthly-default routing + live hot-update patches.
+"""v0.9.130 safe monthly-default routing + live hot-update patches.
 
-This module is explicitly purged from sys.modules by app.py on every rerun.
-Existing P&L/BOM/dashboard-status routing remains unchanged; product overview,
-provisional summary quantity, item cleanup, live overview P&L patches, and
-user-confirmed unmatched-sales skipping are applied after updater refreshes.
+Existing P&L/BOM/dashboard-status routing remains unchanged. v0.9.130 routes the
+monthly closing page through monthly_closing_ui_v09130 so data sources, invalid
+negative inventory COGS, alignment, and visual presentation are clear.
 """
 from __future__ import annotations
 
@@ -129,7 +128,14 @@ def render_product_confirmed_page(st_obj, pd_obj, core, pnl_module, db_path=None
 
 def render_monthly_closing_page(st_obj, pd_obj, core, db_path=None):
     _show_bom_repair_error(st_obj, core)
-    m = importlib.import_module("monthly_closing_v0916")
+    # v0.9.130: hot-reload the new monthly-closing presentation on every page
+    # rerun so updater refreshes are visible without restarting the ERP process.
+    try:
+        sys.modules.pop("monthly_closing_ui_v09130", None)
+        importlib.invalidate_caches()
+    except Exception:
+        pass
+    m = importlib.import_module("monthly_closing_ui_v09130")
     return m.render_monthly_closing_page(st_obj, pd_obj, core, db_path)
 
 
