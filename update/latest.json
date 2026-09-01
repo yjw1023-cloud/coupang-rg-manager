@@ -1,6 +1,6 @@
 {
-  "version": "0.9.132",
-  "message": "매입 Excel에서 기존 자체창고 품목과 매칭되지 않는 행은 신규 아이템인지 사용자에게 확인하도록 수정했습니다. 신규로 확인한 항목은 첫 미사용 JDS#### 코드를 자동 발급해 자체창고 기초상품(raw)으로 등록하고 해당 매입행에 즉시 연결합니다. 같은 매입상품명+상세정보가 여러 행이면 한 품목으로 묶고 수량가중 평균매입원가를 기준원가로 등록합니다. 기존 품목 매칭과 기존 매입확정·입고 로직은 그대로 유지합니다.",
+  "version": "0.9.133",
+  "message": "신규 쿠팡 완제품 10개를 옵션ID 기준으로 ERP에 등록하고 BOM을 자동 구성합니다. 일반 품목은 기존 자체창고 기초품목을 우선 재사용하고 없을 때만 첫 미사용 JDS#### 코드를 발급합니다. 기본 BOM은 기초재고 1개→완제품 1개, 바늘 실 끼우개는 50개→완제품 1개입니다. 스테인레스 청소도구 걸이 2개 세트는 새 기초품목을 만들지 않고 기존 자체창고 불용재고를 찾아 2개→완제품 1개 BOM으로 연결해 실제 불용재고가 생산 시 소진되도록 합니다.",
   "files": [
     "app.py",
     "VERSION.txt",
@@ -30,6 +30,7 @@
     "requested_product_bom_seed_v0971.py",
     "requested_product_bom_repair_v0972.py",
     "requested_product_bom_force_v0973.py",
+    "requested_product_seed_v09133.py",
     "purchase_batch_v089.py",
     "purchase_match_ui_v090.py",
     "purchase_match_ui_v091.py",
