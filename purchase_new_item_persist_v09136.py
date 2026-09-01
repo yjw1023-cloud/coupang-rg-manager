@@ -1,17 +1,15 @@
-"""RG Manager v0.9.136 durable purchase-new-item registration.
+"""RG Manager v0.9.136/v0.9.138 durable purchase-new-item registration.
 
-Fixes two failure modes in the v0.9.132 new-item flow:
+Fixes three failure modes in the v0.9.132 new-item flow:
 1. A newly confirmed JDS raw item must be committed to the ERP DB immediately.
 2. The source-name/detail -> product mapping must survive Streamlit reruns/page moves.
-
-This module overlays purchase_match_ui_v091 without changing the legacy purchase
-posting engine. Purchase inventory/history is still posted only by the normal
-final purchase-confirmation action; this overlay guarantees the newly created
-item and its matching decision are durable before that final action.
+3. v0.9.138 bridges the durable/visible matching choice into the legacy purchase
+   selectbox BEFORE it renders, so final confirmation actually writes purchase rows.
 """
 from __future__ import annotations
 
 import re
+import sys
 from typing import Any
 
 _APPLIED = False
@@ -105,8 +103,6 @@ def _create_or_reuse_products(patch_module, core_module, db_path, selected_group
     _ensure_schema(core_module, db_path)
     created: dict[tuple[str, str], dict[str, Any]] = {}
 
-    # One transaction covers products + durable mappings. Explicit commit is used
-    # as an extra guard because this path must survive an immediate Streamlit rerun.
     with core_module._conn(db_path) as con:
         for g in selected_groups:
             source_name = _norm_text(g.get("source_name"))
@@ -119,9 +115,9 @@ def _create_or_reuse_products(patch_module, core_module, db_path, selected_group
             row = _mapped_product(con, source_name, source_detail)
             status = "mapped"
             if row is None:
-                # A prior v0.9.132 attempt may have committed the raw item but lost
-                # only the session mapping. Reuse a single exact raw-name match so a
-                # retry never creates a duplicate JDS item.
+                # A prior attempt may have committed the raw item but lost only the
+                # screen/session mapping. Reuse one exact raw-name match so retrying
+                # the same purchase file never creates another JDS item.
                 row = _single_exact_raw(con, name)
                 status = "reused"
 
@@ -190,8 +186,7 @@ def apply(patch_module, core_module):
 
     def render_review_table(st_obj, pd_obj, core_obj, db_path, file_fp,
                             excel_rows, meta):
-        # Reapply any previously confirmed source->JDS mappings before drawing the
-        # table. This survives reruns, page moves and re-upload of the same file.
+        # Restore confirmed source->JDS mappings before drawing the compact table.
         saved = _saved_mappings(core_obj, db_path, excel_rows)
         if saved:
             overrides_all = st_obj.session_state.setdefault(base._OVERRIDE_KEY, {})
@@ -207,17 +202,28 @@ def apply(patch_module, core_module):
             overrides_all[file_fp] = overrides
             st_obj.session_state[base._OVERRIDE_KEY] = overrides_all
 
-        result = original_review(
+        return original_review(
             st_obj, pd_obj, core_obj, db_path, file_fp, excel_rows, meta
         )
-        return result
 
     patch_module._create_new_products = create_new_products
     patch_module._render_review_table = render_review_table
-    # v0.9.0 stores a direct function reference, so replace that reference too.
     base._render_review_table = render_review_table
 
     _ensure_schema(core_module, core_module.DEFAULT_DB)
+
+    # v0.9.138: the visible compact review runs after the legacy hidden widgets.
+    # Install a replacement v0.9.0 presentation wrapper that reads the durable
+    # mapping and preselects those legacy widgets BEFORE they render. This is the
+    # missing bridge that lets the existing final-confirmation engine actually
+    # insert purchase_lines and own-warehouse inventory for newly registered JDS.
+    try:
+        purchase_module = sys.modules.get("purchase_v06")
+        bridge = __import__("purchase_match_state_bridge_v09138", fromlist=["*"])
+        bridge.apply(purchase_module, core_module, base, patch_module)
+    except Exception as exc:
+        print(f"RG Manager v0.9.138 purchase state bridge failed: {exc}", file=sys.stderr)
+
     patch_module._rg_purchase_new_item_persist_v09136_applied = True
     _APPLIED = True
     return patch_module
