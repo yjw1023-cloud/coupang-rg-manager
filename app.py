@@ -10,10 +10,9 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-# v0.9.62: Streamlit reruns reuse Python's module cache.  The updater replaces
-# files on disk, but without clearing these modules an already-running ERP can
+# v0.9.62: Streamlit reruns reuse Python's module cache. The updater replaces
+# files on disk, but without clearing selected modules an already-running ERP can
 # keep executing the previous implementation until the whole process is restarted.
-# Purge modules that must take effect immediately after an updater refresh.
 for _rg_mod in (
     "pnl_month_default_v0915",
     "pnl_month_v0959",
@@ -23,13 +22,29 @@ for _rg_mod in (
     "recent_input_unify_v09112",
     "return_discount_v099",
     "return_sale_match_v0944",
+    "purchase_match_ui_v091",
+    "purchase_new_item_persist_v09136",
+    "requested_product_seed_v09133",
 ):
     sys.modules.pop(_rg_mod, None)
 importlib.invalidate_caches()
 
-# Apply v0.8 purchase rules and legacy-import guards whenever
-# the pinned v0.7 loader imports those modules.
-_original_import_module = importlib.import_module
+# v0.9.136: never build the app import hook on top of a previous Streamlit-rerun
+# copy of itself. The old app assigned `_original_import_module = importlib.import_module`
+# on every rerun, so the second/third run could wrap the previous app wrapper and
+# eventually recurse during a normal import (the dashboard_data_status_v09129
+# KeyError reported by the user). Use Python's builtin importer as a stable base.
+def _plain_import_module(name, package=None):
+    target = str(name)
+    if target.startswith("."):
+        if not package:
+            raise TypeError("the 'package' argument is required to perform a relative import")
+        target = importlib.util.resolve_name(target, package)
+    return __import__(target, fromlist=["*"])
+
+
+_original_import_module = _plain_import_module
+
 
 def _apply_purchase_v08(module):
     if module is None or getattr(module, "_rg_purchase_v08_applied", False):
@@ -39,12 +54,14 @@ def _apply_purchase_v08(module):
     module._rg_purchase_v08_applied = True
     return module
 
+
 def _apply_purchase_batch_v089(module):
     if module is None or getattr(module, "_rg_purchase_batch_v089_applied", False):
         return module
     patch = _original_import_module("purchase_batch_v089")
     patch.apply(module, core)
     return module
+
 
 def _apply_purchase_match_v090(module):
     if module is None or getattr(module, "_rg_purchase_match_ui_v090_applied", False):
@@ -53,12 +70,16 @@ def _apply_purchase_match_v090(module):
     patch.apply(module, core)
     return module
 
+
 def _apply_purchase_match_v091(module):
     if module is None:
         return module
     patch = _original_import_module("purchase_match_ui_v091")
     patch.apply()
+    persist = _original_import_module("purchase_new_item_persist_v09136")
+    persist.apply(patch, core)
     return module
+
 
 def _apply_erp_guard(module):
     if module is None or getattr(module, "_rg_v082_guard_applied", False):
@@ -66,6 +87,7 @@ def _apply_erp_guard(module):
     guard = _original_import_module("erp_import_guard_v082")
     guard.apply(module)
     return module
+
 
 def _rg_import_module(name, package=None):
     module = _original_import_module(name, package)
@@ -78,6 +100,9 @@ def _rg_import_module(name, package=None):
         _apply_erp_guard(module)
     return module
 
+
+# Safe to replace on every Streamlit rerun because _rg_import_module always calls
+# the stable builtin-based importer above, never the previous wrapper.
 importlib.import_module = _rg_import_module
 
 # One-time audited repair. v0.8.3 makes this safe against concurrent
@@ -95,6 +120,17 @@ production_patch.apply(core)
 
 # v0.8.6 dedicated item master page.
 item_ui_v086 = _original_import_module("item_ui_v086")
+
+# v0.9.95: make the user-facing visibility rule explicit from app.py too. This
+# removes reliance on sitecustomize having been reloaded after an updater refresh.
+product_visibility_v0995 = _original_import_module("product_visibility_v0995")
+product_visibility_v0995.apply_runtime(core)
+
+# v0.9.133/v0.9.136: the ten user-requested Coupang finished products and their
+# BOMs must actually be checked/registered in the live local DB on every app run.
+# The seed itself is idempotent, so this is safe on Streamlit reruns.
+requested_product_seed_v09133 = _original_import_module("requested_product_seed_v09133")
+REQUESTED_PRODUCT_SEED_V09133_RESULT = requested_product_seed_v09133.apply(core)
 
 # v0.9.44 dedicated item deletion / manual return-option cleanup page.
 item_delete_ui_v0944 = _original_import_module("item_delete_ui_v0944")
@@ -172,7 +208,7 @@ pnl_views_v0912.apply(core)
 sales_pnl_ui_v098 = _original_import_module("sales_pnl_ui_v098")
 sales_pnl_ui_v098.apply()
 
-# v0.9.9 returned-item discount resale.  v0.9.113 purges this module together
+# v0.9.9 returned-item discount resale. v0.9.113 purges this module together
 # with return_sale_match_v0944 before import so the latest matching rule is used
 # immediately after a Streamlit updater refresh.
 return_discount_v099 = _original_import_module("return_discount_v099")
@@ -216,8 +252,10 @@ LOADER_URL = (
     "f93d2b0576e4f67a250bd3a98af0d439f11541ec/app.py"
 )
 
+
 def _git_blob_sha(data: bytes) -> str:
     return hashlib.sha1(b"blob " + str(len(data)).encode("ascii") + b"\0" + data).hexdigest()
+
 
 def _ensure_loader():
     if LOADER.exists():
@@ -227,7 +265,7 @@ def _ensure_loader():
                 return
         except Exception:
             pass
-    req = urllib.request.Request(LOADER_URL, headers={"User-Agent": "RG-Manager/0.9.15"})
+    req = urllib.request.Request(LOADER_URL, headers={"User-Agent": "RG-Manager/0.9.136"})
     with urllib.request.urlopen(req, timeout=20) as resp:
         data = resp.read()
     if _git_blob_sha(data) != LOADER_BLOB_SHA:
@@ -236,11 +274,12 @@ def _ensure_loader():
     tmp.write_bytes(data)
     tmp.replace(LOADER)
 
+
 _ensure_loader()
 source = LOADER.read_text(encoding="utf-8")
 source = source.replace(
     'st.sidebar.caption("v0.7 · legacy ERP import")',
-    'st.sidebar.caption("v0.9.15 · safe monthly P&L")',
+    'st.sidebar.caption("v0.9.136 · runtime integrity")',
 )
 loader_exec = 'exec(compile(source, str(BASE_APP), "exec"), globals(), globals())'
 if loader_exec not in source:
@@ -278,4 +317,5 @@ globals()["pnl_month_default_v0915"] = pnl_month_default_v0915
 globals()["bom_candidate_filter_v0927"] = bom_candidate_filter_v0927
 globals()["AUTO_PRODUCTION_V09106_RESULT"] = AUTO_PRODUCTION_V09106_RESULT
 globals()["AD_FORCE_CLEANUP_V09111_RESULT"] = AD_FORCE_CLEANUP_V09111_RESULT
+globals()["REQUESTED_PRODUCT_SEED_V09133_RESULT"] = REQUESTED_PRODUCT_SEED_V09133_RESULT
 exec(compile(source, str(LOADER), "exec"), globals(), globals())
