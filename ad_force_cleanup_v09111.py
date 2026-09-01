@@ -1,11 +1,11 @@
-"""RG Manager v0.9.112 runtime advertising cleanup/bootstrap.
+"""RG Manager v0.9.134 runtime bootstrap.
 
-This module is invoked directly from app.py on every Streamlit rerun.
-
-It retains the v0.9.111 one-time cleanup for the explicitly authorized stale
-8/1~8/11 report, and from v0.9.112 also activates the unified Recent Input
-History patch so advertising reports uploaded from either ERP screen are shown
-in the same history table.
+This module is invoked directly from app.py on every Streamlit rerun and is
+explicitly purged from Python's module cache before import. Besides the existing
+advertising cleanup/recent-input bootstrap, v0.9.134 also runs the idempotent
+v0.9.133 requested-product/BOM seed so an in-app updater refresh writes the new
+products to the local SQLite DB immediately without requiring a full Python
+process restart.
 """
 from __future__ import annotations
 
@@ -36,13 +36,27 @@ def _apply_recent_input_unify(core):
         return {"patched": False, "error": str(exc)}
 
 
+def _apply_requested_product_seed(core, db):
+    try:
+        import importlib
+        import requested_product_seed_v09133
+        # The updater may have replaced the module while this Python process is
+        # still alive. Reload so the current file on disk is always executed.
+        requested_product_seed_v09133 = importlib.reload(requested_product_seed_v09133)
+        return requested_product_seed_v09133.apply(core, db)
+    except Exception as exc:
+        print(f"RG Manager v0.9.134 requested product/BOM seed failed: {exc}")
+        return {"ok": False, "finished_count": 0, "bom_count": 0, "unresolved": [{"reason": str(exc)}]}
+
+
 def apply(core, db=None):
     db = db or core.DEFAULT_DB
     core.init_db(db)
 
-    # Must run even when the old one-time cleanup flag is already present.
-    # Streamlit updater reruns app.py without necessarily restarting Python.
+    # Must run on every rerun, even when the historical ad-cleanup flag already
+    # exists. This makes updater-applied DB/bootstrap changes effective immediately.
     recent_result = _apply_recent_input_unify(core)
+    product_seed_result = _apply_requested_product_seed(core, db)
 
     result = {
         "already_applied": False,
@@ -51,6 +65,7 @@ def apply(core, db=None):
         "ad_rows_deleted": 0,
         "flag_written": False,
         "recent_input_unify": recent_result,
+        "requested_product_seed_v09133": product_seed_result,
     }
 
     with core._conn(db) as c:
