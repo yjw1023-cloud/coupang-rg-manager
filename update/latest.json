@@ -1,6 +1,6 @@
 {
-  "version": "0.9.137",
-  "message": "품목관리의 자체창고/쿠팡RG 탭이 등록구분이 아니라 현재고가 0이 아닌 상품만 보여주던 문제를 수정했습니다. 이제 품목관리에서 자체창고 탭은 등록된 JDS/raw 품목을 재고 0이어도 모두 표시하고, 쿠팡RG 탭은 등록된 쿠팡 완제품/옵션ID 상품을 RG 재고 0이어도 모두 표시합니다. 반품창고는 기존처럼 실제 반품재고가 있는 상품만 표시합니다. 재고관리 화면의 창고 탭은 기존대로 현재 재고가 있는 상품만 보여줍니다. v0.9.136의 신규 매입품목 영구저장, 신규 쿠팡 완제품/BOM 실등록, import 안정화 수정은 그대로 유지됩니다.",
+  "version": "0.9.138",
+  "message": "신규 매입품목을 화면상 매칭 완료로 표시했지만 최종 매입 저장 엔진의 숨은 기존 Selectbox에는 그 매칭값이 늦게 전달되어 purchase_lines가 0건 저장될 수 있던 문제를 수정했습니다. 이제 신규 JDS/영구 매칭값을 기존 매입 Selectbox가 렌더링되기 전에 먼저 주입하여 최종 매입확정 엔진이 화면과 동일한 product_id를 사용합니다. 따라서 최종 확정 시 매입이력과 자체창고 입고가 정상 생성됩니다. v0.9.137의 품목관리 자체창고/쿠팡RG 0재고 표시와 v0.9.136의 신규 JDS 영구저장·중복방지 기능은 그대로 유지됩니다.",
   "files": [
     "app.py",
     "VERSION.txt",
@@ -35,6 +35,7 @@
     "purchase_match_ui_v090.py",
     "purchase_match_ui_v091.py",
     "purchase_new_item_persist_v09136.py",
+    "purchase_match_state_bridge_v09138.py",
     "purchase_history_v092.py",
     "purchase_history_v094.py",
     "purchase_cost_ui_v0942.py",
