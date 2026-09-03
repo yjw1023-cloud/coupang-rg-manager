@@ -52,7 +52,8 @@ class FakeCore:
                     item_code TEXT,
                     option_id TEXT,
                     name TEXT,
-                    unit_cost REAL NOT NULL DEFAULT 0
+                    unit_cost REAL NOT NULL DEFAULT 0,
+                    active INTEGER NOT NULL DEFAULT 1
                 );
                 CREATE TABLE IF NOT EXISTS warehouses(
                     id INTEGER PRIMARY KEY,
@@ -199,9 +200,11 @@ class SyncTests(unittest.TestCase):
                     ],
                 }]
 
-        # Same unique name + a different option id becomes a permanent return
-        # alias of normal option 7001.
+        # Product names are collected as reference only. Return option ids must
+        # be explicitly confirmed against their original product.
         api.sync_orders(self.core, OrderClient(), "2026-09-01", "2026-09-01")
+        for option_id in ("8001", "8002", "8003"):
+            api.save_return_mapping(self.core, option_id, 1, "상품A")
 
         class InventoryClient:
             def inventory(self):
@@ -243,6 +246,133 @@ class SyncTests(unittest.TestCase):
         self.assertEqual(aliases, {"8001": 1, "8002": 1, "8003": 1})
         self.assertEqual(kinds["7001"], "normal")
         self.assertTrue(all(kinds[x] == "return" for x in ("8001", "8002", "8003")))
+
+    def test_unique_same_name_is_not_automatically_classified_as_return(self):
+        class OrderClient:
+            def orders(self, start, end):
+                return [{
+                    "orderId": "ORDER-NAME",
+                    "paidAt": "2026-09-01T00:00:00Z",
+                    "orderItems": [{
+                        "vendorItemId": 8001,
+                        "productName": "상품A",
+                        "salesQuantity": 1,
+                    }],
+                }]
+
+        api.sync_orders(self.core, OrderClient(), "2026-09-01", "2026-09-01")
+        with self.core._conn(self.core.DEFAULT_DB) as con:
+            alias_count = con.execute(
+                "SELECT COUNT(*) n FROM return_discount_aliases WHERE discount_option_id='8001'"
+            ).fetchone()["n"]
+            product_id = con.execute(
+                "SELECT product_id FROM coupang_rg_order_items WHERE vendor_item_id='8001'"
+            ).fetchone()["product_id"]
+        self.assertEqual(alias_count, 0)
+        self.assertIsNone(product_id)
+
+    def test_same_name_auto_return_requires_excel_verified_normal_parent(self):
+        api.register_normal_options(
+            self.core,
+            [{"vendor_item_id": "7001", "product_name": "상품A"}],
+            "inbound.xlsx",
+        )
+
+        class OrderClient:
+            def orders(self, start, end):
+                return [{
+                    "orderId": "ORDER-RETURN",
+                    "paidAt": "2026-09-01T00:00:00Z",
+                    "orderItems": [{
+                        "vendorItemId": 8001,
+                        "productName": "상품A",
+                        "salesQuantity": 1,
+                    }],
+                }]
+
+        result = api.sync_orders(
+            self.core, OrderClient(), "2026-09-01", "2026-09-01"
+        )
+        self.assertEqual(result["matched"], 1)
+        with self.core._conn(self.core.DEFAULT_DB) as con:
+            alias = con.execute(
+                """SELECT parent_product_id,match_method FROM return_discount_aliases
+                   WHERE discount_option_id='8001'"""
+            ).fetchone()
+            product_id = con.execute(
+                "SELECT product_id FROM coupang_rg_order_items WHERE vendor_item_id='8001'"
+            ).fetchone()["product_id"]
+        self.assertEqual(alias["parent_product_id"], 1)
+        self.assertEqual(alias["match_method"], "api_verified_normal_name")
+        self.assertEqual(product_id, 1)
+
+    def test_inbound_registry_keeps_only_active_erp_intersection(self):
+        api.save_return_mapping(self.core, "7001", 1, "상품A")
+        first = api.register_normal_options(
+            self.core,
+            [
+                {"vendor_item_id": "7001", "product_name": "상품A"},
+                {"vendor_item_id": "8001", "product_name": "ERP에 없는 상품"},
+            ],
+            "first.xlsx",
+        )
+        with self.core._conn(self.core.DEFAULT_DB) as con:
+            con.execute(
+                "INSERT INTO products(id,item_code,option_id,name,unit_cost,active) "
+                "VALUES(2,'CP-7002','7002','상품B',2000,1)"
+            )
+        second = api.register_normal_options(
+            self.core,
+            [{"vendor_item_id": "7002", "product_name": "상품B"}],
+            "second.xlsx",
+        )
+        self.assertEqual(first["alias_conflicts_removed"], 1)
+        self.assertEqual(first["registered"], 1)
+        self.assertEqual(first["unmatched"], 1)
+        self.assertEqual(first["new"], 1)
+        self.assertEqual(second["removed"], 1)
+        self.assertEqual(second["total"], 1)
+        with self.core._conn(self.core.DEFAULT_DB) as con:
+            ids = {
+                r["vendor_item_id"]
+                for r in con.execute("SELECT vendor_item_id FROM coupang_normal_option_registry")
+            }
+            alias_count = con.execute(
+                "SELECT COUNT(*) n FROM return_discount_aliases WHERE discount_option_id='7001'"
+            ).fetchone()["n"]
+        self.assertEqual(ids, {"7002"})
+        self.assertEqual(alias_count, 0)
+
+    def test_inactive_erp_product_is_not_registered_or_moved(self):
+        with self.core._conn(self.core.DEFAULT_DB) as con:
+            con.execute(
+                "INSERT INTO products(id,item_code,option_id,name,unit_cost,active) "
+                "VALUES(2,'CP-8001','8001','미사용 상품',1000,0)"
+            )
+        registered = api.register_normal_options(
+            self.core,
+            [{"vendor_item_id": "8001", "product_name": "미사용 상품"}],
+            "inbound.xlsx",
+        )
+        self.assertEqual(registered["registered"], 0)
+        self.assertEqual(registered["unmatched"], 1)
+
+        class Client:
+            def inventory(self):
+                return [{
+                    "vendorItemId": 8001,
+                    "inventoryDetails": {"totalOrderableQuantity": 4},
+                }]
+
+        result = api.sync_inventory(self.core, Client())
+        self.assertEqual(result["matched"], 0)
+        self.assertEqual(result["adjusted_rows"], 0)
+        with self.core._conn(self.core.DEFAULT_DB) as con:
+            row = con.execute(
+                "SELECT product_id,stock_type FROM coupang_rg_inventory WHERE vendor_item_id='8001'"
+            ).fetchone()
+        self.assertIsNone(row["product_id"])
+        self.assertEqual(row["stock_type"], "unmatched")
 
     def test_ambiguous_same_name_stays_unmatched_and_does_not_move_return_stock(self):
         with self.core._conn(self.core.DEFAULT_DB) as con:

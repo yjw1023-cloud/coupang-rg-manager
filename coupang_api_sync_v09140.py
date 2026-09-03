@@ -1,4 +1,4 @@
-"""Manual Coupang Open API synchronization for RG Manager v0.9.141.
+"""Manual Coupang Open API synchronization for RG Manager v0.9.142.
 
 The module deliberately performs no network work at import/startup.  Every API
 request is initiated by an explicit Streamlit button click.
@@ -11,9 +11,11 @@ Supported official endpoints:
 
 Raw API facts are preserved in dedicated SQLite tables.  Rows are linked to the
 existing product master by immutable Coupang vendorItemId (ERP option_id).  The
-inventory action separates normal options from returned-item aliases.  Normal
-stock is reconciled to ``쿠팡RG`` while all return-option quantities belonging to
-one original product are summed and reconciled once to ``반품창고``.
+inventory action separates normal options from explicitly confirmed returned-item
+aliases.  The intersection of Rocket Growth inbound Excel option ids and active
+ERP product codes is kept as the normal-option registry.  Normal stock is reconciled to ``쿠팡RG``
+while all return-option quantities belonging to one original product are summed
+and reconciled once to ``반품창고``.
 """
 from __future__ import annotations
 
@@ -23,6 +25,7 @@ import ctypes
 from ctypes import wintypes
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
+from io import BytesIO
 import hashlib
 import hmac
 import json
@@ -533,6 +536,17 @@ def ensure_schema(core: Any, db_path: Any | None = None) -> None:
                 updated_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS coupang_normal_option_registry(
+                vendor_item_id TEXT PRIMARY KEY,
+                product_name TEXT,
+                option_name TEXT,
+                exposure_product_id TEXT,
+                seller_product_id TEXT,
+                source_file TEXT,
+                first_seen_at TEXT NOT NULL,
+                last_seen_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS return_discount_aliases(
                 discount_option_id TEXT PRIMARY KEY,
                 parent_product_id INTEGER NOT NULL,
@@ -557,44 +571,223 @@ def ensure_schema(core: Any, db_path: Any | None = None) -> None:
             )
 
 
-def _product_map(con: sqlite3.Connection) -> dict[str, int]:
+def parse_rg_inbound_options(source: Any) -> list[dict[str, str]]:
+    """Read the official RG inbound workbook and return its normal option ids."""
+    try:
+        from openpyxl import load_workbook
+    except Exception as exc:
+        raise RuntimeError(f"Excel 읽기 모듈(openpyxl)을 불러오지 못했습니다: {exc}") from None
+
+    if isinstance(source, (str, os.PathLike, Path)):
+        workbook_source: Any = str(source)
+    else:
+        raw = source.getvalue() if hasattr(source, "getvalue") else source.read()
+        workbook_source = BytesIO(raw)
+    try:
+        book = load_workbook(workbook_source, read_only=True, data_only=True)
+    except Exception as exc:
+        raise ValueError(f"입고 Excel 파일을 읽지 못했습니다: {exc}") from None
+
+    aliases = {
+        "product_name": {"등록상품명", "상품명"},
+        "option_name": {"옵션명"},
+        "exposure_product_id": {"노출상품 ID", "노출상품ID"},
+        "seller_product_id": {"등록상품 ID", "등록상품ID"},
+        "vendor_item_id": {"옵션 ID", "옵션ID"},
+        "sale_method": {"판매 방식", "판매방식"},
+    }
+    selected = None
+    header_row = 0
+    header_cols: dict[str, int] = {}
+    for sheet in book.worksheets:
+        for row_no, values in enumerate(sheet.iter_rows(min_row=1, max_row=20, values_only=True), 1):
+            normalized = {_text(value).replace("\n", " "): idx for idx, value in enumerate(values)}
+            found: dict[str, int] = {}
+            for key, names in aliases.items():
+                for name in names:
+                    if name in normalized:
+                        found[key] = normalized[name]
+                        break
+            if "vendor_item_id" in found:
+                selected, header_row, header_cols = sheet, row_no, found
+                break
+        if selected is not None:
+            break
+    if selected is None:
+        raise ValueError("G열의 '옵션 ID' 머리글을 찾지 못했습니다. 쿠팡 로켓그로스 입고 Excel인지 확인해 주세요.")
+
+    rows_by_id: dict[str, dict[str, str]] = {}
+    for values in selected.iter_rows(min_row=header_row + 1, values_only=True):
+        def value(key: str) -> Any:
+            idx = header_cols.get(key)
+            return values[idx] if idx is not None and idx < len(values) else ""
+
+        oid = _oid(value("vendor_item_id"))
+        if not oid:
+            continue
+        sale_method = _text(value("sale_method"))
+        if sale_method and "로켓그로스" not in sale_method:
+            continue
+        rows_by_id[oid] = {
+            "vendor_item_id": oid,
+            "product_name": _text(value("product_name")),
+            "option_name": _text(value("option_name")),
+            "exposure_product_id": _oid(value("exposure_product_id")),
+            "seller_product_id": _oid(value("seller_product_id")),
+        }
+    if not rows_by_id:
+        raise ValueError("입고 Excel에서 로켓그로스 옵션 ID를 찾지 못했습니다.")
+    return list(rows_by_id.values())
+
+
+def _normal_option_ids(con: sqlite3.Connection) -> set[str]:
+    if not _exists(con, "coupang_normal_option_registry"):
+        return set()
+    return {
+        _oid(row["vendor_item_id"])
+        for row in con.execute("SELECT vendor_item_id FROM coupang_normal_option_registry")
+        if _oid(row["vendor_item_id"])
+    }
+
+
+def _erp_direct_product_map(
+    con: sqlite3.Connection, active_only: bool = False
+) -> dict[str, int]:
+    """Map option/item codes physically present in the ERP product master."""
+    if not _exists(con, "products"):
+        return {}
+    cols = _columns(con, "products")
+    if not {"id", "option_id"}.issubset(cols):
+        return {}
+    select_code = ",item_code" if "item_code" in cols else ",'' AS item_code"
+    where = " WHERE COALESCE(active,1)=1" if active_only and "active" in cols else ""
     out: dict[str, int] = {}
-    if _exists(con, "products"):
-        cols = _columns(con, "products")
-        if {"id", "option_id"}.issubset(cols):
-            select_code = ",item_code" if "item_code" in cols else ",'' AS item_code"
-            for row in con.execute("SELECT id,option_id" + select_code + " FROM products"):
-                for key in (_oid(row["option_id"]), _oid(row["item_code"])):
-                    if key and key.isdigit():
-                        out.setdefault(key, int(row["id"]))
+    for row in con.execute("SELECT id,option_id" + select_code + " FROM products" + where):
+        for key in (_oid(row["option_id"]), _oid(row["item_code"])):
+            if key and key.isdigit():
+                out.setdefault(key, int(row["id"]))
+    return out
+
+
+def register_normal_options(
+    core: Any,
+    rows: Iterable[dict[str, Any]],
+    source_file: str = "",
+    db_path: Any | None = None,
+) -> dict[str, int]:
+    """Replace the normal registry with inbound ids matching active ERP products."""
+    db = db_path or core.DEFAULT_DB
+    ensure_schema(core, db)
+    cleaned: dict[str, dict[str, str]] = {}
+    for row in rows:
+        oid = _oid(row.get("vendor_item_id"))
+        if not oid:
+            continue
+        cleaned[oid] = {
+            "product_name": _text(row.get("product_name")),
+            "option_name": _text(row.get("option_name")),
+            "exposure_product_id": _oid(row.get("exposure_product_id")),
+            "seller_product_id": _oid(row.get("seller_product_id")),
+        }
+    if not cleaned:
+        raise ValueError("등록할 정상상품 옵션 ID가 없습니다.")
+
+    with core._conn(db) as con:
+        now = _local_now(core)
+        before = _normal_option_ids(con)
+        direct_mapping = _erp_direct_product_map(con, active_only=True)
+        verified = {oid: row for oid, row in cleaned.items() if oid in direct_mapping}
+        removed = len(before - set(verified))
+        if verified:
+            keep_placeholders = ",".join("?" for _ in verified)
+            con.execute(
+                f"DELETE FROM coupang_normal_option_registry WHERE vendor_item_id NOT IN ({keep_placeholders})",
+                tuple(verified),
+            )
+        else:
+            con.execute("DELETE FROM coupang_normal_option_registry")
+        alias_conflicts = 0
+        if verified:
+            con.executemany(
+                """INSERT INTO coupang_normal_option_registry
+                   (vendor_item_id,product_name,option_name,exposure_product_id,
+                    seller_product_id,source_file,first_seen_at,last_seen_at)
+                   VALUES(?,?,?,?,?,?,?,?)
+                   ON CONFLICT(vendor_item_id) DO UPDATE SET
+                     product_name=CASE WHEN excluded.product_name<>'' THEN excluded.product_name
+                                       ELSE coupang_normal_option_registry.product_name END,
+                     option_name=CASE WHEN excluded.option_name<>'' THEN excluded.option_name
+                                      ELSE coupang_normal_option_registry.option_name END,
+                     exposure_product_id=CASE WHEN excluded.exposure_product_id<>'' THEN excluded.exposure_product_id
+                                              ELSE coupang_normal_option_registry.exposure_product_id END,
+                     seller_product_id=CASE WHEN excluded.seller_product_id<>'' THEN excluded.seller_product_id
+                                            ELSE coupang_normal_option_registry.seller_product_id END,
+                     source_file=excluded.source_file,
+                     last_seen_at=excluded.last_seen_at""",
+                [(
+                    oid, row["product_name"], row["option_name"], row["exposure_product_id"],
+                    row["seller_product_id"], _text(source_file), now, now,
+                ) for oid, row in verified.items()],
+            )
+            placeholders = ",".join("?" for _ in verified)
+            alias_conflicts = int(con.execute(
+                f"SELECT COUNT(*) n FROM return_discount_aliases WHERE discount_option_id IN ({placeholders})",
+                tuple(verified),
+            ).fetchone()["n"])
+            con.execute(
+                f"DELETE FROM return_discount_aliases WHERE discount_option_id IN ({placeholders})",
+                tuple(verified),
+            )
+        total = int(con.execute(
+            "SELECT COUNT(*) n FROM coupang_normal_option_registry"
+        ).fetchone()["n"])
+    return {
+        "rows": len(cleaned),
+        "registered": len(verified),
+        "new": len(set(verified) - before),
+        "removed": removed,
+        "matched": len(verified),
+        "unmatched": len(cleaned) - len(verified),
+        "alias_conflicts_removed": alias_conflicts,
+        "total": total,
+    }
+
+
+def _product_map(con: sqlite3.Connection) -> dict[str, int]:
+    out = _erp_direct_product_map(con)
     if _exists(con, "return_discount_aliases"):
+        official_normal = _normal_option_ids(con)
         cols = _columns(con, "return_discount_aliases")
         if {"discount_option_id", "parent_product_id"}.issubset(cols):
             for row in con.execute(
                 "SELECT discount_option_id,parent_product_id FROM return_discount_aliases"
             ):
                 key = _oid(row["discount_option_id"])
-                if key:
+                if key and key not in official_normal:
                     # An explicit return alias must override a legacy auto-created
                     # child product carrying the same option id.
                     out[key] = int(row["parent_product_id"])
     return out
 
 
-def _normal_product_map(con: sqlite3.Connection) -> dict[str, int]:
+def _normal_product_map(
+    con: sqlite3.Connection, active_only: bool = False
+) -> dict[str, int]:
     """Return only managed normal-product option ids, never return aliases."""
     if not _exists(con, "products"):
         return {}
     cols = _columns(con, "products")
     if not {"id", "option_id"}.issubset(cols):
         return {}
+    official_normal = _normal_option_ids(con)
     aliases = {
         _oid(r["discount_option_id"])
         for r in con.execute("SELECT discount_option_id FROM return_discount_aliases")
-    }
+    } - official_normal
     select_code = ",item_code" if "item_code" in cols else ",'' AS item_code"
+    where = " WHERE COALESCE(active,1)=1" if active_only and "active" in cols else ""
     out: dict[str, int] = {}
-    for row in con.execute("SELECT id,option_id" + select_code + " FROM products"):
+    for row in con.execute("SELECT id,option_id" + select_code + " FROM products" + where):
         option_id = _oid(row["option_id"])
         if option_id and option_id not in aliases:
             out.setdefault(option_id, int(row["id"]))
@@ -671,16 +864,21 @@ def _normal_name_candidates(con: sqlite3.Connection) -> dict[str, set[int]]:
     fields = ["id", "name", "option_id"]
     fields.append("item_code" if "item_code" in cols else "'' AS item_code")
     fields.append("unit_cost" if "unit_cost" in cols else "0 AS unit_cost")
-    alias_ids = set(_return_product_map(con))
+    active_where = " WHERE COALESCE(active,1)=1" if "active" in cols else ""
+    official_ids = _normal_option_ids(con)
+    if not official_ids:
+        return {}
+    alias_ids = set(_return_product_map(con)) - official_ids
     out: dict[str, set[int]] = {}
-    for row in con.execute("SELECT " + ",".join(fields) + " FROM products"):
+    for row in con.execute("SELECT " + ",".join(fields) + " FROM products" + active_where):
         oid = _oid(row["option_id"])
-        if not oid or oid in alias_ids:
+        code = _oid(row["item_code"])
+        if not oid or oid in alias_ids or not ({oid, code} & official_ids):
             continue
         # Do not let a legacy zero-cost CP-{optionId} child become its own
         # original-product candidate.
-        code = _text(row["item_code"])
-        if code.upper() in {oid.upper(), ("CP-" + oid).upper()} and abs(_num(row["unit_cost"])) <= 1e-9:
+        raw_code = _text(row["item_code"])
+        if raw_code.upper() in {oid.upper(), ("CP-" + oid).upper()} and abs(_num(row["unit_cost"])) <= 1e-9:
             continue
         key = _name_key(row["name"])
         if key:
@@ -688,21 +886,19 @@ def _normal_name_candidates(con: sqlite3.Connection) -> dict[str, set[int]]:
     return out
 
 
-def _auto_link_return_aliases(
+def _auto_link_verified_return_aliases(
     con: sqlite3.Connection,
     option_ids: Iterable[str] | None,
     now: str,
 ) -> int:
-    """Persist unknown code + one unique identical product name as a return."""
-    normal_ids = _normal_product_map(con)
-    return_ids = _return_product_map(con)
+    """Auto-link only against a unique parent proven normal by inbound Excel."""
+    official_ids = _normal_option_ids(con)
+    if not official_ids:
+        return 0
+    normal_ids = set(_normal_product_map(con)) | official_ids
+    return_ids = set(_return_product_map(con)) - official_ids
     candidates = _normal_name_candidates(con)
     wanted = {_oid(x) for x in option_ids or [] if _oid(x)}
-    if not wanted:
-        wanted = {
-            _oid(r["vendor_item_id"])
-            for r in con.execute("SELECT vendor_item_id FROM coupang_api_option_catalog")
-        }
     linked = 0
     for oid in sorted(wanted):
         if oid in normal_ids or oid in return_ids:
@@ -723,13 +919,13 @@ def _auto_link_return_aliases(
         if len(matched) != 1:
             continue
         parent_id = next(iter(matched))
-        display_name = next((x for x in names if x), "")
+        display_name = next((name for name in names if name), "")
         con.execute(
             """INSERT INTO return_discount_aliases
                (discount_option_id,parent_product_id,discount_name,match_method,created_at,updated_at)
                VALUES(?,?,?,?,?,?)
                ON CONFLICT(discount_option_id) DO NOTHING""",
-            (oid, parent_id, display_name, "api_name_unique", now, now),
+            (oid, parent_id, display_name, "api_verified_normal_name", now, now),
         )
         linked += int(con.execute("SELECT changes() n").fetchone()["n"] or 0)
     return linked
@@ -749,6 +945,10 @@ def save_return_mapping(
     if not oid:
         raise ValueError("반품 옵션ID를 선택해 주세요.")
     with core._conn(db) as con:
+        if oid in _normal_option_ids(con):
+            raise ValueError(
+                "입고 Excel에 등록된 정상상품 옵션 ID입니다. 반품상품으로 연결할 수 없습니다."
+            )
         parent = con.execute(
             "SELECT id FROM products WHERE id=?", (int(parent_product_id),)
         ).fetchone()
@@ -835,7 +1035,7 @@ def sync_orders(core: Any, client: CoupangClient, start: date | str, end: date |
                 })
         with core._conn(db) as con:
             _catalog_upsert(con, observations, now)
-            auto_linked = _auto_link_return_aliases(
+            auto_linked = _auto_link_verified_return_aliases(
                 con, [x.get("vendor_item_id") for x in observations], now
             )
             mapping = _product_map(con)
@@ -870,7 +1070,7 @@ def sync_orders(core: Any, client: CoupangClient, start: date | str, end: date |
         matched = sum(1 for row in flattened if row[5] is not None)
         message = (
             f"주문 {len(orders):,}건 · 상품행 {len(flattened):,}개 저장"
-            f" · 반품옵션 자동연결 {auto_linked:,}개"
+            f" · 검증된 반품옵션 자동연결 {auto_linked:,}개"
         )
         _run_finish(core, db, run_id, "success", len(flattened), matched, message)
         return {"run_id": run_id, "orders": len(orders), "rows": len(flattened), "matched": matched}
@@ -961,17 +1161,20 @@ def sync_inventory(core: Any, client: CoupangClient, db_path=None):
                 "source": "inventory",
             } for row in rows if isinstance(row, dict)]
             _catalog_upsert(con, observations, now)
-            auto_linked = _auto_link_return_aliases(
+            auto_linked = _auto_link_verified_return_aliases(
                 con, [x.get("vendor_item_id") for x in observations], now
             )
-            normal_mapping = _normal_product_map(con)
+            official_normal = _normal_option_ids(con)
+            normal_mapping = _normal_product_map(con, active_only=True)
             return_mapping = _return_product_map(con)
             for row in rows:
                 oid = _oid(row.get("vendorItemId"))
                 if not oid:
                     continue
                 qty, sales_30d = _inventory_values(row)
-                if oid in return_mapping:
+                if oid in official_normal:
+                    product_id, stock_type = normal_mapping.get(oid), "normal"
+                elif oid in return_mapping:
                     product_id, stock_type = return_mapping[oid], "return"
                 elif oid in normal_mapping:
                     product_id, stock_type = normal_mapping[oid], "normal"
@@ -1025,7 +1228,7 @@ def sync_inventory(core: Any, client: CoupangClient, db_path=None):
         message = (
             f"재고 {len(targets):,}개 저장 · 새상품 조정 {adjusted['normal_adjusted_rows']:,}개"
             f" · 반품상품 조정 {adjusted['return_adjusted_rows']:,}개"
-            f" · 반품옵션 자동연결 {auto_linked:,}개"
+            f" · 검증된 반품옵션 자동연결 {auto_linked:,}개"
         )
         _run_finish(core, db, run_id, "success", len(targets), matched, message)
         return {
@@ -1060,7 +1263,7 @@ def sync_revenue(core: Any, client: CoupangClient, start: date | str, end: date 
                 })
         with core._conn(db) as con:
             _catalog_upsert(con, observations, now)
-            auto_linked = _auto_link_return_aliases(
+            auto_linked = _auto_link_verified_return_aliases(
                 con, [x.get("vendor_item_id") for x in observations], now
             )
             mapping = _product_map(con)
@@ -1100,10 +1303,10 @@ def sync_revenue(core: Any, client: CoupangClient, start: date | str, end: date 
                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 flattened,
             )
-        matched = sum(1 for row in flattened if row[7] is not None)
+        matched = sum(1 for row in flattened if row[8] is not None)
         message = (
             f"매출 거래 {len(transactions):,}건 · 상품행 {len(flattened):,}개 저장"
-            f" · 반품옵션 자동연결 {auto_linked:,}개"
+            f" · 검증된 반품옵션 자동연결 {auto_linked:,}개"
         )
         _run_finish(core, db, run_id, "success", len(flattened), matched, message)
         return {"run_id": run_id, "transactions": len(transactions), "rows": len(flattened), "matched": matched}
@@ -1200,6 +1403,9 @@ def _summary(core: Any, db: Any) -> dict[str, Any]:
                    FROM coupang_rg_inventory GROUP BY stock_type"""
             )
         }
+        normal_registry_count = int(con.execute(
+            "SELECT COUNT(*) n FROM coupang_normal_option_registry"
+        ).fetchone()["n"])
         revenue = con.execute(
             """SELECT substr(recognition_date,1,7) month,
                       SUM(CASE WHEN sale_type='REFUND' THEN -ABS(sale_amount) ELSE sale_amount END) sales,
@@ -1220,7 +1426,16 @@ def _summary(core: Any, db: Any) -> dict[str, Any]:
         "last": [dict(x) for x in last], "counts": counts, "unmatched": unmatched,
         "inventory": [dict(x) for x in inventory],
         "unmatched_inventory": [dict(x) for x in inventory if x["product_id"] is None],
+        "normal_unmapped_inventory": [
+            dict(x) for x in inventory
+            if x["product_id"] is None and x["stock_type"] == "normal"
+        ],
+        "return_mapping_candidates": [
+            dict(x) for x in inventory
+            if x["product_id"] is None and x["stock_type"] != "normal"
+        ],
         "inventory_types": inventory_types,
+        "normal_registry_count": normal_registry_count,
         "revenue": [dict(x) for x in revenue],
         "settlements": [dict(x) for x in settlements],
     }
@@ -1546,6 +1761,43 @@ def render_page(st: Any, pd: Any, core: Any, db_path=None) -> None:
                 delete_credentials(core)
                 st.success("저장된 API 연결정보를 삭제했습니다.")
 
+        with st.expander("정상상품 기준표", expanded=False):
+            st.caption(
+                "쿠팡 로켓그로스 입고 Excel의 G열 '옵션 ID'와 ERP의 사용 중 상품코드가 "
+                "정확히 일치하는 상품만 정상 새상품으로 등록합니다. ERP에 없거나 미사용인 상품은 제외합니다. "
+                "이 작업은 쿠팡 API를 호출하지 않습니다."
+            )
+            inbound_file = st.file_uploader(
+                "로켓그로스 입고 Excel",
+                type=["xlsx"],
+                key="coupang_rg_inbound_options_v09142",
+            )
+            if st.button(
+                "G열 옵션 ID를 정상상품으로 등록",
+                type="primary",
+                use_container_width=True,
+                disabled=inbound_file is None,
+                key="coupang_rg_register_normal_v09142",
+            ):
+                try:
+                    parsed = parse_rg_inbound_options(inbound_file)
+                    result = register_normal_options(
+                        core, parsed, getattr(inbound_file, "name", ""), db
+                    )
+                    st.success(
+                        f"입고표 옵션 {result['rows']:,}개 확인 · "
+                        f"ERP 사용 중 상품코드 일치/정상 등록 {result['registered']:,}개 · "
+                        f"ERP 미등록·미사용 제외 {result['unmatched']:,}개 · "
+                        f"기존 기준 제외 {result['removed']:,}개"
+                    )
+                    if result["alias_conflicts_removed"]:
+                        st.info(
+                            "입고표로 정상상품임이 확인되어 기존 반품 연결 "
+                            f"{result['alias_conflicts_removed']:,}개를 해제했습니다."
+                        )
+                except Exception as exc:
+                    st.error(str(exc))
+
         credentials = Credentials(vendor_id, access_key, secret_key) if vendor_id or access_key or secret_key else saved
         ready = credentials is not None
         if ready:
@@ -1557,6 +1809,14 @@ def render_page(st: Any, pd: Any, core: Any, db_path=None) -> None:
         if not ready:
             st.info("연결정보를 입력하고 저장한 뒤 동기화 버튼을 사용하세요.")
             return
+
+        with core._conn(db) as con:
+            registry_count = len(_normal_option_ids(con))
+        if registry_count == 0:
+            st.warning(
+                "정상상품 기준표가 비어 있습니다. 재고 동기화 전에 로켓그로스 입고 Excel을 등록하세요. "
+                "기준표가 없으면 ERP 상품코드와 직접 일치하는 재고만 새상품으로 처리하고, 반품 자동 판별은 하지 않습니다."
+            )
 
         client = CoupangClient(credentials)
         today = date.today()
@@ -1626,7 +1886,7 @@ def render_page(st: Any, pd: Any, core: Any, db_path=None) -> None:
         c4.metric("지급내역", f"{summary['counts']['coupang_settlement_histories']:,}건")
         inv_types = summary.get("inventory_types", {})
         st.caption(
-            "재고 분류 · "
+            f"정상상품 기준 옵션 {summary['normal_registry_count']:,}개 · 재고 분류 · "
             f"새상품 {_integer(inv_types.get('normal', {}).get('qty')):,}개 · "
             f"반품상품 {_integer(inv_types.get('return', {}).get('qty')):,}개 · "
             f"미분류 {_integer(inv_types.get('unmatched', {}).get('qty')):,}개"
@@ -1638,16 +1898,26 @@ def render_page(st: Any, pd: Any, core: Any, db_path=None) -> None:
                 "품목관리 옵션ID와 연결되지 않은 API 자료가 있습니다: "
                 f"주문 {summary['unmatched']['orders']:,}개 · 재고 {summary['unmatched']['inventory']:,}개 · "
                 f"매출 {summary['unmatched']['revenue']:,}개. 정상상품은 품목관리에 등록하고, "
-                "코드만 다른 반품상품은 아래에서 원상품에 연결한 뒤 다시 동기화하세요."
+                "자동 판별되지 않은 반품상품은 아래에서 원상품에 연결한 뒤 다시 동기화하세요."
             )
 
-        if summary["unmatched_inventory"]:
+        if summary["normal_unmapped_inventory"]:
+            ids = ", ".join(str(x["vendor_item_id"]) for x in summary["normal_unmapped_inventory"][:10])
+            suffix = " 외" if len(summary["normal_unmapped_inventory"]) > 10 else ""
+            st.warning(
+                "입고 Excel로 정상상품임은 확인됐지만 ERP 사용 중 상품코드와 연결되지 않은 옵션이 "
+                f"{len(summary['normal_unmapped_inventory']):,}개 있습니다: {ids}{suffix}. "
+                "반품으로 처리하지 않으며 품목관리 상품코드와 사용 여부를 확인할 때까지 재고원장은 변경하지 않습니다."
+            )
+
+        if summary["return_mapping_candidates"]:
             with st.expander("미분류 재고 옵션을 반품상품으로 연결", expanded=True):
                 st.caption(
-                    "정상상품과 이름은 같지만 옵션ID가 다른 반품상품만 연결하세요. "
+                    "정상 기준표에 등록된 원상품과 상품명이 하나로 정확히 일치할 때만 자동 판별합니다. "
+                    "나머지 중 실제 반품상품 코드만 직접 연결하세요. "
                     "정상상품 자체가 미등록된 경우에는 먼저 품목관리에서 정상 옵션ID를 등록해야 합니다."
                 )
-                unknown = {str(x["vendor_item_id"]): x for x in summary["unmatched_inventory"]}
+                unknown = {str(x["vendor_item_id"]): x for x in summary["return_mapping_candidates"]}
                 unknown_ids = list(unknown)
                 selected_oid = st.selectbox(
                     "미분류 쿠팡 옵션",
