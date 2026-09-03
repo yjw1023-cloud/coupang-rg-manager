@@ -249,8 +249,14 @@ def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
             )
         if int(api_meta.get("return_unmatched_rows") or 0):
             st_obj.warning(
-                "로켓그로스 주문번호·옵션ID와 연결되지 않은 반품·취소 "
+                "로켓그로스 원주문 또는 검증된 RG 옵션ID와 연결되지 않은 반품·취소 "
                 f"{int(api_meta['return_unmatched_rows']):,}행은 잠정손익에서 제외했습니다."
+            )
+        if int(api_meta.get("return_price_missing_rows") or 0):
+            st_obj.warning(
+                "RG 상품에는 연결됐지만 결제단가를 확인하지 못한 반품·취소 "
+                f"{int(api_meta['return_price_missing_rows']):,}행은 수량만 반영되고 반품매출은 0원입니다. "
+                "해당 상품이 판매된 기간의 주문 동기화를 실행하면 금액도 반영됩니다."
             )
 
     if auto_view.empty:

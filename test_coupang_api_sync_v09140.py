@@ -728,6 +728,52 @@ class SyncTests(unittest.TestCase):
         self.assertEqual(rows, [])
         self.assertEqual(meta["return_unmatched_rows"], 1)
 
+    def test_verified_rg_option_matches_return_when_original_order_was_not_synced(self):
+        api.register_normal_options(
+            self.core,
+            [{"vendor_item_id": "7001", "product_name": "상품A"}],
+            "inbound.xlsx",
+        )
+
+        class ReferenceOrderClient:
+            def orders(self, start, end):
+                return [{
+                    "orderId": "OTHER-RG-ORDER",
+                    "paidAt": "2026-08-01T10:00:00+09:00",
+                    "orderItems": [{
+                        "vendorItemId": 7001,
+                        "productName": "상품A",
+                        "salesQuantity": 1,
+                        "unitSalesPrice": 10000,
+                    }],
+                }]
+
+        class ReturnClient:
+            def return_requests(self, start, end):
+                return [{
+                    "receiptId": "RET-OLD-ORDER",
+                    "orderId": "ORIGINAL-ORDER-NOT-IN-DB",
+                    "receiptType": "RETURN",
+                    "receiptStatus": "RETURNS_UNCHECKED",
+                    "createdAt": "2026-09-02T11:00:00+09:00",
+                    "returnItems": [{"vendorItemId": 7001, "cancelCount": 1}],
+                }]
+
+            def return_withdrawals(self, start, end):
+                return []
+
+        api.sync_orders(
+            self.core, ReferenceOrderClient(), "2026-08-01", "2026-08-01"
+        )
+        result = api.sync_returns(
+            self.core, ReturnClient(), "2026-09-01", "2026-09-03"
+        )
+        rows, meta = api.provisional_rows_from_api(self.core, "2026-09")
+        self.assertEqual(result["matched"], 1)
+        self.assertEqual(meta["return_unmatched_rows"], 0)
+        self.assertEqual(rows[0]["판매수량"], -1)
+        self.assertEqual(rows[0]["예상매출"], -10000)
+
     def test_cross_month_withdrawal_restores_in_withdrawal_month(self):
         class OrderClient:
             def orders(self, start, end):

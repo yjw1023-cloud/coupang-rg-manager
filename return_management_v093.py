@@ -487,7 +487,8 @@ def render_return_management_page(st, pd, core, page_header, section, **_kwargs)
         if meta.get("source") == "coupang_return_api":
             st.caption(
                 "반품수량은 수동 동기화한 쿠팡 반품·취소 API의 접수일 기준입니다. "
-                "로켓그로스 주문번호·옵션ID와 일치한 건만 집계하며 철회는 철회일에 순판매수량으로 복원합니다."
+                "RG 원주문과 일치하거나 입고표·RG재고·기존 RG주문으로 검증된 옵션ID만 집계하며 "
+                "철회는 철회일에 순판매수량으로 복원합니다."
             )
         elif meta.get("exact_return"):
             st.caption("반품수량은 판매통계에 저장된 명시적 반품수량 컬럼을 사용합니다.")
