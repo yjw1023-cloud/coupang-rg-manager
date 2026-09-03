@@ -486,6 +486,63 @@ class SyncTests(unittest.TestCase):
         self.assertEqual(row["pid"], 1)
         self.assertEqual(row["amount"], 19000)
 
+    def test_api_revenue_builds_provisional_rows_and_exact_quantities(self):
+        class Client:
+            def revenue(self, start, end):
+                return [
+                    {
+                        "orderId": "SALE-1",
+                        "saleType": "SALE",
+                        "saleDate": "2026-09-01",
+                        "recognitionDate": "2026-09-02",
+                        "settlementDate": "2026-09-10",
+                        "items": [{
+                            "vendorItemId": 7001,
+                            "productName": "상품A",
+                            "quantity": 3,
+                            "saleAmount": 30000,
+                            "serviceFee": 3000,
+                            "serviceFeeVat": 300,
+                            "settlementAmount": 26700,
+                        }],
+                    },
+                    {
+                        "orderId": "REFUND-1",
+                        "saleType": "REFUND",
+                        "saleDate": "2026-09-02",
+                        "recognitionDate": "2026-09-03",
+                        "settlementDate": "2026-09-11",
+                        "items": [{
+                            "vendorItemId": 7001,
+                            "productName": "상품A",
+                            "quantity": 1,
+                            "saleAmount": 10000,
+                            "serviceFee": 1000,
+                            "serviceFeeVat": 100,
+                            "settlementAmount": 8900,
+                        }],
+                    },
+                ]
+
+        api.sync_revenue(self.core, Client(), "2026-09-01", "2026-09-03")
+        rows, meta = api.provisional_rows_from_api(self.core, "2026-09")
+        self.assertEqual(meta["rows"], 2)
+        self.assertEqual(meta["matched_rows"], 2)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["판매수량"], 2)
+        self.assertEqual(rows[0]["예상매출"], 20000)
+        self.assertEqual(rows[0]["판매수수료"], -2200)
+
+        import sales_quantity_v0965 as quantities
+        counts, qty_meta = quantities.month_counts(
+            self.core, self.core.DEFAULT_DB, "2026-09"
+        )
+        self.assertTrue(qty_meta["exact"])
+        self.assertEqual(qty_meta["source"], "coupang_revenue_api")
+        self.assertEqual(counts["7001"]["sales_qty"], 3)
+        self.assertEqual(counts["7001"]["cancel_qty"], 1)
+        self.assertEqual(counts["7001"]["net_qty"], 2)
+
     def test_complete_revenue_month_replaces_legacy_sales_without_doubling(self):
         import pandas as pd
 

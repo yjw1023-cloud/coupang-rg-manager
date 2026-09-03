@@ -1,4 +1,4 @@
-"""Manual Coupang Open API synchronization for RG Manager v0.9.142.
+"""Manual Coupang Open API synchronization for RG Manager v0.9.143.
 
 The module deliberately performs no network work at import/startup.  Every API
 request is initiated by an explicit Streamlit button click.
@@ -1562,6 +1562,98 @@ def _api_revenue_aggregate(core: Any, db: Any, month: str):
         }
         for r in rows
     ]
+
+
+def provisional_rows_from_api(core: Any, month: str, db_path=None):
+    """Build current-month provisional rows from manually synced revenue facts."""
+    db = db_path or core.DEFAULT_DB
+    ensure_schema(core, db)
+    start, end = _month_bounds(month)
+    with core._conn(db) as con:
+        total = int(con.execute(
+            """SELECT COUNT(*) n FROM coupang_revenue_items
+               WHERE recognition_date>=? AND recognition_date<=?""",
+            (start.isoformat(), end.isoformat()),
+        ).fetchone()["n"])
+        unmatched = int(con.execute(
+            """SELECT COUNT(*) n FROM coupang_revenue_items
+               WHERE recognition_date>=? AND recognition_date<=? AND product_id IS NULL""",
+            (start.isoformat(), end.isoformat()),
+        ).fetchone()["n"])
+        rows = con.execute(
+            """SELECT r.product_id,p.option_id,p.item_code,p.name,p.unit_cost,
+                      SUM(CASE WHEN r.sale_type='REFUND' THEN 0 ELSE ABS(r.quantity) END) gross_qty,
+                      SUM(CASE WHEN r.sale_type='REFUND' THEN ABS(r.quantity) ELSE 0 END) cancel_qty,
+                      SUM(CASE WHEN r.sale_type='REFUND' THEN -ABS(r.quantity)
+                               ELSE ABS(r.quantity) END) net_qty,
+                      SUM(CASE WHEN r.sale_type='REFUND' THEN -ABS(r.sale_amount)
+                               ELSE r.sale_amount END) revenue,
+                      SUM(CASE WHEN r.sale_type='REFUND'
+                               THEN ABS(r.service_fee+r.service_fee_vat)
+                               ELSE -ABS(r.service_fee+r.service_fee_vat) END) commission
+               FROM coupang_revenue_items r
+               JOIN products p ON p.id=r.product_id
+               WHERE r.recognition_date>=? AND r.recognition_date<=?
+                 AND r.product_id IS NOT NULL
+               GROUP BY r.product_id,p.option_id,p.item_code,p.name,p.unit_cost
+               ORDER BY p.name,r.product_id""",
+            (start.isoformat(), end.isoformat()),
+        ).fetchall()
+
+    output = []
+    for row in rows:
+        qty = _num(row["net_qty"])
+        revenue = _num(row["revenue"])
+        unit_cost = abs(_num(row["unit_cost"]))
+        cogs = -qty * unit_cost
+        commission = _num(row["commission"])
+        no_ad = revenue + cogs + commission
+        output.append({
+            "옵션ID": _oid(row["option_id"]) or _oid(row["item_code"]),
+            "상품명": _text(row["name"]),
+            # The base monthly aggregator uses this signed net quantity for
+            # financial arithmetic. sales_quantity_v0965 replaces the visible
+            # column with API gross/cancel/net counts afterwards.
+            "판매수량": qty,
+            "예상 실현단가": revenue / qty if abs(qty) > 1e-12 else 0.0,
+            "예상매출": revenue,
+            "원가/개": unit_cost,
+            "매출원가": cogs,
+            "판매수수료": commission,
+            "입출고비": 0.0,
+            "배송비": 0.0,
+            "반품충당": 0.0,
+            "광고비": 0.0,
+            "광고제외이익": no_ad,
+            "예상이익": no_ad,
+            "이익률(%)": no_ad / revenue * 100 if abs(revenue) > 1e-12 else 0.0,
+            "RG비용": 0.0,
+        })
+    coverage = _revenue_month_coverage(core, db, month)
+    return output, {
+        "source": "coupang_revenue_api",
+        "rows": total,
+        "matched_rows": total - unmatched,
+        "unmatched_rows": unmatched,
+        "covered_days": coverage["covered_days"],
+        "expected_days": coverage["expected_days"],
+    }
+
+
+def provisional_months_from_api(core: Any, db_path=None) -> list[str]:
+    db = db_path or core.DEFAULT_DB
+    ensure_schema(core, db)
+    with core._conn(db) as con:
+        return [
+            _text(row["month"])
+            for row in con.execute(
+                """SELECT DISTINCT substr(recognition_date,1,7) month
+                   FROM coupang_revenue_items
+                   WHERE recognition_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-*'
+                   ORDER BY month DESC"""
+            )
+            if _text(row["month"])
+        ]
 
 
 def _overlay_confirmed_month(core: Any, db: Any, month: str, original_result: Any):

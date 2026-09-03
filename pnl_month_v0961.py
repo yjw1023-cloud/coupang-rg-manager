@@ -1,4 +1,4 @@
-"""v0.9.98 monthly provisional P&L client-side sortable table.
+"""v0.9.143 monthly provisional P&L with Coupang API revenue fallback.
 
 Keeps the v0.9.59 visual table but performs sorting entirely inside an embedded
 HTML/JavaScript component so clicking a header never reloads or reruns the ERP.
@@ -170,11 +170,19 @@ def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
 
     st_obj.markdown("## 📈 잠정손익")
     st_obj.caption(
-        "평소 입력한 판매통계를 월 단위로 합산한 잠정 손익입니다. "
+        "수동 동기화한 쿠팡 매출·수수료 API 자료를 우선 사용하고, 없으면 판매통계를 월 단위로 합산합니다. "
         "광고비는 쿠팡 광고성과보고서의 광고집행 옵션ID 기준으로 직접 반영합니다."
     )
 
     months = m._available_months(core, db)
+    try:
+        api = importlib.import_module("coupang_api_sync_v09140")
+        months = sorted(
+            set(months) | set(api.provisional_months_from_api(core, db)),
+            reverse=True,
+        )
+    except Exception:
+        pass
     cur = m._current_month()
     default_idx = months.index(cur) if cur in months else 0
     month = st_obj.selectbox("조회 월", months, index=default_idx, key="provisional_month_v0915")
@@ -187,6 +195,17 @@ def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
         backfill = {"attempted": 0, "saved": 0, "failed": [{"error": str(exc)}]}
 
     cov = m._coverage(core, db, month)
+    api_rows, api_meta = [], {}
+    try:
+        api = importlib.import_module("coupang_api_sync_v09140")
+        api_rows, api_meta = api.provisional_rows_from_api(core, month, db)
+        if int(api_meta.get("rows") or 0) > 0:
+            cov = dict(cov)
+            cov["covered"] = max(
+                int(cov.get("covered") or 0), int(api_meta.get("covered_days") or 0)
+            )
+    except Exception as exc:
+        api_meta = {"error": str(exc)}
     m._period_strip(st_obj, month, cov)
 
     try:
@@ -199,6 +218,11 @@ def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
     ad_dataset = ad_report.render_input(st_obj, core, month, db)
 
     rows, excluded = m._snapshot_rows_for_month(core, db, month)
+    if int(api_meta.get("rows") or 0) > 0:
+        # One source per selected month prevents API facts and an older
+        # sales-stat upload from being counted twice.
+        rows = api_rows
+        excluded = []
     auto_view = m._aggregate(rows)
 
     if backfill.get("failed"):
@@ -209,8 +233,26 @@ def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
     if excluded:
         st_obj.warning(f"월을 걸쳐 있는 판매자료 {len(excluded):,}개는 월별로 정확히 나눌 수 없어 월간 합계에서 제외했습니다.")
 
+    if int(api_meta.get("rows") or 0) > 0:
+        st_obj.info(
+            "쿠팡 매출·수수료 API 자료로 잠정손익을 표시합니다. "
+            f"조회범위 {int(api_meta.get('covered_days') or 0)}/{int(api_meta.get('expected_days') or 0)}일 · "
+            f"상품연결 {int(api_meta.get('matched_rows') or 0):,}/{int(api_meta.get('rows') or 0):,}행. "
+            "API에 없는 입출고·배송·반품 물류비는 아직 0원이며 월말 확정자료에서 최종 반영됩니다."
+        )
+        if int(api_meta.get("unmatched_rows") or 0):
+            st_obj.warning(
+                f"ERP 상품과 연결되지 않은 API 매출 {int(api_meta['unmatched_rows']):,}행은 잠정손익에서 제외했습니다."
+            )
+
     if auto_view.empty:
-        st_obj.info(f"{month}의 잠정손익을 생성하지 못했습니다.")
+        if int(api_meta.get("rows") or 0) > 0:
+            st_obj.info(f"{month}의 API 매출은 있지만 ERP 상품과 연결된 손익행이 없습니다.")
+        else:
+            st_obj.info(
+                f"{month}의 잠정손익 자료가 없습니다. 쿠팡 API 연동에서 "
+                "'매출·수수료 동기화'를 실행하거나 판매통계 Excel을 입력하세요."
+            )
         return
 
     auto_view, ad_meta = ad_report.apply_to_view(auto_view, ad_dataset)
