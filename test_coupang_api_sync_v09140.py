@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
 import hmac
+from io import BytesIO
 import json
 from pathlib import Path
 import sqlite3
@@ -11,6 +12,7 @@ import sys
 import tempfile
 import types
 import unittest
+from urllib.error import HTTPError
 from urllib.parse import urlparse, parse_qs
 
 import coupang_api_sync_v09140 as api
@@ -114,6 +116,33 @@ class CoupangClientTests(unittest.TestCase):
         self.assertEqual([x["orderId"] for x in rows], [1, 2])
         self.assertEqual(len(calls), 2)
         self.assertTrue(all("Authorization" in x.headers for x in calls))
+
+    def test_http_429_honors_retry_after_and_retries(self):
+        calls = []
+        waits = []
+
+        def opener(request, timeout):
+            calls.append(request)
+            if len(calls) == 1:
+                raise HTTPError(
+                    request.full_url,
+                    429,
+                    "Too Many Requests",
+                    {"Retry-After": "2"},
+                    BytesIO(b'{"message":"rate limited"}'),
+                )
+            return _Response({"data": [{"orderId": 1}]})
+
+        client = api.CoupangClient(
+            self.credentials,
+            opener=opener,
+            now=lambda: self.fixed,
+            sleeper=waits.append,
+        )
+        rows = client.orders("2026-09-01", "2026-09-03")
+        self.assertEqual([x["orderId"] for x in rows], [1])
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(waits, [2.0])
 
     def test_long_order_range_is_split_without_overlap(self):
         ranges = []

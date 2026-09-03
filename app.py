@@ -46,7 +46,7 @@ def _plain_import_module(name, package=None):
 
 _original_import_module = _plain_import_module
 
-# v0.9.146: apply() creates local staging/audit tables only. Network requests are
+# v0.9.147: apply() creates local staging/audit tables only. Network requests are
 # always initiated manually from the dedicated page buttons.
 coupang_api_sync_v09140 = _original_import_module("coupang_api_sync_v09140")
 coupang_api_sync_v09140.apply(core)
@@ -285,7 +285,7 @@ _ensure_loader()
 source = LOADER.read_text(encoding="utf-8")
 source = source.replace(
     'st.sidebar.caption("v0.7 · legacy ERP import")',
-    'st.sidebar.caption("v0.9.146 · 과거주문 반품 연결")',
+    'st.sidebar.caption("v0.9.147 · API 호출제한 자동대기")',
 )
 loader_exec = 'exec(compile(source, str(BASE_APP), "exec"), globals(), globals())'
 if loader_exec not in source:

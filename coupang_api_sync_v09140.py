@@ -1,4 +1,4 @@
-"""Manual Coupang Open API synchronization for RG Manager v0.9.146.
+"""Manual Coupang Open API synchronization for RG Manager v0.9.147.
 
 The module deliberately performs no network work at import/startup.  Every API
 request is initiated by an explicit Streamlit button click.
@@ -35,6 +35,7 @@ from pathlib import Path
 import functools
 import re
 import sqlite3
+import time
 from typing import Any, Callable, Iterable
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -171,12 +172,46 @@ class CoupangClient:
         opener: Callable[..., Any] = urlopen,
         now: Callable[[], datetime] | None = None,
         timeout: int = 30,
+        sleeper: Callable[[float], None] | None = None,
+        monotonic: Callable[[], float] | None = None,
+        min_request_interval: float | None = None,
+        max_rate_retries: int = 3,
     ):
         credentials.validate()
         self.credentials = credentials
         self.opener = opener
         self.now = now or (lambda: datetime.now(timezone.utc))
         self.timeout = int(timeout)
+        self.sleeper = sleeper or time.sleep
+        self.monotonic = monotonic or time.monotonic
+        # Coupang documents many seller endpoints at 50 calls/minute.  Keep
+        # real requests below that ceiling.  Test/custom openers remain fast
+        # unless the caller explicitly asks for pacing.
+        self.min_request_interval = float(
+            1.25 if min_request_interval is None and opener is urlopen
+            else (min_request_interval or 0.0)
+        )
+        self.max_rate_retries = max(0, int(max_rate_retries))
+        self._last_request_at: float | None = None
+
+    def _pace_request(self) -> None:
+        if self._last_request_at is not None and self.min_request_interval > 0:
+            elapsed = self.monotonic() - self._last_request_at
+            remaining = self.min_request_interval - elapsed
+            if remaining > 0:
+                self.sleeper(remaining)
+        self._last_request_at = self.monotonic()
+
+    @staticmethod
+    def _rate_limit_wait(exc: HTTPError, attempt: int) -> float:
+        """Return Retry-After seconds, falling back to bounded backoff."""
+        try:
+            value = _text(exc.headers.get("Retry-After"))
+            if value:
+                return min(60.0, max(1.0, float(value)))
+        except Exception:
+            pass
+        return (5.0, 15.0, 40.0)[min(attempt, 2)]
 
     def _signed_date(self) -> str:
         current = self.now()
@@ -202,37 +237,49 @@ class CoupangClient:
         items = list(params.items()) if isinstance(params, dict) else list(params or [])
         clean = [(str(k), str(v)) for k, v in items if v is not None]
         query = urlencode(clean)
-        stamp = self._signed_date()
         uri = path + (("?" + query) if query else "")
-        req = Request(
-            API_HOST + uri,
-            method="GET",
-            headers={
-                "Authorization": self.authorization("GET", path, query, stamp),
-                "X-Requested-By": self.credentials.vendor_id,
-                "Content-Type": "application/json;charset=UTF-8",
-                "User-Agent": "RG-Manager/0.9.140",
-            },
-        )
-        try:
-            response = self.opener(req, timeout=self.timeout)
-            raw = response.read()
-            return json.loads(raw.decode("utf-8")) if raw else {}
-        except HTTPError as exc:
+        for attempt in range(self.max_rate_retries + 1):
+            self._pace_request()
+            # A delayed retry needs a newly signed timestamp.
+            stamp = self._signed_date()
+            req = Request(
+                API_HOST + uri,
+                method="GET",
+                headers={
+                    "Authorization": self.authorization("GET", path, query, stamp),
+                    "X-Requested-By": self.credentials.vendor_id,
+                    "Content-Type": "application/json;charset=UTF-8",
+                    "User-Agent": "RG-Manager/0.9.147",
+                },
+            )
             try:
-                body = exc.read().decode("utf-8", errors="replace")
-                parsed = json.loads(body)
-                detail = _text(parsed.get("message") or parsed.get("error"))
-            except Exception:
-                detail = ""
-            suffix = f": {detail}" if detail else ""
-            raise CoupangAPIError(f"쿠팡 API 요청 실패 (HTTP {exc.code}){suffix}") from None
-        except URLError as exc:
-            raise CoupangAPIError(f"쿠팡 API에 연결할 수 없습니다: {_text(exc.reason)}") from None
-        except TimeoutError:
-            raise CoupangAPIError("쿠팡 API 응답 시간이 초과되었습니다.") from None
-        except json.JSONDecodeError:
-            raise CoupangAPIError("쿠팡 API 응답을 읽을 수 없습니다.") from None
+                response = self.opener(req, timeout=self.timeout)
+                raw = response.read()
+                return json.loads(raw.decode("utf-8")) if raw else {}
+            except HTTPError as exc:
+                try:
+                    body = exc.read().decode("utf-8", errors="replace")
+                    parsed = json.loads(body)
+                    detail = _text(parsed.get("message") or parsed.get("error"))
+                except Exception:
+                    detail = ""
+                if exc.code == 429 and attempt < self.max_rate_retries:
+                    self.sleeper(self._rate_limit_wait(exc, attempt))
+                    continue
+                suffix = f": {detail}" if detail else ""
+                if exc.code == 429:
+                    raise CoupangAPIError(
+                        "쿠팡 API 호출 제한(HTTP 429)이 계속되고 있습니다. "
+                        "약 1분 후 해당 동기화 버튼을 다시 눌러 주세요."
+                    ) from None
+                raise CoupangAPIError(f"쿠팡 API 요청 실패 (HTTP {exc.code}){suffix}") from None
+            except URLError as exc:
+                raise CoupangAPIError(f"쿠팡 API에 연결할 수 없습니다: {_text(exc.reason)}") from None
+            except TimeoutError:
+                raise CoupangAPIError("쿠팡 API 응답 시간이 초과되었습니다.") from None
+            except json.JSONDecodeError:
+                raise CoupangAPIError("쿠팡 API 응답을 읽을 수 없습니다.") from None
+        raise CoupangAPIError("쿠팡 API 요청을 완료하지 못했습니다.")
 
     def _paged(self, path: str, params: list[tuple[str, Any]], token_name: str) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
@@ -2622,7 +2669,8 @@ def render_page(st: Any, pd: Any, core: Any, db_path=None) -> None:
         month = d3.text_input("지급내역 정산월", value=today.strftime("%Y-%m"), key="coupang_api_month_v09140")
         st.caption(
             "긴 기간은 쿠팡 제한에 맞춰 주문 30일, 매출내역 31일, "
-            "반품·취소/철회 7일 단위로 나눠 조회합니다. 모든 조회는 버튼을 눌렀을 때만 실행합니다."
+            "반품·취소/철회 7일 단위로 나눠 조회합니다. 호출 간격을 자동 조절하고 "
+            "HTTP 429이면 잠시 기다린 뒤 최대 3회 재시도합니다. 모든 조회는 버튼을 눌렀을 때만 실행합니다."
         )
 
         test_col, blank = st.columns([1, 2])
