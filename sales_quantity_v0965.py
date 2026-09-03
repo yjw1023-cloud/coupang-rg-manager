@@ -8,6 +8,7 @@ This module reads the actual sales/cancellation columns preserved in sales_stats
 when they exist and exposes three distinct quantities:
 - 판매수량: gross units sold
 - 취소수량: cancellations/returns counted separately
+- 반품철회수량: later withdrawals that restore a return request
 - 순판매수량: the signed net quantity used by P&L/inventory arithmetic
 
 If the DB is an older schema that only has net_qty, it safely falls back to the
@@ -98,7 +99,13 @@ def month_counts(core, db, month: str):
                    GROUP BY o.product_id,p.option_id,p.item_code""",
                 (start, end),
             ).fetchall()
-            if api_rows:
+            try:
+                import coupang_api_sync_v09140 as coupang_api
+
+                return_events = coupang_api._matched_return_events(con, start, end)
+            except Exception:
+                return_events = {}
+            if api_rows or return_events:
                 api_counts = {}
                 for row in api_rows:
                     oid = _oid(row["option_id"]) or _oid(row["item_code"])
@@ -107,13 +114,42 @@ def month_counts(core, db, month: str):
                             "product_id": int(row["product_id"]),
                             "sales_qty": _num(row["gross_qty"]),
                             "cancel_qty": 0.0,
+                            "withdrawal_qty": 0.0,
                             "net_qty": _num(row["gross_qty"]),
                         }
+                product_options = {
+                    int(row["id"]): (_oid(row["option_id"]) or _oid(row["item_code"]))
+                    for row in con.execute("SELECT id,option_id,item_code FROM products")
+                }
+                for product_id, event in return_events.items():
+                    oid = product_options.get(int(product_id), "")
+                    if not oid:
+                        continue
+                    info = api_counts.setdefault(oid, {
+                        "product_id": int(product_id),
+                        "sales_qty": 0.0,
+                        "cancel_qty": 0.0,
+                        "withdrawal_qty": 0.0,
+                        "net_qty": 0.0,
+                    })
+                    info["cancel_qty"] = _num(event.get("return_qty"))
+                    info["withdrawal_qty"] = _num(event.get("withdrawal_qty"))
+                    info["net_qty"] = (
+                        _num(info["sales_qty"])
+                        - _num(info["cancel_qty"])
+                        + _num(info["withdrawal_qty"])
+                    )
+                return_synced = int(con.execute(
+                    """SELECT COUNT(*) n FROM coupang_api_sync_runs
+                       WHERE sync_type='returns' AND status='success'
+                         AND period_end>=? AND period_start<=?""",
+                    (start, end),
+                ).fetchone()["n"]) > 0
                 return api_counts, {
-                    "exact": False,
+                    "exact": return_synced,
                     "sales_exact": True,
-                    "returns_exact": False,
-                    "source": "coupang_order_api",
+                    "returns_exact": return_synced,
+                    "source": "coupang_order_return_api" if return_synced else "coupang_order_api",
                     "rows": len(api_counts),
                 }
         if not {"product_id", "import_id"}.issubset(sc) or not {"id", "period_start", "period_end"}.issubset(ic):
@@ -182,6 +218,7 @@ def month_counts(core, db, month: str):
             "product_id": int(r["product_id"]),
             "sales_qty": gross,
             "cancel_qty": cancel,
+            "withdrawal_qty": 0.0,
             "net_qty": net,
         }
 
@@ -204,6 +241,8 @@ def annotate_month(core, db, month: str, view: pd.DataFrame):
     out = view.copy()
     if "취소수량" not in out.columns:
         out["취소수량"] = 0.0
+    if "반품철회수량" not in out.columns:
+        out["반품철회수량"] = 0.0
     if "순판매수량" not in out.columns:
         out["순판매수량"] = out["판매수량"] if "판매수량" in out.columns else 0.0
 
@@ -219,18 +258,19 @@ def annotate_month(core, db, month: str, view: pd.DataFrame):
         if "판매수량" in out.columns:
             out.at[idx, "판매수량"] = info["sales_qty"]
         out.at[idx, "취소수량"] = info["cancel_qty"]
+        out.at[idx, "반품철회수량"] = info.get("withdrawal_qty", 0.0)
         out.at[idx, "순판매수량"] = info["net_qty"]
         matched += 1
 
     # Place gross/cancel/net together so the meaning is immediately visible.
     desired = []
-    extras = {"취소수량", "순판매수량"}
+    extras = {"취소수량", "반품철회수량", "순판매수량"}
     for col in out.columns:
         if col not in extras:
             desired.append(col)
         if col == "판매수량":
-            desired.extend(["취소수량", "순판매수량"])
-    for col in ("취소수량", "순판매수량"):
+            desired.extend(["취소수량", "반품철회수량", "순판매수량"])
+    for col in ("취소수량", "반품철회수량", "순판매수량"):
         if col not in desired and col in out.columns:
             desired.append(col)
     out = out[[c for c in desired if c in out.columns]]

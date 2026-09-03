@@ -7,7 +7,9 @@ import hmac
 import json
 from pathlib import Path
 import sqlite3
+import sys
 import tempfile
+import types
 import unittest
 from urllib.parse import urlparse, parse_qs
 
@@ -140,6 +142,45 @@ class CoupangClientTests(unittest.TestCase):
         paid_at, paid_date = api._paid_parts(millis)
         self.assertTrue(paid_at.endswith("+09:00"))
         self.assertEqual(paid_date, "2026-09-02")
+
+    def test_return_and_cancel_queries_use_required_parameter_shapes(self):
+        calls = []
+
+        def opener(request, timeout):
+            query = parse_qs(urlparse(request.full_url).query)
+            calls.append(query)
+            if query.get("cancelType") == ["CANCEL"]:
+                self.assertNotIn("status", query)
+                return _Response({"data": [{"receiptId": 20, "receiptType": "CANCEL"}]})
+            self.assertIn(query.get("status", [""])[0], {"RU", "UC", "CC", "PR"})
+            if query.get("status") == ["UC"]:
+                return _Response({"data": [{"receiptId": 10, "receiptType": "RETURN"}]})
+            return _Response({"data": []})
+
+        client = api.CoupangClient(
+            self.credentials, opener=opener, now=lambda: self.fixed
+        )
+        rows = client.return_requests("2026-09-01", "2026-09-03")
+        self.assertEqual({x["receiptId"] for x in rows}, {10, 20})
+        self.assertEqual(len(calls), 5)
+
+    def test_return_withdrawal_query_uses_next_page_index(self):
+        pages = []
+
+        def opener(request, timeout):
+            query = parse_qs(urlparse(request.full_url).query)
+            page = query["pageIndex"][0]
+            pages.append(page)
+            if page == "1":
+                return _Response({"data": [{"cancelId": 10}], "nextPageIndex": "2"})
+            return _Response({"data": [{"cancelId": 11}], "nextPageIndex": ""})
+
+        client = api.CoupangClient(
+            self.credentials, opener=opener, now=lambda: self.fixed
+        )
+        rows = client.return_withdrawals("2026-09-01", "2026-09-03")
+        self.assertEqual([x["cancelId"] for x in rows], [10, 11])
+        self.assertEqual(pages, ["1", "2"])
 
 
 class SyncTests(unittest.TestCase):
@@ -566,6 +607,215 @@ class SyncTests(unittest.TestCase):
         october, _ = api.provisional_rows_from_api(self.core, "2026-10")
         self.assertEqual(sum(x["판매수량"] for x in september), 1)
         self.assertEqual(october, [])
+
+    def test_return_sync_deducts_on_receipt_date_and_withdrawal_restores(self):
+        class OrderClient:
+            def orders(self, start, end):
+                return [{
+                    "orderId": "RG-RETURN-1",
+                    "paidAt": "2026-09-01T10:00:00+09:00",
+                    "orderItems": [{
+                        "vendorItemId": 7001,
+                        "productName": "상품A",
+                        "salesQuantity": 3,
+                        "unitSalesPrice": 10000,
+                    }],
+                }]
+
+        class ReturnClient:
+            def __init__(self, withdrawn=False):
+                self.withdrawn = withdrawn
+
+            def return_requests(self, start, end):
+                return [{
+                    "receiptId": "RET-1",
+                    "orderId": "RG-RETURN-1",
+                    "paymentId": "PAY-1",
+                    "receiptType": "RETURN",
+                    "receiptStatus": "RETURNS_UNCHECKED",
+                    "createdAt": "2026-09-02T11:00:00+09:00",
+                    "cancelCountSum": 1,
+                    "reasonCode": "CHANGEMIND",
+                    "reasonCodeText": "단순 변심",
+                    "returnItems": [{
+                        "vendorItemId": 7001,
+                        "vendorItemName": "상품A 옵션",
+                        "sellerProductName": "상품A",
+                        "cancelCount": 1,
+                        "purchaseCount": 3,
+                    }],
+                }]
+
+            def return_withdrawals(self, start, end):
+                if not self.withdrawn:
+                    return []
+                return [{
+                    "cancelId": "RET-1",
+                    "orderId": "RG-RETURN-1",
+                    "createdAt": "2026-09-03T12:00:00+09:00",
+                    "vendorItemIds": [7001],
+                }]
+
+        api.sync_orders(self.core, OrderClient(), "2026-09-01", "2026-09-03")
+        first = api.sync_returns(
+            self.core, ReturnClient(), "2026-09-01", "2026-09-03"
+        )
+        self.assertEqual(first["return_items"], 1)
+        self.assertEqual(first["matched"], 1)
+        rows, meta = api.provisional_rows_from_api(self.core, "2026-09")
+        self.assertEqual(meta["source"], "coupang_order_return_api")
+        self.assertEqual(rows[0]["판매수량"], 2)
+        self.assertEqual(rows[0]["예상매출"], 20000)
+        self.assertEqual(rows[0]["판매수수료"], -2160)
+
+        import sales_quantity_v0965 as quantities
+        counts, qty_meta = quantities.month_counts(
+            self.core, self.core.DEFAULT_DB, "2026-09"
+        )
+        self.assertTrue(qty_meta["returns_exact"])
+        self.assertEqual(counts["7001"]["sales_qty"], 3)
+        self.assertEqual(counts["7001"]["cancel_qty"], 1)
+        self.assertEqual(counts["7001"]["withdrawal_qty"], 0)
+        self.assertEqual(counts["7001"]["net_qty"], 2)
+
+        second = api.sync_returns(
+            self.core, ReturnClient(withdrawn=True), "2026-09-01", "2026-09-03"
+        )
+        self.assertEqual(second["withdrawals"], 1)
+        rows, _ = api.provisional_rows_from_api(self.core, "2026-09")
+        self.assertEqual(rows[0]["판매수량"], 3)
+        self.assertEqual(rows[0]["예상매출"], 30000)
+        counts, _ = quantities.month_counts(
+            self.core, self.core.DEFAULT_DB, "2026-09"
+        )
+        self.assertEqual(counts["7001"]["cancel_qty"], 1)
+        self.assertEqual(counts["7001"]["withdrawal_qty"], 1)
+        self.assertEqual(counts["7001"]["net_qty"], 3)
+
+        import pandas as pd
+        import return_management_v093 as return_management
+
+        signal, signal_meta = return_management._sales_signal(
+            pd, self.core, self.core.DEFAULT_DB, "2026-09-01", "2026-09-30"
+        )
+        self.assertEqual(signal_meta["source"], "coupang_return_api")
+        self.assertEqual(float(signal.iloc[0]["gross_qty"]), 3)
+        self.assertEqual(float(signal.iloc[0]["return_qty"]), 1)
+        self.assertEqual(float(signal.iloc[0]["withdrawal_qty"]), 1)
+        self.assertEqual(float(signal.iloc[0]["net_qty"]), 3)
+
+    def test_non_rg_return_is_stored_but_excluded_from_provisional(self):
+        class ReturnClient:
+            def return_requests(self, start, end):
+                return [{
+                    "receiptId": "MARKET-RET",
+                    "orderId": "MARKET-ORDER",
+                    "receiptType": "RETURN",
+                    "receiptStatus": "RETURNS_COMPLETED",
+                    "createdAt": "2026-09-02T11:00:00+09:00",
+                    "returnItems": [{"vendorItemId": 7001, "cancelCount": 2}],
+                }]
+
+            def return_withdrawals(self, start, end):
+                return []
+
+        result = api.sync_returns(
+            self.core, ReturnClient(), "2026-09-01", "2026-09-03"
+        )
+        self.assertEqual(result["return_items"], 1)
+        self.assertEqual(result["matched"], 0)
+        rows, meta = api.provisional_rows_from_api(self.core, "2026-09")
+        self.assertEqual(rows, [])
+        self.assertEqual(meta["return_unmatched_rows"], 1)
+
+    def test_cross_month_withdrawal_restores_in_withdrawal_month(self):
+        class OrderClient:
+            def orders(self, start, end):
+                return [{
+                    "orderId": "RG-CROSS-MONTH",
+                    "paidAt": "2026-08-31T10:00:00+09:00",
+                    "orderItems": [{
+                        "vendorItemId": 7001,
+                        "productName": "상품A",
+                        "salesQuantity": 1,
+                        "unitSalesPrice": 10000,
+                    }],
+                }]
+
+        class AugustReturnClient:
+            def return_requests(self, start, end):
+                return [{
+                    "receiptId": "RET-CROSS",
+                    "orderId": "RG-CROSS-MONTH",
+                    "receiptType": "RETURN",
+                    "receiptStatus": "RETURNS_UNCHECKED",
+                    "createdAt": "2026-08-31T15:00:00+09:00",
+                    "returnItems": [{"vendorItemId": 7001, "cancelCount": 1}],
+                }]
+
+            def return_withdrawals(self, start, end):
+                return []
+
+        class SeptemberWithdrawalClient:
+            def return_requests(self, start, end):
+                return []
+
+            def return_withdrawals(self, start, end):
+                return [{
+                    "cancelId": "RET-CROSS",
+                    "orderId": "RG-CROSS-MONTH",
+                    "createdAt": "2026-09-01T09:00:00+09:00",
+                    "vendorItemIds": [7001],
+                }]
+
+        api.sync_orders(self.core, OrderClient(), "2026-08-31", "2026-08-31")
+        api.sync_returns(
+            self.core, AugustReturnClient(), "2026-08-31", "2026-08-31"
+        )
+        api.sync_returns(
+            self.core, SeptemberWithdrawalClient(), "2026-09-01", "2026-09-01"
+        )
+
+        august, _ = api.provisional_rows_from_api(self.core, "2026-08")
+        september, _ = api.provisional_rows_from_api(self.core, "2026-09")
+        self.assertEqual(august[0]["판매수량"], 0)
+        self.assertEqual(august[0]["예상매출"], 0)
+        self.assertEqual(september[0]["판매수량"], 1)
+        self.assertEqual(september[0]["예상매출"], 10000)
+
+        import sales_quantity_v0965 as quantities
+        aug_counts, _ = quantities.month_counts(
+            self.core, self.core.DEFAULT_DB, "2026-08"
+        )
+        sep_counts, _ = quantities.month_counts(
+            self.core, self.core.DEFAULT_DB, "2026-09"
+        )
+        self.assertEqual(aug_counts["7001"]["net_qty"], 0)
+        self.assertEqual(sep_counts["7001"]["withdrawal_qty"], 1)
+        self.assertEqual(sep_counts["7001"]["net_qty"], 1)
+
+    def test_fully_returned_product_remains_visible_in_provisional_table(self):
+        sys.modules.setdefault("streamlit", types.SimpleNamespace())
+        import pnl_month_default_v0914 as monthly
+
+        view = monthly._aggregate([{
+            "옵션ID": "7001",
+            "상품명": "상품A",
+            "판매수량": 0,
+            "__activity_qty": 2,
+            "__unit_cost": 1500,
+            "예상매출": 0,
+            "매출원가": 0,
+            "판매수수료": 0,
+            "입출고비": 0,
+            "배송비": 0,
+            "반품충당": 0,
+            "광고비": 0,
+            "광고제외이익": 0,
+            "예상이익": 0,
+        }])
+        self.assertEqual(len(view), 1)
+        self.assertEqual(float(view.iloc[0]["원가/개"]), 1500)
 
     def test_complete_revenue_month_replaces_legacy_sales_without_doubling(self):
         import pandas as pd

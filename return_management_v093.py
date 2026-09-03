@@ -96,6 +96,83 @@ def _sales_signal(pd_obj, core_module, db_path, start_iso: str | None, end_iso: 
     present, the difference is used. If only net exists, return quantity is unknown.
     """
     tables = _schema(core_module, db_path)
+    api_tables = {
+        "coupang_rg_order_items", "coupang_return_items",
+        "coupang_return_withdrawals", "coupang_api_sync_runs",
+    }
+    if api_tables.issubset(tables):
+        try:
+            import coupang_api_sync_v09140 as coupang_api
+
+            with core_module._conn(db_path) as c:
+                run_where = ["sync_type='returns'", "status='success'"]
+                run_params: list[Any] = []
+                if start_iso:
+                    run_where.append("period_end>=?")
+                    run_params.append(start_iso)
+                if end_iso:
+                    run_where.append("period_start<=?")
+                    run_params.append(end_iso)
+                return_synced = int(c.execute(
+                    "SELECT COUNT(*) n FROM coupang_api_sync_runs WHERE " + " AND ".join(run_where),
+                    tuple(run_params),
+                ).fetchone()["n"]) > 0
+                if return_synced:
+                    order_where = ["product_id IS NOT NULL"]
+                    order_params: list[Any] = []
+                    if start_iso:
+                        order_where.append("paid_date>=?")
+                        order_params.append(start_iso)
+                    if end_iso:
+                        order_where.append("paid_date<=?")
+                        order_params.append(end_iso)
+                    order_rows = c.execute(
+                        """SELECT product_id,SUM(ABS(sales_quantity)) gross_qty
+                           FROM coupang_rg_order_items WHERE """
+                        + " AND ".join(order_where)
+                        + " GROUP BY product_id",
+                        tuple(order_params),
+                    ).fetchall()
+                    events = coupang_api._matched_return_events(c, start_iso, end_iso)
+                    combined: dict[int, dict[str, float]] = {}
+                    for row in order_rows:
+                        combined[int(row["product_id"])] = {
+                            "gross_qty": _num(row["gross_qty"]),
+                            "return_qty": 0.0,
+                            "withdrawal_qty": 0.0,
+                        }
+                    for product_id, event in events.items():
+                        target = combined.setdefault(int(product_id), {
+                            "gross_qty": 0.0,
+                            "return_qty": 0.0,
+                            "withdrawal_qty": 0.0,
+                        })
+                        target["return_qty"] = _num(event.get("return_qty"))
+                        target["withdrawal_qty"] = _num(event.get("withdrawal_qty"))
+                    api_rows = []
+                    for product_id, values in combined.items():
+                        gross = _num(values["gross_qty"])
+                        returns = _num(values["return_qty"])
+                        withdrawals = _num(values["withdrawal_qty"])
+                        api_rows.append({
+                            "product_id": product_id,
+                            "gross_qty": gross,
+                            "return_qty": returns,
+                            "withdrawal_qty": withdrawals,
+                            "net_qty": gross - returns + withdrawals,
+                            "return_rate": returns / gross * 100 if gross else 0.0,
+                        })
+                    return pd_obj.DataFrame(api_rows), {
+                        "available": True,
+                        "label": "반품·취소수량",
+                        "period_filter": True,
+                        "exact_return": True,
+                        "source": "coupang_return_api",
+                    }
+        except Exception:
+            # A legacy DB remains readable even if the API tables are incomplete.
+            pass
+
     cols = tables.get("sales_stats", set())
     if not cols or "product_id" not in cols:
         return pd_obj.DataFrame(), {
@@ -250,14 +327,16 @@ def _build_view(pd_obj, core_module, db_path, period_label: str):
     if not sales.empty:
         out = out.merge(sales, how="left", left_on="id", right_on="product_id")
     else:
-        for col in ("gross_qty", "return_qty", "net_qty", "return_rate"):
+        for col in ("gross_qty", "return_qty", "withdrawal_qty", "net_qty", "return_rate"):
             out[col] = 0.0
     if not costs.empty:
         out = out.merge(costs, how="left", left_on="id", right_on="product_id", suffixes=("", "_cost"))
     if "return_cost" not in out.columns:
         out["return_cost"] = 0.0
 
-    for col in ("return_stock", "return_inbound", "gross_qty", "return_qty", "net_qty", "return_rate", "return_cost"):
+    if "withdrawal_qty" not in out.columns:
+        out["withdrawal_qty"] = 0.0
+    for col in ("return_stock", "return_inbound", "gross_qty", "return_qty", "withdrawal_qty", "net_qty", "return_rate", "return_cost"):
         out[col] = pd_obj.to_numeric(out[col], errors="coerce").fillna(0)
 
     keep = (out["return_stock"].abs() > 1e-12) | (out["return_qty"] > 0) | (out["gross_qty"] > 0) | (out["return_cost"] != 0)
@@ -273,16 +352,24 @@ def _render_summary(st_obj, df, meta, total_return_cost):
     gross = float(df["gross_qty"].sum()) if not df.empty else 0.0
     rate = total_returns / gross * 100 if gross else 0.0
 
-    c1, c2, c3, c4, c5 = st_obj.columns(5)
+    withdrawals = float(df["withdrawal_qty"].sum()) if "withdrawal_qty" in df.columns and not df.empty else 0.0
+    columns = st_obj.columns(6 if meta.get("source") == "coupang_return_api" else 5)
+    c1, c2, c3, c4 = columns[:4]
     c1.metric("반품창고 현재수량", _fmt_qty(current_units))
     c2.metric("반품 보유상품", f"{current_skus:,}개")
     if meta.get("available"):
-        c3.metric("누적 반품수", _fmt_qty(total_returns))
-        c4.metric("반품률", _fmt_pct(rate))
+        c3.metric("반품·취소 접수", _fmt_qty(total_returns))
+        if meta.get("source") == "coupang_return_api":
+            c4.metric("반품철회", _fmt_qty(withdrawals))
+            columns[4].metric("반품 접수율", _fmt_pct(rate))
+            columns[5].metric("반품비용", _fmt_money(total_return_cost))
+        else:
+            c4.metric("반품률", _fmt_pct(rate))
+            columns[4].metric("반품비용", _fmt_money(total_return_cost))
     else:
         c3.metric("누적 반품수", "계산 불가")
         c4.metric("반품률", "계산 불가")
-    c5.metric("반품비용", _fmt_money(total_return_cost))
+        columns[4].metric("반품비용", _fmt_money(total_return_cost))
 
 
 def _display_table(pd_obj, df, meta):
@@ -294,6 +381,7 @@ def _display_table(pd_obj, df, meta):
             "상품명": str(r.name or ""),
             "판매수량": _fmt_qty(r.gross_qty) if meta.get("available") else "-",
             return_label: _fmt_qty(r.return_qty) if meta.get("available") else "-",
+            **({"반품철회": _fmt_qty(r.withdrawal_qty)} if meta.get("source") == "coupang_return_api" else {}),
             "반품률": _fmt_pct(r.return_rate) if meta.get("available") else "-",
             "현재 반품창고": _fmt_qty(r.return_stock),
             "반품비용": _fmt_money(r.return_cost),
@@ -326,8 +414,15 @@ def _render_product_detail(st_obj, pd_obj, core_module, db_path, df, meta, perio
     c2.metric("반품수량", _fmt_qty(row["return_qty"]) if meta.get("available") else "계산 불가")
     c3.metric("반품률", _fmt_pct(row["return_rate"]) if meta.get("available") else "계산 불가")
     c4.metric("현재 반품창고", _fmt_qty(row["return_stock"]))
+    if meta.get("source") == "coupang_return_api":
+        st_obj.caption(
+            f"선택기간 반품철회 {_fmt_qty(row.get('withdrawal_qty', 0))} · "
+            f"순판매 {_fmt_qty(row.get('net_qty', 0))}"
+        )
 
     if not meta.get("available") or not meta.get("period_filter"):
+        return
+    if meta.get("source") == "coupang_return_api":
         return
     tables = _schema(core_module, db_path)
     cols = tables.get("sales_stats", set())
@@ -389,7 +484,12 @@ def render_return_management_page(st, pd, core, page_header, section, **_kwargs)
         st.caption(f"조회기간: {start_iso} ~ {end_iso}")
 
     if meta.get("available"):
-        if meta.get("exact_return"):
+        if meta.get("source") == "coupang_return_api":
+            st.caption(
+                "반품수량은 수동 동기화한 쿠팡 반품·취소 API의 접수일 기준입니다. "
+                "로켓그로스 주문번호·옵션ID와 일치한 건만 집계하며 철회는 철회일에 순판매수량으로 복원합니다."
+            )
+        elif meta.get("exact_return"):
             st.caption("반품수량은 판매통계에 저장된 명시적 반품수량 컬럼을 사용합니다.")
         else:
             st.warning(
@@ -419,7 +519,8 @@ def render_return_management_page(st, pd, core, page_header, section, **_kwargs)
     with st.expander("지표 기준"):
         st.markdown(
             "- **반품창고 현재수량**: 반품창고 재고원장의 현재 합계\n"
-            "- **누적 반품수 / 반품률**: 판매통계에 반품·취소수량이 있을 때만 계산\n"
+            "- **누적 반품수 / 반품률**: API 동기화 시 접수일 기준, 아니면 판매통계의 반품·취소수량 기준\n"
+            "- **반품철회**: 철회일에 순판매수량과 잠정매출을 복원\n"
             "- **반품비용**: 월 확정손익의 반품회수비 + 반품재입고비\n"
             "- 반품회수비 정산의 행 개수는 반품건수로 간주하지 않음"
         )

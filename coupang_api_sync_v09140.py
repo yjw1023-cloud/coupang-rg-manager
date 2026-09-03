@@ -1,4 +1,4 @@
-"""Manual Coupang Open API synchronization for RG Manager v0.9.144.
+"""Manual Coupang Open API synchronization for RG Manager v0.9.145.
 
 The module deliberately performs no network work at import/startup.  Every API
 request is initiated by an explicit Streamlit button click.
@@ -8,6 +8,7 @@ Supported official endpoints:
 - Rocket warehouse inventory summaries
 - Revenue/sales details
 - Settlement/payment histories
+- Return/cancellation requests and return-withdrawal histories
 
 Raw API facts are preserved in dedicated SQLite tables.  Rows are linked to the
 existing product master by immutable Coupang vendorItemId (ERP option_id).  The
@@ -289,6 +290,73 @@ class CoupangClient:
         payload = self.request(path, [("revenueRecognitionYearMonth", str(month))])
         return _extract_rows(payload) if isinstance(payload, dict) else _extract_rows(payload)
 
+    def return_requests(self, start: date | str, end: date | str) -> list[dict[str, Any]]:
+        """Read return and pre-shipment cancellation requests by receipt date.
+
+        Coupang requires a status for RETURN searches but forbids it for CANCEL
+        searches.  Short seven-day chunks reduce the timeout risk documented for
+        this endpoint; receipt ids are de-duplicated after all current statuses
+        have been queried.
+        """
+        path = (
+            "/v2/providers/openapi/apis/api/v6/vendors/"
+            f"{self.credentials.vendor_id}/returnRequests"
+        )
+        found: dict[str, dict[str, Any]] = {}
+        for a, b in _date_chunks(start, end, 7):
+            common = [
+                ("createdAtFrom", a.isoformat()),
+                ("createdAtTo", b.isoformat()),
+                ("maxPerPage", 50),
+            ]
+            for status in ("RU", "UC", "CC", "PR"):
+                rows = self._paged(
+                    path,
+                    common + [("status", status), ("cancelType", "RETURN")],
+                    "nextToken",
+                )
+                for row in rows:
+                    receipt_id = _text(row.get("receiptId"))
+                    if receipt_id:
+                        found[receipt_id] = row
+            cancel_rows = self._paged(
+                path, common + [("cancelType", "CANCEL")], "nextToken"
+            )
+            for row in cancel_rows:
+                receipt_id = _text(row.get("receiptId"))
+                if receipt_id:
+                    found[receipt_id] = row
+        return list(found.values())
+
+    def return_withdrawals(self, start: date | str, end: date | str) -> list[dict[str, Any]]:
+        """Read return withdrawals in API-supported seven-day chunks."""
+        path = (
+            "/v2/providers/openapi/apis/api/v4/vendors/"
+            f"{self.credentials.vendor_id}/returnWithdrawRequests"
+        )
+        rows: list[dict[str, Any]] = []
+        for a, b in _date_chunks(start, end, 7):
+            page = "1"
+            seen: set[str] = set()
+            for _page in range(500):
+                payload = self.request(path, [
+                    ("dateFrom", a.isoformat()),
+                    ("dateTo", b.isoformat()),
+                    ("pageIndex", page),
+                    ("sizePerPage", 100),
+                ])
+                rows.extend(_extract_rows(payload))
+                nxt = _text(payload.get("nextPageIndex")) if isinstance(payload, dict) else ""
+                if not nxt:
+                    break
+                if nxt in seen:
+                    raise CoupangAPIError("쿠팡 반품철회 API가 동일한 다음 페이지 값을 반복했습니다.")
+                seen.add(nxt)
+                page = nxt
+            else:
+                raise CoupangAPIError("쿠팡 반품철회 API 페이지 수가 안전 한도를 초과했습니다.")
+        return rows
+
 
 class _DataBlob(ctypes.Structure):
     _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_byte))]
@@ -528,6 +596,66 @@ def ensure_schema(core: Any, db_path: Any | None = None) -> None:
                 synced_at TEXT NOT NULL,
                 PRIMARY KEY(revenue_month,settlement_type,settlement_date,item_index)
             );
+
+            CREATE TABLE IF NOT EXISTS coupang_return_requests(
+                receipt_id TEXT PRIMARY KEY,
+                order_id TEXT NOT NULL,
+                payment_id TEXT,
+                receipt_type TEXT NOT NULL,
+                receipt_status TEXT,
+                created_at TEXT,
+                created_date TEXT NOT NULL,
+                modified_at TEXT,
+                complete_confirm_date TEXT,
+                cancel_count_sum REAL NOT NULL DEFAULT 0,
+                fault_by_type TEXT,
+                reason_code TEXT,
+                reason_code_text TEXT,
+                return_shipping_charge REAL NOT NULL DEFAULT 0,
+                raw_json TEXT NOT NULL,
+                synced_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS ix_coupang_return_requests_created
+              ON coupang_return_requests(created_date,order_id);
+
+            CREATE TABLE IF NOT EXISTS coupang_return_items(
+                receipt_id TEXT NOT NULL,
+                item_index INTEGER NOT NULL,
+                order_id TEXT NOT NULL,
+                receipt_type TEXT NOT NULL,
+                receipt_status TEXT,
+                created_at TEXT,
+                created_date TEXT NOT NULL,
+                vendor_item_id TEXT NOT NULL,
+                product_id INTEGER,
+                vendor_item_name TEXT,
+                seller_product_id TEXT,
+                seller_product_name TEXT,
+                cancel_count REAL NOT NULL DEFAULT 0,
+                purchase_count REAL NOT NULL DEFAULT 0,
+                shipment_box_id TEXT,
+                release_status TEXT,
+                raw_json TEXT NOT NULL,
+                synced_at TEXT NOT NULL,
+                PRIMARY KEY(receipt_id,item_index)
+            );
+            CREATE INDEX IF NOT EXISTS ix_coupang_return_items_created
+              ON coupang_return_items(created_date,order_id,vendor_item_id);
+
+            CREATE TABLE IF NOT EXISTS coupang_return_withdrawals(
+                cancel_id TEXT NOT NULL,
+                item_index INTEGER NOT NULL,
+                order_id TEXT NOT NULL,
+                created_at TEXT,
+                created_date TEXT NOT NULL,
+                vendor_item_id TEXT NOT NULL,
+                refund_delivery_duty TEXT,
+                raw_json TEXT NOT NULL,
+                synced_at TEXT NOT NULL,
+                PRIMARY KEY(cancel_id,item_index)
+            );
+            CREATE INDEX IF NOT EXISTS ix_coupang_return_withdrawals_created
+              ON coupang_return_withdrawals(created_date,order_id,vendor_item_id);
 
             CREATE TABLE IF NOT EXISTS coupang_api_option_catalog(
                 vendor_item_id TEXT PRIMARY KEY,
@@ -1017,6 +1145,13 @@ def _paid_parts(value: Any) -> tuple[str, str]:
         return text, text[:10] if len(text) >= 10 else ""
 
 
+def _money_object(value: Any) -> float:
+    """Convert Coupang's currency object (units/nanos) or a scalar to won."""
+    if isinstance(value, dict):
+        return _num(value.get("units")) + _num(value.get("nanos")) / 1_000_000_000
+    return _num(value)
+
+
 def sync_orders(core: Any, client: CoupangClient, start: date | str, end: date | str, db_path=None):
     db = db_path or core.DEFAULT_DB
     a, b = _to_date(start), _to_date(end)
@@ -1078,6 +1213,190 @@ def sync_orders(core: Any, client: CoupangClient, start: date | str, end: date |
         )
         _run_finish(core, db, run_id, "success", len(flattened), matched, message)
         return {"run_id": run_id, "orders": len(orders), "rows": len(flattened), "matched": matched}
+    except Exception as exc:
+        _run_finish(core, db, run_id, "failed", message=str(exc))
+        raise
+
+
+def sync_returns(core: Any, client: CoupangClient, start: date | str, end: date | str, db_path=None):
+    """Manually synchronize return/cancel requests and return withdrawals.
+
+    All seller return rows are retained as raw facts.  A row is counted as a
+    Rocket Growth P&L return only when its order id and vendor item id match an
+    already synchronized RG order; this prevents marketplace returns from being
+    mixed into Rocket Growth results.
+    """
+    db = db_path or core.DEFAULT_DB
+    a, b = _to_date(start), _to_date(end)
+    run_id = _run_start(core, db, "returns", a.isoformat(), b.isoformat())
+    try:
+        requests = client.return_requests(a, b)
+        withdrawals = client.return_withdrawals(a, b)
+        now = _local_now(core)
+        observations = []
+        for request_row in requests:
+            items = request_row.get("returnItems") or [] if isinstance(request_row, dict) else []
+            for item in items if isinstance(items, list) else []:
+                if not isinstance(item, dict):
+                    continue
+                observations.append({
+                    "vendor_item_id": item.get("vendorItemId"),
+                    "product_name": item.get("sellerProductName"),
+                    "vendor_item_name": item.get("vendorItemName"),
+                    "source": "returns",
+                })
+
+        request_rows = []
+        item_rows = []
+        withdrawal_rows = []
+        with core._conn(db) as con:
+            _catalog_upsert(con, observations, now)
+            auto_linked = _auto_link_verified_return_aliases(
+                con, [x.get("vendor_item_id") for x in observations], now
+            )
+            mapping = _product_map(con)
+            for request_row in requests:
+                if not isinstance(request_row, dict):
+                    continue
+                receipt_id = _text(request_row.get("receiptId"))
+                order_id = _text(request_row.get("orderId"))
+                created_at, created_date = _paid_parts(request_row.get("createdAt"))
+                if not receipt_id or not order_id or not created_date:
+                    continue
+                receipt_type = _text(request_row.get("receiptType")) or "RETURN"
+                receipt_status = _text(request_row.get("receiptStatus"))
+                request_rows.append((
+                    receipt_id, order_id, _text(request_row.get("paymentId")),
+                    receipt_type, receipt_status, created_at, created_date,
+                    _text(request_row.get("modifiedAt")),
+                    _text(request_row.get("completeConfirmDate")),
+                    _num(request_row.get("cancelCountSum")),
+                    _text(request_row.get("faultByType")),
+                    _text(request_row.get("reasonCode")),
+                    _text(request_row.get("reasonCodeText")),
+                    _money_object(request_row.get("returnShippingCharge")),
+                    _json(request_row), now,
+                ))
+                items = request_row.get("returnItems") or []
+                for idx, item in enumerate(items if isinstance(items, list) else []):
+                    if not isinstance(item, dict):
+                        continue
+                    oid = _oid(item.get("vendorItemId"))
+                    if not oid:
+                        continue
+                    item_rows.append((
+                        receipt_id, idx, order_id, receipt_type, receipt_status,
+                        created_at, created_date, oid, mapping.get(oid),
+                        _text(item.get("vendorItemName")),
+                        _text(item.get("sellerProductId")),
+                        _text(item.get("sellerProductName")),
+                        abs(_num(item.get("cancelCount"))),
+                        abs(_num(item.get("purchaseCount"))),
+                        _text(item.get("shipmentBoxId")),
+                        _text(item.get("releaseStatus")), _json(item), now,
+                    ))
+
+            for withdrawal in withdrawals:
+                if not isinstance(withdrawal, dict):
+                    continue
+                cancel_id = _text(withdrawal.get("cancelId"))
+                order_id = _text(withdrawal.get("orderId"))
+                created_at, created_date = _paid_parts(withdrawal.get("createdAt"))
+                option_ids = withdrawal.get("vendorItemIds") or []
+                if not cancel_id or not order_id or not created_date:
+                    continue
+                for idx, value in enumerate(option_ids if isinstance(option_ids, list) else []):
+                    oid = _oid(value)
+                    if not oid:
+                        continue
+                    withdrawal_rows.append((
+                        cancel_id, idx, order_id, created_at, created_date, oid,
+                        _text(withdrawal.get("refundDeliveryDuty")),
+                        _json(withdrawal), now,
+                    ))
+
+            # Replace each returned receipt atomically so a later status update
+            # cannot leave obsolete item rows behind.
+            receipt_ids = [row[0] for row in request_rows]
+            if receipt_ids:
+                con.executemany(
+                    "DELETE FROM coupang_return_items WHERE receipt_id=?",
+                    [(receipt_id,) for receipt_id in receipt_ids],
+                )
+            withdrawal_ids = sorted({row[0] for row in withdrawal_rows})
+            if withdrawal_ids:
+                con.executemany(
+                    "DELETE FROM coupang_return_withdrawals WHERE cancel_id=?",
+                    [(cancel_id,) for cancel_id in withdrawal_ids],
+                )
+            con.executemany(
+                """INSERT INTO coupang_return_requests
+                   (receipt_id,order_id,payment_id,receipt_type,receipt_status,
+                    created_at,created_date,modified_at,complete_confirm_date,
+                    cancel_count_sum,fault_by_type,reason_code,reason_code_text,
+                    return_shipping_charge,raw_json,synced_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(receipt_id) DO UPDATE SET
+                     order_id=excluded.order_id,payment_id=excluded.payment_id,
+                     receipt_type=excluded.receipt_type,receipt_status=excluded.receipt_status,
+                     created_at=excluded.created_at,created_date=excluded.created_date,
+                     modified_at=excluded.modified_at,
+                     complete_confirm_date=excluded.complete_confirm_date,
+                     cancel_count_sum=excluded.cancel_count_sum,
+                     fault_by_type=excluded.fault_by_type,reason_code=excluded.reason_code,
+                     reason_code_text=excluded.reason_code_text,
+                     return_shipping_charge=excluded.return_shipping_charge,
+                     raw_json=excluded.raw_json,synced_at=excluded.synced_at""",
+                request_rows,
+            )
+            con.executemany(
+                """INSERT INTO coupang_return_items
+                   (receipt_id,item_index,order_id,receipt_type,receipt_status,
+                    created_at,created_date,vendor_item_id,product_id,vendor_item_name,
+                    seller_product_id,seller_product_name,cancel_count,purchase_count,
+                    shipment_box_id,release_status,raw_json,synced_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                item_rows,
+            )
+            con.executemany(
+                """INSERT INTO coupang_return_withdrawals
+                   (cancel_id,item_index,order_id,created_at,created_date,vendor_item_id,
+                    refund_delivery_duty,raw_json,synced_at)
+                   VALUES(?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(cancel_id,item_index) DO UPDATE SET
+                     order_id=excluded.order_id,created_at=excluded.created_at,
+                     created_date=excluded.created_date,vendor_item_id=excluded.vendor_item_id,
+                     refund_delivery_duty=excluded.refund_delivery_duty,
+                     raw_json=excluded.raw_json,synced_at=excluded.synced_at""",
+                withdrawal_rows,
+            )
+            matched = int(con.execute(
+                """SELECT COUNT(*) n FROM coupang_return_items r
+                   WHERE r.receipt_id IN ({})
+                     AND EXISTS (
+                       SELECT 1 FROM coupang_rg_order_items o
+                       WHERE o.order_id=r.order_id
+                         AND o.vendor_item_id=r.vendor_item_id
+                         AND o.product_id IS NOT NULL
+                     )""".format(",".join("?" for _ in receipt_ids) or "NULL"),
+                tuple(receipt_ids),
+            ).fetchone()["n"])
+        received = len(item_rows) + len(withdrawal_rows)
+        message = (
+            f"반품·취소 {len(request_rows):,}건/{len(item_rows):,}개 상품행"
+            f" · 철회 {len(withdrawal_rows):,}개 옵션 · RG 주문연결 {matched:,}개"
+            f" · 검증된 반품옵션 자동연결 {auto_linked:,}개"
+        )
+        _run_finish(core, db, run_id, "success", received, matched, message)
+        return {
+            "run_id": run_id,
+            "requests": len(request_rows),
+            "rows": received,
+            "return_items": len(item_rows),
+            "withdrawals": len(withdrawal_rows),
+            "matched": matched,
+            "auto_linked": auto_linked,
+        }
     except Exception as exc:
         _run_finish(core, db, run_id, "failed", message=str(exc))
         raise
@@ -1373,6 +1692,7 @@ def _summary(core: Any, db: Any) -> dict[str, Any]:
         for table in (
             "coupang_rg_order_items", "coupang_rg_inventory",
             "coupang_revenue_items", "coupang_settlement_histories",
+            "coupang_return_items", "coupang_return_withdrawals",
         ):
             counts[table] = int(con.execute(f'SELECT COUNT(*) n FROM "{table}"').fetchone()["n"])
         unmatched = {
@@ -1384,6 +1704,14 @@ def _summary(core: Any, db: Any) -> dict[str, Any]:
             ).fetchone()["n"]),
             "revenue": int(con.execute(
                 "SELECT COUNT(*) n FROM coupang_revenue_items WHERE product_id IS NULL"
+            ).fetchone()["n"]),
+            "returns": int(con.execute(
+                """SELECT COUNT(*) n FROM coupang_return_items r
+                   WHERE NOT EXISTS (
+                     SELECT 1 FROM coupang_rg_order_items o
+                     WHERE o.order_id=r.order_id AND o.vendor_item_id=r.vendor_item_id
+                       AND o.product_id IS NOT NULL
+                   )"""
             ).fetchone()["n"]),
         }
         inventory = con.execute(
@@ -1426,6 +1754,27 @@ def _summary(core: Any, db: Any) -> dict[str, Any]:
                FROM coupang_settlement_histories
                ORDER BY revenue_month DESC,settlement_date DESC,item_index DESC LIMIT 30"""
         ).fetchall()
+        returns = con.execute(
+            """SELECT r.created_at,r.receipt_id,r.order_id,r.receipt_type,
+                      r.receipt_status,r.vendor_item_id,
+                      COALESCE(p.name,r.seller_product_name,r.vendor_item_name,'') product_name,
+                      r.cancel_count,q.reason_code_text,q.fault_by_type,
+                      CASE WHEN w.cancel_id IS NULL THEN 0 ELSE 1 END withdrawn,
+                      CASE WHEN o.order_id IS NULL THEN 0 ELSE 1 END rg_matched,
+                      r.synced_at
+               FROM coupang_return_items r
+               LEFT JOIN coupang_return_requests q ON q.receipt_id=r.receipt_id
+               LEFT JOIN coupang_return_withdrawals w
+                 ON w.cancel_id=r.receipt_id AND w.vendor_item_id=r.vendor_item_id
+               LEFT JOIN (
+                 SELECT order_id,vendor_item_id,MAX(product_id) product_id
+                 FROM coupang_rg_order_items WHERE product_id IS NOT NULL
+                 GROUP BY order_id,vendor_item_id
+               ) o ON o.order_id=r.order_id AND o.vendor_item_id=r.vendor_item_id
+               LEFT JOIN products p ON p.id=COALESCE(o.product_id,r.product_id)
+               ORDER BY r.created_at DESC,r.receipt_id DESC,r.item_index
+               LIMIT 100"""
+        ).fetchall()
     return {
         "last": [dict(x) for x in last], "counts": counts, "unmatched": unmatched,
         "inventory": [dict(x) for x in inventory],
@@ -1442,6 +1791,7 @@ def _summary(core: Any, db: Any) -> dict[str, Any]:
         "normal_registry_count": normal_registry_count,
         "revenue": [dict(x) for x in revenue],
         "settlements": [dict(x) for x in settlements],
+        "returns": [dict(x) for x in returns],
     }
 
 
@@ -1571,6 +1921,125 @@ def _order_month_coverage(core: Any, db: Any, month: str) -> dict[str, Any]:
     }
 
 
+def _return_month_coverage(core: Any, db: Any, month: str) -> dict[str, Any]:
+    """Coverage of manual return/cancel plus withdrawal synchronization."""
+    start, end = _month_bounds(month)
+    covered: set[date] = set()
+    with core._conn(db) as con:
+        rows = con.execute(
+            """SELECT period_start,period_end
+               FROM coupang_api_sync_runs
+               WHERE sync_type='returns' AND status='success'
+                 AND period_end>=? AND period_start<=?""",
+            (start.isoformat(), end.isoformat()),
+        ).fetchall()
+        for row in rows:
+            try:
+                left = max(start, _to_date(row["period_start"]))
+                right = min(end, _to_date(row["period_end"]))
+            except Exception:
+                continue
+            cursor = left
+            while cursor <= right:
+                covered.add(cursor)
+                cursor += timedelta(days=1)
+        total = int(con.execute(
+            """SELECT COUNT(*) n FROM coupang_return_items
+               WHERE created_date>=? AND created_date<=?""",
+            (start.isoformat(), end.isoformat()),
+        ).fetchone()["n"])
+        matched = int(con.execute(
+            """SELECT COUNT(*) n FROM coupang_return_items r
+               WHERE r.created_date>=? AND r.created_date<=?
+                 AND EXISTS (
+                   SELECT 1 FROM coupang_rg_order_items o
+                   WHERE o.order_id=r.order_id AND o.vendor_item_id=r.vendor_item_id
+                     AND o.product_id IS NOT NULL
+                 )""",
+            (start.isoformat(), end.isoformat()),
+        ).fetchone()["n"])
+        withdrawals = int(con.execute(
+            """SELECT COUNT(*) n FROM coupang_return_withdrawals
+               WHERE created_date>=? AND created_date<=?""",
+            (start.isoformat(), end.isoformat()),
+        ).fetchone()["n"])
+    expected = (end - start).days + 1
+    return {
+        "complete": len(covered) == expected,
+        "covered_days": len(covered),
+        "expected_days": expected,
+        "rows": total,
+        "matched": matched,
+        "unmatched": total - matched,
+        "withdrawals": withdrawals,
+    }
+
+
+def _matched_return_events(
+    con: sqlite3.Connection,
+    start_iso: str | None,
+    end_iso: str | None,
+) -> dict[int, dict[str, float]]:
+    """Aggregate RG-matched request and withdrawal events by ERP product."""
+    date_where = ""
+    params: list[Any] = []
+    if start_iso:
+        date_where += " AND {alias}.created_date>=?"
+        params.append(start_iso)
+    if end_iso:
+        date_where += " AND {alias}.created_date<=?"
+        params.append(end_iso)
+    match_cte = """
+        WITH order_match AS (
+          SELECT order_id,vendor_item_id,MAX(product_id) product_id,
+                 MAX(ABS(unit_sales_price)) unit_sales_price
+          FROM coupang_rg_order_items
+          WHERE product_id IS NOT NULL
+          GROUP BY order_id,vendor_item_id
+        )
+    """
+    request_sql = match_cte + """
+        SELECT o.product_id,SUM(ABS(r.cancel_count)) qty,
+               SUM(ABS(r.cancel_count)*o.unit_sales_price) amount
+        FROM coupang_return_items r
+        JOIN order_match o ON o.order_id=r.order_id
+                          AND o.vendor_item_id=r.vendor_item_id
+        WHERE 1=1 {where}
+        GROUP BY o.product_id
+    """.format(where=date_where.format(alias="r"))
+    withdrawal_sql = match_cte + """
+        SELECT o.product_id,SUM(ABS(r.cancel_count)) qty,
+               SUM(ABS(r.cancel_count)*o.unit_sales_price) amount
+        FROM coupang_return_withdrawals w
+        JOIN coupang_return_items r ON r.receipt_id=w.cancel_id
+                                   AND r.vendor_item_id=w.vendor_item_id
+        JOIN order_match o ON o.order_id=r.order_id
+                          AND o.vendor_item_id=r.vendor_item_id
+        WHERE 1=1 {where}
+        GROUP BY o.product_id
+    """.format(where=date_where.format(alias="w"))
+    request_rows = con.execute(request_sql, tuple(params)).fetchall()
+    withdrawal_rows = con.execute(withdrawal_sql, tuple(params)).fetchall()
+    out: dict[int, dict[str, float]] = {}
+    for row in request_rows:
+        out[int(row["product_id"])] = {
+            "return_qty": _num(row["qty"]),
+            "return_amount": _num(row["amount"]),
+            "withdrawal_qty": 0.0,
+            "withdrawal_amount": 0.0,
+        }
+    for row in withdrawal_rows:
+        target = out.setdefault(int(row["product_id"]), {
+            "return_qty": 0.0,
+            "return_amount": 0.0,
+            "withdrawal_qty": 0.0,
+            "withdrawal_amount": 0.0,
+        })
+        target["withdrawal_qty"] += _num(row["qty"])
+        target["withdrawal_amount"] += _num(row["amount"])
+    return out
+
+
 def _api_revenue_aggregate(core: Any, db: Any, month: str):
     start, end = _month_bounds(month)
     with core._conn(db) as con:
@@ -1611,11 +2080,12 @@ def _api_revenue_aggregate(core: Any, db: Any, month: str):
 
 
 def provisional_rows_from_api(core: Any, month: str, db_path=None):
-    """Build provisional rows from orders grouped by customer payment date.
+    """Build provisional rows from paid orders and return events.
 
     Revenue-recognition facts belong to confirmed P&L and must never move an
-    order into a different provisional month.  Until the settlement fee is
-    confirmed, use the ERP's established 10.8% commission estimate.
+    order into a different provisional month. Returns/cancellations are deducted
+    on their receipt date and a later withdrawal restores them on the withdrawal
+    date. Until the settlement fee is confirmed, use the ERP's 10.8% estimate.
     """
     db = db_path or core.DEFAULT_DB
     ensure_schema(core, db)
@@ -1631,7 +2101,7 @@ def provisional_rows_from_api(core: Any, month: str, db_path=None):
                WHERE paid_date>=? AND paid_date<=? AND product_id IS NULL""",
             (start.isoformat(), end.isoformat()),
         ).fetchone()["n"])
-        rows = con.execute(
+        order_rows = con.execute(
             """SELECT o.product_id,p.option_id,p.item_code,p.name,p.unit_cost,
                       SUM(ABS(o.sales_quantity)) gross_qty,
                       SUM(ABS(o.sales_quantity) * o.unit_sales_price) revenue
@@ -1643,22 +2113,68 @@ def provisional_rows_from_api(core: Any, month: str, db_path=None):
                ORDER BY p.name,o.product_id""",
             (start.isoformat(), end.isoformat()),
         ).fetchall()
+        return_events = _matched_return_events(con, start.isoformat(), end.isoformat())
+        products = {
+            int(row["id"]): row
+            for row in con.execute(
+                "SELECT id,option_id,item_code,name,unit_cost FROM products"
+            ).fetchall()
+        }
+
+    aggregates: dict[int, dict[str, float]] = {}
+    for row in order_rows:
+        aggregates[int(row["product_id"])] = {
+            "gross_qty": _num(row["gross_qty"]),
+            "gross_revenue": _num(row["revenue"]),
+            "return_qty": 0.0,
+            "return_amount": 0.0,
+            "withdrawal_qty": 0.0,
+            "withdrawal_amount": 0.0,
+        }
+    for product_id, event in return_events.items():
+        target = aggregates.setdefault(product_id, {
+            "gross_qty": 0.0,
+            "gross_revenue": 0.0,
+            "return_qty": 0.0,
+            "return_amount": 0.0,
+            "withdrawal_qty": 0.0,
+            "withdrawal_amount": 0.0,
+        })
+        target.update(event)
 
     output = []
-    for row in rows:
-        qty = _num(row["gross_qty"])
-        revenue = _num(row["revenue"])
-        unit_cost = abs(_num(row["unit_cost"]))
+    for product_id, values in sorted(
+        aggregates.items(),
+        key=lambda item: (
+            _text(products[item[0]]["name"]) if item[0] in products else "",
+            item[0],
+        ),
+    ):
+        product = products.get(product_id)
+        if product is None:
+            continue
+        gross_qty = _num(values["gross_qty"])
+        return_qty = _num(values["return_qty"])
+        withdrawal_qty = _num(values["withdrawal_qty"])
+        qty = gross_qty - return_qty + withdrawal_qty
+        revenue = (
+            _num(values["gross_revenue"])
+            - _num(values["return_amount"])
+            + _num(values["withdrawal_amount"])
+        )
+        unit_cost = abs(_num(product["unit_cost"]))
         cogs = -qty * unit_cost
-        commission = -abs(revenue) * PROVISIONAL_COMMISSION_RATE
+        commission = -revenue * PROVISIONAL_COMMISSION_RATE
         no_ad = revenue + cogs + commission
         output.append({
-            "옵션ID": _oid(row["option_id"]) or _oid(row["item_code"]),
-            "상품명": _text(row["name"]),
+            "옵션ID": _oid(product["option_id"]) or _oid(product["item_code"]),
+            "상품명": _text(product["name"]),
             # The base monthly aggregator uses this signed net quantity for
             # financial arithmetic. sales_quantity_v0965 replaces the visible
             # column with API gross/cancel/net counts afterwards.
             "판매수량": qty,
+            "__activity_qty": gross_qty + return_qty + withdrawal_qty,
+            "__unit_cost": unit_cost,
             "예상 실현단가": revenue / qty if abs(qty) > 1e-12 else 0.0,
             "예상매출": revenue,
             "원가/개": unit_cost,
@@ -1674,13 +2190,24 @@ def provisional_rows_from_api(core: Any, month: str, db_path=None):
             "RG비용": 0.0,
         })
     coverage = _order_month_coverage(core, db, month)
+    return_coverage = _return_month_coverage(core, db, month)
     return output, {
-        "source": "coupang_order_api",
+        "source": (
+            "coupang_order_return_api"
+            if return_coverage["covered_days"] else "coupang_order_api"
+        ),
         "rows": total,
+        "activity_rows": total + return_coverage["rows"] + return_coverage["withdrawals"],
         "matched_rows": total - unmatched,
         "unmatched_rows": unmatched,
         "covered_days": coverage["covered_days"],
         "expected_days": coverage["expected_days"],
+        "return_rows": return_coverage["rows"],
+        "return_matched_rows": return_coverage["matched"],
+        "return_unmatched_rows": return_coverage["unmatched"],
+        "return_withdrawal_rows": return_coverage["withdrawals"],
+        "return_covered_days": return_coverage["covered_days"],
+        "return_expected_days": return_coverage["expected_days"],
     }
 
 
@@ -1691,9 +2218,19 @@ def provisional_months_from_api(core: Any, db_path=None) -> list[str]:
         return [
             _text(row["month"])
             for row in con.execute(
-                """SELECT DISTINCT substr(paid_date,1,7) month
-                   FROM coupang_rg_order_items
-                   WHERE paid_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-*'
+                """SELECT month FROM (
+                     SELECT DISTINCT substr(paid_date,1,7) month
+                     FROM coupang_rg_order_items
+                     WHERE paid_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-*'
+                     UNION
+                     SELECT DISTINCT substr(created_date,1,7) month
+                     FROM coupang_return_items
+                     WHERE created_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-*'
+                     UNION
+                     SELECT DISTINCT substr(created_date,1,7) month
+                     FROM coupang_return_withdrawals
+                     WHERE created_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-*'
+                   )
                    ORDER BY month DESC"""
             )
             if _text(row["month"])
@@ -1962,7 +2499,10 @@ def render_page(st: Any, pd: Any, core: Any, db_path=None) -> None:
         start = d1.date_input("조회 시작일", value=default_start, key="coupang_api_start_v09140")
         end = d2.date_input("조회 종료일", value=today, key="coupang_api_end_v09140")
         month = d3.text_input("지급내역 정산월", value=today.strftime("%Y-%m"), key="coupang_api_month_v09140")
-        st.caption("긴 기간은 쿠팡 제한에 맞춰 주문 30일, 매출내역 31일 단위로 자동 분할 조회합니다.")
+        st.caption(
+            "긴 기간은 쿠팡 제한에 맞춰 주문 30일, 매출내역 31일, "
+            "반품·취소/철회 7일 단위로 나눠 조회합니다. 모든 조회는 버튼을 눌렀을 때만 실행합니다."
+        )
 
         test_col, blank = st.columns([1, 2])
         if test_col.button("연결 확인", use_container_width=True, key="coupang_api_test_v09140"):
@@ -1974,12 +2514,13 @@ def render_page(st: Any, pd: Any, core: Any, db_path=None) -> None:
             except Exception as exc:
                 st.error(str(exc))
 
-        cols = st.columns(4)
+        cols = st.columns(5)
         actions = [
             (cols[0], "주문", "주문 동기화", lambda: sync_orders(core, client, start, end, db)),
             (cols[1], "재고", "재고 동기화", lambda: sync_inventory(core, client, db)),
-            (cols[2], "매출·수수료", "매출·수수료 동기화", lambda: sync_revenue(core, client, start, end, db)),
-            (cols[3], "지급내역", "지급내역 동기화", lambda: sync_settlements(core, client, month, db)),
+            (cols[2], "반품·취소", "반품·취소 동기화", lambda: sync_returns(core, client, start, end, db)),
+            (cols[3], "매출·수수료", "매출·수수료 동기화", lambda: sync_revenue(core, client, start, end, db)),
+            (cols[4], "지급내역", "지급내역 동기화", lambda: sync_settlements(core, client, month, db)),
         ]
         for col, short, label, action in actions:
             if col.button(label, use_container_width=True, key=f"coupang_api_{short}_v09140"):
@@ -2000,6 +2541,8 @@ def render_page(st: Any, pd: Any, core: Any, db_path=None) -> None:
             try:
                 with st.spinner("주문 자료를 가져오는 중입니다..."):
                     completed.append(_result_message("주문", sync_orders(core, client, start, end, db)))
+                with st.spinner("반품·취소 및 철회 자료를 가져오는 중입니다..."):
+                    completed.append(_result_message("반품·취소", sync_returns(core, client, start, end, db)))
                 with st.spinner("매출·수수료 자료를 가져오는 중입니다..."):
                     completed.append(_result_message("매출·수수료", sync_revenue(core, client, start, end, db)))
                 with st.spinner("로켓창고 재고를 가져와 ERP 재고와 대사하는 중입니다..."):
@@ -2015,11 +2558,12 @@ def render_page(st: Any, pd: Any, core: Any, db_path=None) -> None:
 
         summary = _summary(core, db)
         st.markdown("### 연동 현황")
-        c1, c2, c3, c4 = st.columns(4)
+        c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("주문 상품행", f"{summary['counts']['coupang_rg_order_items']:,}개")
         c2.metric("현재 재고 옵션", f"{summary['counts']['coupang_rg_inventory']:,}개")
-        c3.metric("매출·수수료 상품행", f"{summary['counts']['coupang_revenue_items']:,}개")
-        c4.metric("지급내역", f"{summary['counts']['coupang_settlement_histories']:,}건")
+        c3.metric("반품·취소 상품행", f"{summary['counts']['coupang_return_items']:,}개")
+        c4.metric("매출·수수료 상품행", f"{summary['counts']['coupang_revenue_items']:,}개")
+        c5.metric("지급내역", f"{summary['counts']['coupang_settlement_histories']:,}건")
         inv_types = summary.get("inventory_types", {})
         st.caption(
             f"정상상품 기준 옵션 {summary['normal_registry_count']:,}개 · 재고 분류 · "
@@ -2033,6 +2577,7 @@ def render_page(st: Any, pd: Any, core: Any, db_path=None) -> None:
             st.warning(
                 "품목관리 옵션ID와 연결되지 않은 API 자료가 있습니다: "
                 f"주문 {summary['unmatched']['orders']:,}개 · 재고 {summary['unmatched']['inventory']:,}개 · "
+                f"반품·취소 RG주문 미연결 {summary['unmatched']['returns']:,}개 · "
                 f"매출 {summary['unmatched']['revenue']:,}개. 정상상품은 품목관리에 등록하고, "
                 "자동 판별되지 않은 반품상품은 아래에서 원상품에 연결한 뒤 다시 동기화하세요."
             )
@@ -2117,6 +2662,26 @@ def render_page(st: Any, pd: Any, core: Any, db_path=None) -> None:
             except Exception:
                 pass
 
+        if summary["returns"]:
+            with st.expander("최근 반품·취소 내역 보기", expanded=True):
+                rdf = pd.DataFrame(summary["returns"]).rename(columns={
+                    "created_at": "접수시각", "receipt_id": "접수번호",
+                    "order_id": "주문번호", "receipt_type": "구분",
+                    "receipt_status": "상태", "vendor_item_id": "옵션ID",
+                    "product_name": "상품명", "cancel_count": "수량",
+                    "reason_code_text": "사유", "fault_by_type": "귀책",
+                    "withdrawn": "철회", "rg_matched": "RG주문연결",
+                    "synced_at": "동기화시각",
+                })
+                rdf["구분"] = rdf["구분"].map({"RETURN": "반품", "CANCEL": "취소"}).fillna(rdf["구분"])
+                rdf["철회"] = rdf["철회"].map({0: "아니오", 1: "예"})
+                rdf["RG주문연결"] = rdf["RG주문연결"].map({0: "제외", 1: "반영"})
+                st.caption(
+                    "RG주문연결이 '반영'인 행만 잠정손익에서 접수일에 차감하며, "
+                    "철회된 건은 철회일에 다시 더합니다."
+                )
+                st.dataframe(rdf, use_container_width=True, hide_index=True)
+
         if summary["inventory"]:
             with st.expander("최근 로켓창고 재고 보기"):
                 idf = pd.DataFrame(summary["inventory"]).rename(columns={
@@ -2153,7 +2718,10 @@ def render_page(st: Any, pd: Any, core: Any, db_path=None) -> None:
 
         if summary["last"]:
             with st.expander("최근 동기화 이력", expanded=True):
-                labels = {"orders": "주문", "inventory": "재고", "revenue": "매출·수수료", "settlement": "지급내역"}
+                labels = {
+                    "orders": "주문", "inventory": "재고", "returns": "반품·취소",
+                    "revenue": "매출·수수료", "settlement": "지급내역",
+                }
                 ldf = pd.DataFrame(summary["last"]).rename(columns={
                     "sync_type": "구분", "status": "상태", "rows_received": "수신행",
                     "rows_matched": "품목연결", "message": "결과", "completed_at": "완료시각",

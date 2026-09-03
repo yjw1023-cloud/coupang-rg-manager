@@ -60,7 +60,7 @@ def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
 
     db = db_path or core.DEFAULT_DB
     base._NUMERIC_COLS.update({
-        "취소수량", "순판매수량", "반품수량", "반품률",
+        "취소수량", "반품철회수량", "순판매수량", "반품수량", "반품률",
         "반품판매수량", "반품판매취소", "반품판매매출"
     })
 
@@ -100,7 +100,10 @@ def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
         # columns carrying the same cancel/refund signal.
         if "반품수량" in cols:
             cols = [c for c in cols if c != "취소수량"]
-        preferred = ["옵션ID", "상품명", "판매수량", "반품수량", "반품률", "순판매수량"]
+        preferred = [
+            "옵션ID", "상품명", "판매수량", "반품수량",
+            "반품철회수량", "반품률", "순판매수량",
+        ]
         first = [c for c in preferred if c in cols]
         rest = [c for c in cols if c not in first]
         return first + rest
@@ -110,8 +113,8 @@ def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
         return_meta = holder.get("return_meta") or {}
         if qty_meta.get("exact"):
             st.caption(
-                "판매수량은 실제 판매된 수량입니다. 반품수량은 쿠팡 판매통계의 취소·환불 수량을 기준으로 집계하고, "
-                "반품률은 반품수량 ÷ 판매수량입니다. 순판매수량은 손익·재고 계산에 사용하는 순수량입니다."
+                "판매수량은 주문 API의 고객 결제일 기준입니다. 반품수량은 반품·취소 API의 접수일 기준이며, "
+                "반품철회는 철회일에 되돌립니다. 순판매수량 = 판매수량 - 반품수량 + 반품철회수량입니다."
             )
         elif qty_meta.get("source") == "coupang_order_api":
             st.caption(

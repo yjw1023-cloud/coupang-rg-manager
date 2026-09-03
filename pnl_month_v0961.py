@@ -33,6 +33,7 @@ _PRIMARY_COL_ORDER = [
     "상품명",
     "판매수량",
     "취소수량",
+    "반품철회수량",
     "순판매수량",
     "예상 실현단가",
     "예상매출",
@@ -44,7 +45,7 @@ _PRIMARY_COL_ORDER = [
 
 
 def _fmt(col, v):
-    if col in {"판매수량", "취소수량", "순판매수량", "반품판매수량", "반품판매취소"}:
+    if col in {"판매수량", "취소수량", "반품철회수량", "순판매수량", "반품판매수량", "반품판매취소"}:
         x = _num(v)
         return f"{int(round(x)):,}" if abs(x-round(x)) < 1e-9 else f"{x:,.1f}"
     if col == "이익률(%)":
@@ -199,7 +200,7 @@ def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
     try:
         api = importlib.import_module("coupang_api_sync_v09140")
         api_rows, api_meta = api.provisional_rows_from_api(core, month, db)
-        if int(api_meta.get("rows") or 0) > 0:
+        if int(api_meta.get("activity_rows") or api_meta.get("rows") or 0) > 0:
             cov = dict(cov)
             cov["covered"] = max(
                 int(cov.get("covered") or 0), int(api_meta.get("covered_days") or 0)
@@ -218,7 +219,8 @@ def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
     ad_dataset = ad_report.render_input(st_obj, core, month, db)
 
     rows, excluded = m._snapshot_rows_for_month(core, db, month)
-    if int(api_meta.get("rows") or 0) > 0:
+    api_activity = int(api_meta.get("activity_rows") or api_meta.get("rows") or 0)
+    if api_activity > 0:
         # One source per selected month prevents API facts and an older
         # sales-stat upload from being counted twice.
         rows = api_rows
@@ -233,20 +235,26 @@ def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
     if excluded:
         st_obj.warning(f"월을 걸쳐 있는 판매자료 {len(excluded):,}개는 월별로 정확히 나눌 수 없어 월간 합계에서 제외했습니다.")
 
-    if int(api_meta.get("rows") or 0) > 0:
+    if api_activity > 0:
         st_obj.info(
-            "쿠팡 주문 API 자료를 고객 결제일 기준으로 잠정손익에 표시합니다. "
-            f"조회범위 {int(api_meta.get('covered_days') or 0)}/{int(api_meta.get('expected_days') or 0)}일 · "
+            "쿠팡 주문은 고객 결제일, 반품·취소는 접수일, 반품철회는 철회일 기준으로 잠정손익에 표시합니다. "
+            f"주문 조회범위 {int(api_meta.get('covered_days') or 0)}/{int(api_meta.get('expected_days') or 0)}일 · "
+            f"반품 조회범위 {int(api_meta.get('return_covered_days') or 0)}/{int(api_meta.get('return_expected_days') or 0)}일 · "
             f"상품연결 {int(api_meta.get('matched_rows') or 0):,}/{int(api_meta.get('rows') or 0):,}행. "
-            "판매수수료는 확정 전 10.8% 예상치이며, 반품·입출고·배송 물류비는 별도 자료가 반영되기 전까지 0원입니다."
+            "판매수수료는 확정 전 10.8% 예상치이며, 반품 회수·재입고비와 배송비는 월말 확정자료 전까지 0원입니다."
         )
         if int(api_meta.get("unmatched_rows") or 0):
             st_obj.warning(
                 f"ERP 상품과 연결되지 않은 API 매출 {int(api_meta['unmatched_rows']):,}행은 잠정손익에서 제외했습니다."
             )
+        if int(api_meta.get("return_unmatched_rows") or 0):
+            st_obj.warning(
+                "로켓그로스 주문번호·옵션ID와 연결되지 않은 반품·취소 "
+                f"{int(api_meta['return_unmatched_rows']):,}행은 잠정손익에서 제외했습니다."
+            )
 
     if auto_view.empty:
-        if int(api_meta.get("rows") or 0) > 0:
+        if api_activity > 0:
             st_obj.info(f"{month}의 API 매출은 있지만 ERP 상품과 연결된 손익행이 없습니다.")
         else:
             st_obj.info(

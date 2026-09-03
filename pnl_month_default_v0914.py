@@ -226,22 +226,30 @@ def _aggregate(rows: list[dict[str, Any]]) -> pd.DataFrame:
                 "옵션ID": oid,
                 "상품명": name,
                 "판매수량": 0.0,
+                "_activity_qty": 0.0,
+                "_unit_cost_hint": 0.0,
                 **{c: 0.0 for c in money_cols},
             },
         )
         x["판매수량"] += _num(r.get("판매수량"))
+        x["_activity_qty"] += abs(_num(r.get("__activity_qty")))
+        if abs(_num(r.get("__unit_cost"))) > 1e-12:
+            x["_unit_cost_hint"] = abs(_num(r.get("__unit_cost")))
         for c in money_cols:
             x[c] += _num(r.get(c))
 
     out = []
     for x in grouped.values():
         qty = _num(x["판매수량"])
-        if abs(qty) <= 1e-12:
+        if abs(qty) <= 1e-12 and abs(_num(x.get("_activity_qty"))) <= 1e-12:
             continue
         revenue = _num(x["예상매출"])
         cogs = _num(x["매출원가"])
         x["예상 실현단가"] = revenue / qty if abs(qty) > 1e-12 else 0.0
-        x["원가/개"] = abs(cogs / qty) if abs(qty) > 1e-12 else 0.0
+        x["원가/개"] = (
+            abs(cogs / qty) if abs(qty) > 1e-12
+            else abs(_num(x.get("_unit_cost_hint")))
+        )
         x["이익률(%)"] = _num(x["예상이익"]) / revenue * 100 if abs(revenue) > 1e-12 else 0.0
         x["RG비용"] = _num(x["입출고비"]) + _num(x["배송비"]) + _num(x["반품충당"])
         out.append(x)
