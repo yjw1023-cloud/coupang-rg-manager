@@ -113,6 +113,11 @@ def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
                 "판매수량은 실제 판매된 수량입니다. 반품수량은 쿠팡 판매통계의 취소·환불 수량을 기준으로 집계하고, "
                 "반품률은 반품수량 ÷ 판매수량입니다. 순판매수량은 손익·재고 계산에 사용하는 순수량입니다."
             )
+        elif qty_meta.get("source") == "coupang_order_api":
+            st.caption(
+                "판매수량은 쿠팡 주문 API의 고객 결제일 기준 실제 수량입니다. "
+                "반품수량은 반품 API를 연결하기 전까지 0개로 표시됩니다."
+            )
         elif int(qty_meta.get("matched") or 0) > 0:
             st.caption(
                 "일부 과거 판매자료는 실제 판매/취소·환불 수량 컬럼이 없어 반품수량·반품률이 정확하지 않을 수 있습니다."

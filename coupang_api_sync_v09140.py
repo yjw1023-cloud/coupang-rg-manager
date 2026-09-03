@@ -1,4 +1,4 @@
-"""Manual Coupang Open API synchronization for RG Manager v0.9.143.
+"""Manual Coupang Open API synchronization for RG Manager v0.9.144.
 
 The module deliberately performs no network work at import/startup.  Every API
 request is initiated by an explicit Streamlit button click.
@@ -44,6 +44,8 @@ PAGE_LABEL = "🔗  쿠팡 API 연동"
 API_HOST = "https://api-gateway.coupang.com"
 CONFIG_FILE = "coupang_api_credentials.dat"
 _MARKER = "# _rg_coupang_api_sync_v09140"
+KST = timezone(timedelta(hours=9))
+PROVISIONAL_COMMISSION_RATE = 0.108
 
 
 class CoupangAPIError(RuntimeError):
@@ -1002,12 +1004,14 @@ def _paid_parts(value: Any) -> tuple[str, str]:
     text = _text(value)
     if text.isdigit():
         try:
-            dt = datetime.fromtimestamp(int(text) / 1000, tz=timezone.utc)
+            dt = datetime.fromtimestamp(int(text) / 1000, tz=timezone.utc).astimezone(KST)
             return dt.isoformat(), dt.date().isoformat()
         except Exception:
             pass
     try:
         dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(KST)
         return dt.isoformat(), dt.date().isoformat()
     except Exception:
         return text, text[:10] if len(text) >= 10 else ""
@@ -1525,6 +1529,48 @@ def _revenue_month_coverage(core: Any, db: Any, month: str) -> dict[str, Any]:
     }
 
 
+def _order_month_coverage(core: Any, db: Any, month: str) -> dict[str, Any]:
+    """Coverage of manually synchronized orders by customer payment date."""
+    start, end = _month_bounds(month)
+    covered: set[date] = set()
+    with core._conn(db) as con:
+        rows = con.execute(
+            """SELECT period_start,period_end
+               FROM coupang_api_sync_runs
+               WHERE sync_type='orders' AND status='success'
+                 AND period_end>=? AND period_start<=?""",
+            (start.isoformat(), end.isoformat()),
+        ).fetchall()
+        for row in rows:
+            try:
+                left = max(start, _to_date(row["period_start"]))
+                right = min(end, _to_date(row["period_end"]))
+            except Exception:
+                continue
+            cursor = left
+            while cursor <= right:
+                covered.add(cursor)
+                cursor += timedelta(days=1)
+        unmatched = int(con.execute(
+            """SELECT COUNT(*) n FROM coupang_rg_order_items
+               WHERE paid_date>=? AND paid_date<=? AND product_id IS NULL""",
+            (start.isoformat(), end.isoformat()),
+        ).fetchone()["n"])
+        row_count = int(con.execute(
+            """SELECT COUNT(*) n FROM coupang_rg_order_items
+               WHERE paid_date>=? AND paid_date<=?""",
+            (start.isoformat(), end.isoformat()),
+        ).fetchone()["n"])
+    expected = (end - start).days + 1
+    return {
+        "complete": len(covered) == expected,
+        "covered_days": len(covered),
+        "expected_days": expected,
+        "unmatched": unmatched,
+        "rows": row_count,
+    }
+
+
 def _api_revenue_aggregate(core: Any, db: Any, month: str):
     start, end = _month_bounds(month)
     with core._conn(db) as con:
@@ -1565,48 +1611,46 @@ def _api_revenue_aggregate(core: Any, db: Any, month: str):
 
 
 def provisional_rows_from_api(core: Any, month: str, db_path=None):
-    """Build current-month provisional rows from manually synced revenue facts."""
+    """Build provisional rows from orders grouped by customer payment date.
+
+    Revenue-recognition facts belong to confirmed P&L and must never move an
+    order into a different provisional month.  Until the settlement fee is
+    confirmed, use the ERP's established 10.8% commission estimate.
+    """
     db = db_path or core.DEFAULT_DB
     ensure_schema(core, db)
     start, end = _month_bounds(month)
     with core._conn(db) as con:
         total = int(con.execute(
-            """SELECT COUNT(*) n FROM coupang_revenue_items
-               WHERE recognition_date>=? AND recognition_date<=?""",
+            """SELECT COUNT(*) n FROM coupang_rg_order_items
+               WHERE paid_date>=? AND paid_date<=?""",
             (start.isoformat(), end.isoformat()),
         ).fetchone()["n"])
         unmatched = int(con.execute(
-            """SELECT COUNT(*) n FROM coupang_revenue_items
-               WHERE recognition_date>=? AND recognition_date<=? AND product_id IS NULL""",
+            """SELECT COUNT(*) n FROM coupang_rg_order_items
+               WHERE paid_date>=? AND paid_date<=? AND product_id IS NULL""",
             (start.isoformat(), end.isoformat()),
         ).fetchone()["n"])
         rows = con.execute(
-            """SELECT r.product_id,p.option_id,p.item_code,p.name,p.unit_cost,
-                      SUM(CASE WHEN r.sale_type='REFUND' THEN 0 ELSE ABS(r.quantity) END) gross_qty,
-                      SUM(CASE WHEN r.sale_type='REFUND' THEN ABS(r.quantity) ELSE 0 END) cancel_qty,
-                      SUM(CASE WHEN r.sale_type='REFUND' THEN -ABS(r.quantity)
-                               ELSE ABS(r.quantity) END) net_qty,
-                      SUM(CASE WHEN r.sale_type='REFUND' THEN -ABS(r.sale_amount)
-                               ELSE r.sale_amount END) revenue,
-                      SUM(CASE WHEN r.sale_type='REFUND'
-                               THEN ABS(r.service_fee+r.service_fee_vat)
-                               ELSE -ABS(r.service_fee+r.service_fee_vat) END) commission
-               FROM coupang_revenue_items r
-               JOIN products p ON p.id=r.product_id
-               WHERE r.recognition_date>=? AND r.recognition_date<=?
-                 AND r.product_id IS NOT NULL
-               GROUP BY r.product_id,p.option_id,p.item_code,p.name,p.unit_cost
-               ORDER BY p.name,r.product_id""",
+            """SELECT o.product_id,p.option_id,p.item_code,p.name,p.unit_cost,
+                      SUM(ABS(o.sales_quantity)) gross_qty,
+                      SUM(ABS(o.sales_quantity) * o.unit_sales_price) revenue
+               FROM coupang_rg_order_items o
+               JOIN products p ON p.id=o.product_id
+               WHERE o.paid_date>=? AND o.paid_date<=?
+                 AND o.product_id IS NOT NULL
+               GROUP BY o.product_id,p.option_id,p.item_code,p.name,p.unit_cost
+               ORDER BY p.name,o.product_id""",
             (start.isoformat(), end.isoformat()),
         ).fetchall()
 
     output = []
     for row in rows:
-        qty = _num(row["net_qty"])
+        qty = _num(row["gross_qty"])
         revenue = _num(row["revenue"])
         unit_cost = abs(_num(row["unit_cost"]))
         cogs = -qty * unit_cost
-        commission = _num(row["commission"])
+        commission = -abs(revenue) * PROVISIONAL_COMMISSION_RATE
         no_ad = revenue + cogs + commission
         output.append({
             "옵션ID": _oid(row["option_id"]) or _oid(row["item_code"]),
@@ -1629,9 +1673,9 @@ def provisional_rows_from_api(core: Any, month: str, db_path=None):
             "이익률(%)": no_ad / revenue * 100 if abs(revenue) > 1e-12 else 0.0,
             "RG비용": 0.0,
         })
-    coverage = _revenue_month_coverage(core, db, month)
+    coverage = _order_month_coverage(core, db, month)
     return output, {
-        "source": "coupang_revenue_api",
+        "source": "coupang_order_api",
         "rows": total,
         "matched_rows": total - unmatched,
         "unmatched_rows": unmatched,
@@ -1647,9 +1691,9 @@ def provisional_months_from_api(core: Any, db_path=None) -> list[str]:
         return [
             _text(row["month"])
             for row in con.execute(
-                """SELECT DISTINCT substr(recognition_date,1,7) month
-                   FROM coupang_revenue_items
-                   WHERE recognition_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-*'
+                """SELECT DISTINCT substr(paid_date,1,7) month
+                   FROM coupang_rg_order_items
+                   WHERE paid_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-*'
                    ORDER BY month DESC"""
             )
             if _text(row["month"])

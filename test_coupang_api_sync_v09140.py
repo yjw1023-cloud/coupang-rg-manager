@@ -134,6 +134,13 @@ class CoupangClientTests(unittest.TestCase):
             ],
         )
 
+    def test_paid_timestamp_uses_korean_business_date(self):
+        # 2026-09-01 16:30 UTC is 2026-09-02 01:30 in Korea.
+        millis = str(int(datetime(2026, 9, 1, 16, 30, tzinfo=timezone.utc).timestamp() * 1000))
+        paid_at, paid_date = api._paid_parts(millis)
+        self.assertTrue(paid_at.endswith("+09:00"))
+        self.assertEqual(paid_date, "2026-09-02")
+
 
 class SyncTests(unittest.TestCase):
     def setUp(self):
@@ -486,62 +493,79 @@ class SyncTests(unittest.TestCase):
         self.assertEqual(row["pid"], 1)
         self.assertEqual(row["amount"], 19000)
 
-    def test_api_revenue_builds_provisional_rows_and_exact_quantities(self):
+    def test_order_paid_date_builds_provisional_rows_and_quantities(self):
         class Client:
-            def revenue(self, start, end):
-                return [
-                    {
-                        "orderId": "SALE-1",
-                        "saleType": "SALE",
-                        "saleDate": "2026-09-01",
-                        "recognitionDate": "2026-09-02",
-                        "settlementDate": "2026-09-10",
-                        "items": [{
-                            "vendorItemId": 7001,
-                            "productName": "상품A",
-                            "quantity": 3,
-                            "saleAmount": 30000,
-                            "serviceFee": 3000,
-                            "serviceFeeVat": 300,
-                            "settlementAmount": 26700,
-                        }],
-                    },
-                    {
-                        "orderId": "REFUND-1",
-                        "saleType": "REFUND",
-                        "saleDate": "2026-09-02",
-                        "recognitionDate": "2026-09-03",
-                        "settlementDate": "2026-09-11",
-                        "items": [{
-                            "vendorItemId": 7001,
-                            "productName": "상품A",
-                            "quantity": 1,
-                            "saleAmount": 10000,
-                            "serviceFee": 1000,
-                            "serviceFeeVat": 100,
-                            "settlementAmount": 8900,
-                        }],
-                    },
-                ]
+            def orders(self, start, end):
+                return [{
+                    "orderId": "SALE-1",
+                    "paidAt": "2026-09-01T14:00:00+09:00",
+                    "orderItems": [{
+                        "vendorItemId": 7001,
+                        "productName": "상품A",
+                        "salesQuantity": 3,
+                        "unitSalesPrice": 10000,
+                    }],
+                }]
 
-        api.sync_revenue(self.core, Client(), "2026-09-01", "2026-09-03")
+        api.sync_orders(self.core, Client(), "2026-09-01", "2026-09-03")
         rows, meta = api.provisional_rows_from_api(self.core, "2026-09")
-        self.assertEqual(meta["rows"], 2)
-        self.assertEqual(meta["matched_rows"], 2)
+        self.assertEqual(meta["source"], "coupang_order_api")
+        self.assertEqual(meta["rows"], 1)
+        self.assertEqual(meta["matched_rows"], 1)
         self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]["판매수량"], 2)
-        self.assertEqual(rows[0]["예상매출"], 20000)
-        self.assertEqual(rows[0]["판매수수료"], -2200)
+        self.assertEqual(rows[0]["판매수량"], 3)
+        self.assertEqual(rows[0]["예상매출"], 30000)
+        self.assertEqual(rows[0]["판매수수료"], -3240)
 
         import sales_quantity_v0965 as quantities
         counts, qty_meta = quantities.month_counts(
             self.core, self.core.DEFAULT_DB, "2026-09"
         )
-        self.assertTrue(qty_meta["exact"])
-        self.assertEqual(qty_meta["source"], "coupang_revenue_api")
+        self.assertFalse(qty_meta["exact"])
+        self.assertTrue(qty_meta["sales_exact"])
+        self.assertEqual(qty_meta["source"], "coupang_order_api")
         self.assertEqual(counts["7001"]["sales_qty"], 3)
-        self.assertEqual(counts["7001"]["cancel_qty"], 1)
-        self.assertEqual(counts["7001"]["net_qty"], 2)
+        self.assertEqual(counts["7001"]["cancel_qty"], 0)
+        self.assertEqual(counts["7001"]["net_qty"], 3)
+
+    def test_revenue_recognition_month_does_not_move_provisional_sale(self):
+        class OrderClient:
+            def orders(self, start, end):
+                return [{
+                    "orderId": "MONTH-END",
+                    "paidAt": "2026-09-30T23:00:00+09:00",
+                    "orderItems": [{
+                        "vendorItemId": 7001,
+                        "productName": "상품A",
+                        "salesQuantity": 1,
+                        "unitSalesPrice": 10000,
+                    }],
+                }]
+
+        class RevenueClient:
+            def revenue(self, start, end):
+                return [{
+                    "orderId": "MONTH-END",
+                    "saleType": "SALE",
+                    "saleDate": "2026-09-30",
+                    "recognitionDate": "2026-10-07",
+                    "settlementDate": "2026-10-20",
+                    "items": [{
+                        "vendorItemId": 7001,
+                        "quantity": 1,
+                        "saleAmount": 10000,
+                        "serviceFee": 1000,
+                        "serviceFeeVat": 100,
+                        "settlementAmount": 8900,
+                    }],
+                }]
+
+        api.sync_orders(self.core, OrderClient(), "2026-09-30", "2026-09-30")
+        api.sync_revenue(self.core, RevenueClient(), "2026-10-07", "2026-10-07")
+        september, _ = api.provisional_rows_from_api(self.core, "2026-09")
+        october, _ = api.provisional_rows_from_api(self.core, "2026-10")
+        self.assertEqual(sum(x["판매수량"] for x in september), 1)
+        self.assertEqual(october, [])
 
     def test_complete_revenue_month_replaces_legacy_sales_without_doubling(self):
         import pandas as pd

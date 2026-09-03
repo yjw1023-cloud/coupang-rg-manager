@@ -1,4 +1,4 @@
-"""v0.9.143 monthly provisional P&L with Coupang API revenue fallback.
+"""Monthly provisional P&L using Coupang orders by customer payment date.
 
 Keeps the v0.9.59 visual table but performs sorting entirely inside an embedded
 HTML/JavaScript component so clicking a header never reloads or reruns the ERP.
@@ -170,7 +170,7 @@ def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
 
     st_obj.markdown("## 📈 잠정손익")
     st_obj.caption(
-        "수동 동기화한 쿠팡 매출·수수료 API 자료를 우선 사용하고, 없으면 판매통계를 월 단위로 합산합니다. "
+        "수동 동기화한 쿠팡 주문을 고객 결제일 기준으로 우선 사용하고, 없으면 판매통계를 월 단위로 합산합니다. "
         "광고비는 쿠팡 광고성과보고서의 광고집행 옵션ID 기준으로 직접 반영합니다."
     )
 
@@ -235,10 +235,10 @@ def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
 
     if int(api_meta.get("rows") or 0) > 0:
         st_obj.info(
-            "쿠팡 매출·수수료 API 자료로 잠정손익을 표시합니다. "
+            "쿠팡 주문 API 자료를 고객 결제일 기준으로 잠정손익에 표시합니다. "
             f"조회범위 {int(api_meta.get('covered_days') or 0)}/{int(api_meta.get('expected_days') or 0)}일 · "
             f"상품연결 {int(api_meta.get('matched_rows') or 0):,}/{int(api_meta.get('rows') or 0):,}행. "
-            "API에 없는 입출고·배송·반품 물류비는 아직 0원이며 월말 확정자료에서 최종 반영됩니다."
+            "판매수수료는 확정 전 10.8% 예상치이며, 반품·입출고·배송 물류비는 별도 자료가 반영되기 전까지 0원입니다."
         )
         if int(api_meta.get("unmatched_rows") or 0):
             st_obj.warning(
@@ -251,7 +251,7 @@ def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
         else:
             st_obj.info(
                 f"{month}의 잠정손익 자료가 없습니다. 쿠팡 API 연동에서 "
-                "'매출·수수료 동기화'를 실행하거나 판매통계 Excel을 입력하세요."
+                "'주문 동기화'를 실행하거나 판매통계 Excel을 입력하세요."
             )
         return
 

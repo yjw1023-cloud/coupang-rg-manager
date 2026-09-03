@@ -84,21 +84,18 @@ def month_counts(core, db, month: str):
         sc = _cols(con, "sales_stats")
         ic = _cols(con, "imports")
         pc = _cols(con, "products")
-        # When the monthly P&L uses manually synchronized Coupang revenue rows,
-        # its visible gross/refund/net quantities must come from that same
-        # source instead of an older sales-stat Excel import.
-        if _exists(con, "coupang_revenue_items") and {"id", "option_id", "item_code"}.issubset(pc):
+        # Provisional sales are grouped by the customer's paid date.  Revenue
+        # recognition rows are reserved for confirmed P&L and must not alter
+        # the provisional month or its visible sales quantity.
+        if _exists(con, "coupang_rg_order_items") and {"id", "option_id", "item_code"}.issubset(pc):
             api_rows = con.execute(
-                """SELECT r.product_id,p.option_id,p.item_code,
-                          SUM(CASE WHEN r.sale_type='REFUND' THEN 0 ELSE ABS(r.quantity) END) gross_qty,
-                          SUM(CASE WHEN r.sale_type='REFUND' THEN ABS(r.quantity) ELSE 0 END) cancel_qty,
-                          SUM(CASE WHEN r.sale_type='REFUND' THEN -ABS(r.quantity)
-                                   ELSE ABS(r.quantity) END) net_qty
-                   FROM coupang_revenue_items r
-                   JOIN products p ON p.id=r.product_id
-                   WHERE r.recognition_date>=? AND r.recognition_date<=?
-                     AND r.product_id IS NOT NULL
-                   GROUP BY r.product_id,p.option_id,p.item_code""",
+                """SELECT o.product_id,p.option_id,p.item_code,
+                          SUM(ABS(o.sales_quantity)) gross_qty
+                   FROM coupang_rg_order_items o
+                   JOIN products p ON p.id=o.product_id
+                   WHERE o.paid_date>=? AND o.paid_date<=?
+                     AND o.product_id IS NOT NULL
+                   GROUP BY o.product_id,p.option_id,p.item_code""",
                 (start, end),
             ).fetchall()
             if api_rows:
@@ -109,12 +106,14 @@ def month_counts(core, db, month: str):
                         api_counts[oid] = {
                             "product_id": int(row["product_id"]),
                             "sales_qty": _num(row["gross_qty"]),
-                            "cancel_qty": abs(_num(row["cancel_qty"])),
-                            "net_qty": _num(row["net_qty"]),
+                            "cancel_qty": 0.0,
+                            "net_qty": _num(row["gross_qty"]),
                         }
                 return api_counts, {
-                    "exact": True,
-                    "source": "coupang_revenue_api",
+                    "exact": False,
+                    "sales_exact": True,
+                    "returns_exact": False,
+                    "source": "coupang_order_api",
                     "rows": len(api_counts),
                 }
         if not {"product_id", "import_id"}.issubset(sc) or not {"id", "period_start", "period_end"}.issubset(ic):
