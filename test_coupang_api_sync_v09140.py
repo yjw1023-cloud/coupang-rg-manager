@@ -70,6 +70,7 @@ class FakeCore:
                     created_at TEXT
                 );
                 INSERT OR IGNORE INTO warehouses(id,name) VALUES(1,'쿠팡RG');
+                INSERT OR IGNORE INTO warehouses(id,name) VALUES(2,'반품창고');
                 """
             )
 
@@ -184,6 +185,142 @@ class SyncTests(unittest.TestCase):
             ).fetchone()["n"]
         self.assertEqual(balance, 10)
         self.assertEqual(unmatched, 1)
+
+    def test_inventory_separates_normal_and_sums_return_options_once(self):
+        class OrderClient:
+            def orders(self, start, end):
+                return [{
+                    "orderId": "ORDER-1",
+                    "paidAt": "2026-09-01T00:00:00Z",
+                    "orderItems": [
+                        {"vendorItemId": 8001, "productName": "상품A", "salesQuantity": 1},
+                        {"vendorItemId": 8002, "productName": "상품A", "salesQuantity": 1},
+                        {"vendorItemId": 8003, "productName": "상품A", "salesQuantity": 1},
+                    ],
+                }]
+
+        # Same unique name + a different option id becomes a permanent return
+        # alias of normal option 7001.
+        api.sync_orders(self.core, OrderClient(), "2026-09-01", "2026-09-01")
+
+        class InventoryClient:
+            def inventory(self):
+                return [
+                    {"vendorItemId": 7001, "inventoryDetails": {"totalOrderableQuantity": 100}},
+                    {"vendorItemId": 8001, "inventoryDetails": {"totalOrderableQuantity": 3}},
+                    {"vendorItemId": 8002, "inventoryDetails": {"totalOrderableQuantity": 2}},
+                    {"vendorItemId": 8003, "inventoryDetails": {"totalOrderableQuantity": 1}},
+                ]
+
+        first = api.sync_inventory(self.core, InventoryClient())
+        second = api.sync_inventory(self.core, InventoryClient())
+        self.assertEqual(first["normal_adjusted_rows"], 1)
+        self.assertEqual(first["return_adjusted_rows"], 1)
+        self.assertEqual(second["adjusted_rows"], 0)
+        with self.core._conn(self.core.DEFAULT_DB) as con:
+            balances = {
+                r["name"]: r["qty"]
+                for r in con.execute(
+                    """SELECT w.name,COALESCE(SUM(t.qty_delta),0) qty
+                       FROM warehouses w LEFT JOIN inventory_txns t ON t.warehouse_id=w.id
+                       GROUP BY w.id,w.name"""
+                )
+            }
+            aliases = {
+                r["discount_option_id"]: r["parent_product_id"]
+                for r in con.execute(
+                    "SELECT discount_option_id,parent_product_id FROM return_discount_aliases"
+                )
+            }
+            kinds = {
+                r["vendor_item_id"]: r["stock_type"]
+                for r in con.execute(
+                    "SELECT vendor_item_id,stock_type FROM coupang_rg_inventory"
+                )
+            }
+        self.assertEqual(balances["쿠팡RG"], 100)
+        self.assertEqual(balances["반품창고"], 6)
+        self.assertEqual(aliases, {"8001": 1, "8002": 1, "8003": 1})
+        self.assertEqual(kinds["7001"], "normal")
+        self.assertTrue(all(kinds[x] == "return" for x in ("8001", "8002", "8003")))
+
+    def test_ambiguous_same_name_stays_unmatched_and_does_not_move_return_stock(self):
+        with self.core._conn(self.core.DEFAULT_DB) as con:
+            con.execute(
+                "INSERT INTO products(id,item_code,option_id,name,unit_cost) "
+                "VALUES(2,'CP-7002','7002','상품A',2000)"
+            )
+
+        class OrderClient:
+            def orders(self, start, end):
+                return [{
+                    "orderId": "ORDER-X",
+                    "paidAt": "2026-09-01T00:00:00Z",
+                    "orderItems": [{
+                        "vendorItemId": 9001,
+                        "productName": "상품A",
+                        "salesQuantity": 1,
+                    }],
+                }]
+
+        class InventoryClient:
+            def inventory(self):
+                return [{
+                    "vendorItemId": 9001,
+                    "inventoryDetails": {"totalOrderableQuantity": 4},
+                }]
+
+        api.sync_orders(self.core, OrderClient(), "2026-09-01", "2026-09-01")
+        result = api.sync_inventory(self.core, InventoryClient())
+        self.assertEqual(result["matched"], 0)
+        self.assertEqual(result["return_adjusted_rows"], 0)
+        with self.core._conn(self.core.DEFAULT_DB) as con:
+            alias_count = con.execute(
+                "SELECT COUNT(*) n FROM return_discount_aliases WHERE discount_option_id='9001'"
+            ).fetchone()["n"]
+            return_qty = con.execute(
+                """SELECT COALESCE(SUM(t.qty_delta),0) q
+                   FROM inventory_txns t JOIN warehouses w ON w.id=t.warehouse_id
+                   WHERE w.name='반품창고'"""
+            ).fetchone()["q"]
+        self.assertEqual(alias_count, 0)
+        self.assertEqual(return_qty, 0)
+
+    def test_explicit_return_mapping_overrides_legacy_child_product(self):
+        with self.core._conn(self.core.DEFAULT_DB) as con:
+            con.execute(
+                "INSERT INTO products(id,item_code,option_id,name,unit_cost) "
+                "VALUES(2,'CP-8001','8001','상품A',0)"
+            )
+        api.save_return_mapping(self.core, "8001", 1, "상품A")
+
+        class Client:
+            def inventory(self):
+                return [
+                    {"vendorItemId": 7001, "inventoryDetails": {"totalOrderableQuantity": 10}},
+                    {"vendorItemId": 8001, "inventoryDetails": {"totalOrderableQuantity": 4}},
+                ]
+
+        result = api.sync_inventory(self.core, Client())
+        self.assertEqual(result["matched"], 2)
+        with self.core._conn(self.core.DEFAULT_DB) as con:
+            row = con.execute(
+                """SELECT product_id,stock_type FROM coupang_rg_inventory
+                   WHERE vendor_item_id='8001'"""
+            ).fetchone()
+            return_qty = con.execute(
+                """SELECT COALESCE(SUM(t.qty_delta),0) q
+                   FROM inventory_txns t JOIN warehouses w ON w.id=t.warehouse_id
+                   WHERE w.name='반품창고' AND t.product_id=1"""
+            ).fetchone()["q"]
+            wrong_child_qty = con.execute(
+                """SELECT COALESCE(SUM(t.qty_delta),0) q
+                   FROM inventory_txns t WHERE t.product_id=2"""
+            ).fetchone()["q"]
+        self.assertEqual(row["product_id"], 1)
+        self.assertEqual(row["stock_type"], "return")
+        self.assertEqual(return_qty, 4)
+        self.assertEqual(wrong_child_qty, 0)
 
     def test_revenue_sync_replaces_same_period_and_links_option(self):
         class Client:

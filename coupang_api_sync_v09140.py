@@ -1,4 +1,4 @@
-"""Manual Coupang Open API synchronization for RG Manager v0.9.140.
+"""Manual Coupang Open API synchronization for RG Manager v0.9.141.
 
 The module deliberately performs no network work at import/startup.  Every API
 request is initiated by an explicit Streamlit button click.
@@ -11,8 +11,9 @@ Supported official endpoints:
 
 Raw API facts are preserved in dedicated SQLite tables.  Rows are linked to the
 existing product master by immutable Coupang vendorItemId (ERP option_id).  The
-inventory action also reconciles the existing ``쿠팡RG`` warehouse ledger to the
-API's ``totalOrderableQuantity`` with one auditable delta transaction per change.
+inventory action separates normal options from returned-item aliases.  Normal
+stock is reconciled to ``쿠팡RG`` while all return-option quantities belonging to
+one original product are summed and reconciled once to ``반품창고``.
 """
 from __future__ import annotations
 
@@ -28,6 +29,7 @@ import json
 import os
 from pathlib import Path
 import functools
+import re
 import sqlite3
 from typing import Any, Callable, Iterable
 from urllib.error import HTTPError, URLError
@@ -521,8 +523,38 @@ def ensure_schema(core: Any, db_path: Any | None = None) -> None:
                 synced_at TEXT NOT NULL,
                 PRIMARY KEY(revenue_month,settlement_type,settlement_date,item_index)
             );
+
+            CREATE TABLE IF NOT EXISTS coupang_api_option_catalog(
+                vendor_item_id TEXT PRIMARY KEY,
+                product_name TEXT,
+                vendor_item_name TEXT,
+                external_sku_id TEXT,
+                source TEXT,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS return_discount_aliases(
+                discount_option_id TEXT PRIMARY KEY,
+                parent_product_id INTEGER NOT NULL,
+                discount_name TEXT,
+                match_method TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
             """
         )
+        # v0.9.141 keeps the API option row distinct even when multiple returned
+        # options roll up to one original ERP product.
+        if "stock_type" not in _columns(con, "coupang_rg_inventory"):
+            con.execute(
+                "ALTER TABLE coupang_rg_inventory "
+                "ADD COLUMN stock_type TEXT NOT NULL DEFAULT 'unmatched'"
+            )
+        if "stock_type" not in _columns(con, "coupang_rg_inventory_snapshots"):
+            con.execute(
+                "ALTER TABLE coupang_rg_inventory_snapshots "
+                "ADD COLUMN stock_type TEXT NOT NULL DEFAULT 'unmatched'"
+            )
 
 
 def _product_map(con: sqlite3.Connection) -> dict[str, int]:
@@ -543,8 +575,197 @@ def _product_map(con: sqlite3.Connection) -> dict[str, int]:
             ):
                 key = _oid(row["discount_option_id"])
                 if key:
-                    out.setdefault(key, int(row["parent_product_id"]))
+                    # An explicit return alias must override a legacy auto-created
+                    # child product carrying the same option id.
+                    out[key] = int(row["parent_product_id"])
     return out
+
+
+def _normal_product_map(con: sqlite3.Connection) -> dict[str, int]:
+    """Return only managed normal-product option ids, never return aliases."""
+    if not _exists(con, "products"):
+        return {}
+    cols = _columns(con, "products")
+    if not {"id", "option_id"}.issubset(cols):
+        return {}
+    aliases = {
+        _oid(r["discount_option_id"])
+        for r in con.execute("SELECT discount_option_id FROM return_discount_aliases")
+    }
+    select_code = ",item_code" if "item_code" in cols else ",'' AS item_code"
+    out: dict[str, int] = {}
+    for row in con.execute("SELECT id,option_id" + select_code + " FROM products"):
+        option_id = _oid(row["option_id"])
+        if option_id and option_id not in aliases:
+            out.setdefault(option_id, int(row["id"]))
+        item_code = _oid(row["item_code"])
+        if item_code and item_code.isdigit() and item_code not in aliases:
+            out.setdefault(item_code, int(row["id"]))
+    return out
+
+
+def _return_product_map(con: sqlite3.Connection) -> dict[str, int]:
+    if not _exists(con, "return_discount_aliases"):
+        return {}
+    return {
+        _oid(r["discount_option_id"]): int(r["parent_product_id"])
+        for r in con.execute(
+            "SELECT discount_option_id,parent_product_id FROM return_discount_aliases"
+        )
+        if _oid(r["discount_option_id"])
+    }
+
+
+def _name_key(value: Any) -> str:
+    """Match the existing return-sale name rule without guessing variants."""
+    text = _text(value).lower()
+    text = re.sub(
+        r"[,/\s]+\d+\s*(?:개입|개|p|pcs?|세트|set)\s*$", "", text, flags=re.I
+    )
+    text = re.sub(r"\s+", " ", text).strip(" ,-/")
+    return re.sub(r"[\s,·_/\-]+", "", text)
+
+
+def _catalog_upsert(
+    con: sqlite3.Connection,
+    observations: Iterable[dict[str, Any]],
+    now: str,
+) -> None:
+    rows = []
+    for row in observations:
+        oid = _oid(row.get("vendor_item_id"))
+        if not oid:
+            continue
+        rows.append((
+            oid,
+            _text(row.get("product_name")),
+            _text(row.get("vendor_item_name")),
+            _text(row.get("external_sku_id")),
+            _text(row.get("source")),
+            now,
+        ))
+    con.executemany(
+        """INSERT INTO coupang_api_option_catalog
+           (vendor_item_id,product_name,vendor_item_name,external_sku_id,source,updated_at)
+           VALUES(?,?,?,?,?,?)
+           ON CONFLICT(vendor_item_id) DO UPDATE SET
+             product_name=CASE WHEN excluded.product_name<>'' THEN excluded.product_name
+                               ELSE coupang_api_option_catalog.product_name END,
+             vendor_item_name=CASE WHEN excluded.vendor_item_name<>'' THEN excluded.vendor_item_name
+                                   ELSE coupang_api_option_catalog.vendor_item_name END,
+             external_sku_id=CASE WHEN excluded.external_sku_id<>'' THEN excluded.external_sku_id
+                                  ELSE coupang_api_option_catalog.external_sku_id END,
+             source=CASE WHEN excluded.source<>'' THEN excluded.source
+                         ELSE coupang_api_option_catalog.source END,
+             updated_at=excluded.updated_at""",
+        rows,
+    )
+
+
+def _normal_name_candidates(con: sqlite3.Connection) -> dict[str, set[int]]:
+    if not _exists(con, "products"):
+        return {}
+    cols = _columns(con, "products")
+    if not {"id", "name", "option_id"}.issubset(cols):
+        return {}
+    fields = ["id", "name", "option_id"]
+    fields.append("item_code" if "item_code" in cols else "'' AS item_code")
+    fields.append("unit_cost" if "unit_cost" in cols else "0 AS unit_cost")
+    alias_ids = set(_return_product_map(con))
+    out: dict[str, set[int]] = {}
+    for row in con.execute("SELECT " + ",".join(fields) + " FROM products"):
+        oid = _oid(row["option_id"])
+        if not oid or oid in alias_ids:
+            continue
+        # Do not let a legacy zero-cost CP-{optionId} child become its own
+        # original-product candidate.
+        code = _text(row["item_code"])
+        if code.upper() in {oid.upper(), ("CP-" + oid).upper()} and abs(_num(row["unit_cost"])) <= 1e-9:
+            continue
+        key = _name_key(row["name"])
+        if key:
+            out.setdefault(key, set()).add(int(row["id"]))
+    return out
+
+
+def _auto_link_return_aliases(
+    con: sqlite3.Connection,
+    option_ids: Iterable[str] | None,
+    now: str,
+) -> int:
+    """Persist unknown code + one unique identical product name as a return."""
+    normal_ids = _normal_product_map(con)
+    return_ids = _return_product_map(con)
+    candidates = _normal_name_candidates(con)
+    wanted = {_oid(x) for x in option_ids or [] if _oid(x)}
+    if not wanted:
+        wanted = {
+            _oid(r["vendor_item_id"])
+            for r in con.execute("SELECT vendor_item_id FROM coupang_api_option_catalog")
+        }
+    linked = 0
+    for oid in sorted(wanted):
+        if oid in normal_ids or oid in return_ids:
+            continue
+        catalog = con.execute(
+            """SELECT product_name,vendor_item_name
+               FROM coupang_api_option_catalog WHERE vendor_item_id=?""",
+            (oid,),
+        ).fetchone()
+        if not catalog:
+            continue
+        names = [_text(catalog["product_name"]), _text(catalog["vendor_item_name"])]
+        matched: set[int] = set()
+        for name in names:
+            key = _name_key(name)
+            if key:
+                matched.update(candidates.get(key, set()))
+        if len(matched) != 1:
+            continue
+        parent_id = next(iter(matched))
+        display_name = next((x for x in names if x), "")
+        con.execute(
+            """INSERT INTO return_discount_aliases
+               (discount_option_id,parent_product_id,discount_name,match_method,created_at,updated_at)
+               VALUES(?,?,?,?,?,?)
+               ON CONFLICT(discount_option_id) DO NOTHING""",
+            (oid, parent_id, display_name, "api_name_unique", now, now),
+        )
+        linked += int(con.execute("SELECT changes() n").fetchone()["n"] or 0)
+    return linked
+
+
+def save_return_mapping(
+    core: Any,
+    discount_option_id: str,
+    parent_product_id: int,
+    discount_name: str = "",
+    db_path: Any | None = None,
+) -> None:
+    """Save an explicit one-time return option -> original product mapping."""
+    db = db_path or core.DEFAULT_DB
+    ensure_schema(core, db)
+    oid = _oid(discount_option_id)
+    if not oid:
+        raise ValueError("반품 옵션ID를 선택해 주세요.")
+    with core._conn(db) as con:
+        parent = con.execute(
+            "SELECT id FROM products WHERE id=?", (int(parent_product_id),)
+        ).fetchone()
+        if not parent:
+            raise ValueError("연결할 원상품을 찾지 못했습니다.")
+        now = _local_now(core)
+        con.execute(
+            """INSERT INTO return_discount_aliases
+               (discount_option_id,parent_product_id,discount_name,match_method,created_at,updated_at)
+               VALUES(?,?,?,?,?,?)
+               ON CONFLICT(discount_option_id) DO UPDATE SET
+                 parent_product_id=excluded.parent_product_id,
+                 discount_name=excluded.discount_name,
+                 match_method=excluded.match_method,
+                 updated_at=excluded.updated_at""",
+            (oid, int(parent_product_id), _text(discount_name), "api_manual", now, now),
+        )
 
 
 def _run_start(core: Any, db: Any, kind: str, start: str | None, end: str | None) -> int:
@@ -600,7 +821,23 @@ def sync_orders(core: Any, client: CoupangClient, start: date | str, end: date |
         orders = client.orders(a, b)
         now = _local_now(core)
         flattened = []
+        observations = []
+        for order in orders:
+            for item in (order.get("orderItems") or []) if isinstance(order, dict) else []:
+                if not isinstance(item, dict):
+                    continue
+                observations.append({
+                    "vendor_item_id": item.get("vendorItemId"),
+                    "product_name": item.get("productName"),
+                    "vendor_item_name": item.get("vendorItemName"),
+                    "external_sku_id": item.get("externalSkuId"),
+                    "source": "orders",
+                })
         with core._conn(db) as con:
+            _catalog_upsert(con, observations, now)
+            auto_linked = _auto_link_return_aliases(
+                con, [x.get("vendor_item_id") for x in observations], now
+            )
             mapping = _product_map(con)
             for order in orders:
                 order_id = _text(order.get("orderId"))
@@ -631,7 +868,10 @@ def sync_orders(core: Any, client: CoupangClient, start: date | str, end: date |
                 flattened,
             )
         matched = sum(1 for row in flattened if row[5] is not None)
-        message = f"주문 {len(orders):,}건 · 상품행 {len(flattened):,}개 저장"
+        message = (
+            f"주문 {len(orders):,}건 · 상품행 {len(flattened):,}개 저장"
+            f" · 반품옵션 자동연결 {auto_linked:,}개"
+        )
         _run_finish(core, db, run_id, "success", len(flattened), matched, message)
         return {"run_id": run_id, "orders": len(orders), "rows": len(flattened), "matched": matched}
     except Exception as exc:
@@ -648,11 +888,22 @@ def _inventory_values(row: dict[str, Any]) -> tuple[float, float]:
     )
 
 
-def _reconcile_rg_inventory(core: Any, con: sqlite3.Connection, targets: list[tuple[str, int | None, float]], run_id: int):
+def _reconcile_warehouse_inventory(
+    core: Any,
+    con: sqlite3.Connection,
+    warehouse_name: str,
+    targets: dict[int, dict[str, Any]],
+    run_id: int,
+    stock_type: str,
+):
     if not (_exists(con, "warehouses") and _exists(con, "inventory_txns")):
         return {"adjusted_rows": 0, "adjusted_qty": 0.0}
-    warehouse = con.execute("SELECT id FROM warehouses WHERE name='쿠팡RG'").fetchone()
+    warehouse = con.execute(
+        "SELECT id FROM warehouses WHERE name=?", (warehouse_name,)
+    ).fetchone()
     if not warehouse:
+        if targets:
+            raise ValueError(f"{warehouse_name} 창고를 찾지 못했습니다.")
         return {"adjusted_rows": 0, "adjusted_qty": 0.0}
     wid = int(warehouse["id"])
     current = {
@@ -667,21 +918,27 @@ def _reconcile_rg_inventory(core: Any, con: sqlite3.Connection, targets: list[tu
     today = date.today().isoformat()
     adjusted_rows = 0
     adjusted_qty = 0.0
-    for oid, pid, target in targets:
-        if pid is None:
-            continue
+    for pid, values in sorted(targets.items()):
+        target = _num(values.get("qty"))
+        option_ids = sorted({_oid(x) for x in values.get("option_ids", []) if _oid(x)})
         live = current.get(int(pid), 0.0)
         delta = float(target) - live
         if abs(delta) <= 1e-9:
             continue
+        is_return = stock_type == "return"
+        txn_type = "쿠팡API반품재고조정" if is_return else "쿠팡API재고조정"
+        stock_label = "반품상품" if is_return else "새상품"
+        source_text = ",".join(option_ids)
         con.execute(
             """INSERT INTO inventory_txns
                (txn_date,product_id,warehouse_id,qty_delta,txn_type,ref_no,memo,created_at)
                VALUES(?,?,?,?,?,?,?,?)""",
             (
-                today, int(pid), wid, delta, "쿠팡API재고조정",
-                f"COUPANG-API-INVENTORY-{run_id}-{oid}",
-                f"쿠팡 API 주문 가능 재고 {_integer(target):,}개로 대사", now,
+                today, int(pid), wid, delta, txn_type,
+                f"COUPANG-API-INVENTORY-{run_id}-{stock_type}-{pid}",
+                f"쿠팡 API {stock_label} 주문 가능 재고 {_integer(target):,}개로 대사"
+                + (f" (옵션ID {source_text})" if source_text else ""),
+                now,
             ),
         )
         current[int(pid)] = float(target)
@@ -698,41 +955,82 @@ def sync_inventory(core: Any, client: CoupangClient, db_path=None):
         now = _local_now(core)
         targets = []
         with core._conn(db) as con:
-            mapping = _product_map(con)
+            observations = [{
+                "vendor_item_id": row.get("vendorItemId"),
+                "external_sku_id": row.get("externalSkuId"),
+                "source": "inventory",
+            } for row in rows if isinstance(row, dict)]
+            _catalog_upsert(con, observations, now)
+            auto_linked = _auto_link_return_aliases(
+                con, [x.get("vendor_item_id") for x in observations], now
+            )
+            normal_mapping = _normal_product_map(con)
+            return_mapping = _return_product_map(con)
             for row in rows:
                 oid = _oid(row.get("vendorItemId"))
                 if not oid:
                     continue
                 qty, sales_30d = _inventory_values(row)
-                targets.append((oid, mapping.get(oid), qty, sales_30d, row))
+                if oid in return_mapping:
+                    product_id, stock_type = return_mapping[oid], "return"
+                elif oid in normal_mapping:
+                    product_id, stock_type = normal_mapping[oid], "normal"
+                else:
+                    product_id, stock_type = None, "unmatched"
+                targets.append((oid, product_id, stock_type, qty, sales_30d, row))
             # This table is a current snapshot.  Replace only after every API page
             # was received successfully, so partial failures never erase old data.
             con.execute("DELETE FROM coupang_rg_inventory")
             con.executemany(
                 """INSERT INTO coupang_rg_inventory
-                   (vendor_item_id,product_id,external_sku_id,orderable_qty,sales_30d,raw_json,synced_at)
-                   VALUES(?,?,?,?,?,?,?)""",
+                   (vendor_item_id,product_id,external_sku_id,orderable_qty,sales_30d,
+                    raw_json,synced_at,stock_type)
+                   VALUES(?,?,?,?,?,?,?,?)""",
                 [(
                     oid, pid, _text(raw.get("externalSkuId")), qty, sales30,
-                    _json(raw), now,
-                ) for oid, pid, qty, sales30, raw in targets],
+                    _json(raw), now, stock_type,
+                ) for oid, pid, stock_type, qty, sales30, raw in targets],
             )
             con.executemany(
                 """INSERT INTO coupang_rg_inventory_snapshots
-                   (run_id,vendor_item_id,product_id,orderable_qty,sales_30d,captured_at)
-                   VALUES(?,?,?,?,?,?)""",
-                [(run_id, oid, pid, qty, sales30, now) for oid, pid, qty, sales30, _raw in targets],
+                   (run_id,vendor_item_id,product_id,orderable_qty,sales_30d,captured_at,stock_type)
+                   VALUES(?,?,?,?,?,?,?)""",
+                [(run_id, oid, pid, qty, sales30, now, stock_type)
+                 for oid, pid, stock_type, qty, sales30, _raw in targets],
             )
-            adjusted = _reconcile_rg_inventory(
-                core, con, [(oid, pid, qty) for oid, pid, qty, _sales30, _raw in targets], run_id
+            normal_targets: dict[int, dict[str, Any]] = {}
+            return_targets: dict[int, dict[str, Any]] = {}
+            for oid, pid, stock_type, qty, _sales30, _raw in targets:
+                if pid is None or stock_type == "unmatched":
+                    continue
+                bucket = return_targets if stock_type == "return" else normal_targets
+                value = bucket.setdefault(int(pid), {"qty": 0.0, "option_ids": []})
+                value["qty"] += float(qty)
+                value["option_ids"].append(oid)
+            normal_adjusted = _reconcile_warehouse_inventory(
+                core, con, "쿠팡RG", normal_targets, run_id, "normal"
             )
-        matched = sum(1 for _oidv, pid, _q, _s, _r in targets if pid is not None)
+            return_adjusted = _reconcile_warehouse_inventory(
+                core, con, "반품창고", return_targets, run_id, "return"
+            )
+        matched = sum(1 for _oidv, pid, _kind, _q, _s, _r in targets if pid is not None)
+        adjusted = {
+            "adjusted_rows": normal_adjusted["adjusted_rows"] + return_adjusted["adjusted_rows"],
+            "adjusted_qty": normal_adjusted["adjusted_qty"] + return_adjusted["adjusted_qty"],
+            "normal_adjusted_rows": normal_adjusted["adjusted_rows"],
+            "normal_adjusted_qty": normal_adjusted["adjusted_qty"],
+            "return_adjusted_rows": return_adjusted["adjusted_rows"],
+            "return_adjusted_qty": return_adjusted["adjusted_qty"],
+        }
         message = (
-            f"재고 {len(targets):,}개 저장 · ERP 재고조정 {adjusted['adjusted_rows']:,}개"
+            f"재고 {len(targets):,}개 저장 · 새상품 조정 {adjusted['normal_adjusted_rows']:,}개"
+            f" · 반품상품 조정 {adjusted['return_adjusted_rows']:,}개"
+            f" · 반품옵션 자동연결 {auto_linked:,}개"
         )
         _run_finish(core, db, run_id, "success", len(targets), matched, message)
         return {
             "run_id": run_id, "rows": len(targets), "matched": matched,
+            "auto_linked": auto_linked,
             **adjusted,
         }
     except Exception as exc:
@@ -748,7 +1046,23 @@ def sync_revenue(core: Any, client: CoupangClient, start: date | str, end: date 
         transactions = client.revenue(a, b)
         now = _local_now(core)
         flattened = []
+        observations = []
+        for transaction in transactions:
+            for item in (transaction.get("items") or []) if isinstance(transaction, dict) else []:
+                if not isinstance(item, dict):
+                    continue
+                observations.append({
+                    "vendor_item_id": item.get("vendorItemId"),
+                    "product_name": item.get("productName"),
+                    "vendor_item_name": item.get("vendorItemName"),
+                    "external_sku_id": item.get("externalSkuId"),
+                    "source": "revenue",
+                })
         with core._conn(db) as con:
+            _catalog_upsert(con, observations, now)
+            auto_linked = _auto_link_return_aliases(
+                con, [x.get("vendor_item_id") for x in observations], now
+            )
             mapping = _product_map(con)
             for transaction_index, transaction in enumerate(transactions):
                 order_id = _text(transaction.get("orderId"))
@@ -787,7 +1101,10 @@ def sync_revenue(core: Any, client: CoupangClient, start: date | str, end: date 
                 flattened,
             )
         matched = sum(1 for row in flattened if row[7] is not None)
-        message = f"매출 거래 {len(transactions):,}건 · 상품행 {len(flattened):,}개 저장"
+        message = (
+            f"매출 거래 {len(transactions):,}건 · 상품행 {len(flattened):,}개 저장"
+            f" · 반품옵션 자동연결 {auto_linked:,}개"
+        )
         _run_finish(core, db, run_id, "success", len(flattened), matched, message)
         return {"run_id": run_id, "transactions": len(transactions), "rows": len(flattened), "matched": matched}
     except Exception as exc:
@@ -863,9 +1180,26 @@ def _summary(core: Any, db: Any) -> dict[str, Any]:
             ).fetchone()["n"]),
         }
         inventory = con.execute(
-            """SELECT vendor_item_id,product_id,external_sku_id,orderable_qty,sales_30d,synced_at
-               FROM coupang_rg_inventory ORDER BY orderable_qty DESC,vendor_item_id"""
+            """SELECT i.vendor_item_id,i.product_id,i.external_sku_id,
+                      i.orderable_qty,i.sales_30d,i.synced_at,i.stock_type,
+                      COALESCE(NULLIF(c.vendor_item_name,''),NULLIF(c.product_name,''),'') api_product_name,
+                      COALESCE(p.name,'') erp_product_name
+               FROM coupang_rg_inventory i
+               LEFT JOIN coupang_api_option_catalog c ON c.vendor_item_id=i.vendor_item_id
+               LEFT JOIN products p ON p.id=i.product_id
+               ORDER BY CASE i.stock_type WHEN 'normal' THEN 0 WHEN 'return' THEN 1 ELSE 2 END,
+                        i.orderable_qty DESC,i.vendor_item_id"""
         ).fetchall()
+        inventory_types = {
+            str(r["stock_type"]): {
+                "options": int(r["options"] or 0),
+                "qty": _num(r["qty"]),
+            }
+            for r in con.execute(
+                """SELECT stock_type,COUNT(*) options,COALESCE(SUM(orderable_qty),0) qty
+                   FROM coupang_rg_inventory GROUP BY stock_type"""
+            )
+        }
         revenue = con.execute(
             """SELECT substr(recognition_date,1,7) month,
                       SUM(CASE WHEN sale_type='REFUND' THEN -ABS(sale_amount) ELSE sale_amount END) sales,
@@ -884,9 +1218,46 @@ def _summary(core: Any, db: Any) -> dict[str, Any]:
         ).fetchall()
     return {
         "last": [dict(x) for x in last], "counts": counts, "unmatched": unmatched,
-        "inventory": [dict(x) for x in inventory], "revenue": [dict(x) for x in revenue],
+        "inventory": [dict(x) for x in inventory],
+        "unmatched_inventory": [dict(x) for x in inventory if x["product_id"] is None],
+        "inventory_types": inventory_types,
+        "revenue": [dict(x) for x in revenue],
         "settlements": [dict(x) for x in settlements],
     }
+
+
+def _return_mapping_products(core: Any, db: Any) -> list[dict[str, Any]]:
+    with core._conn(db) as con:
+        if not _exists(con, "products"):
+            return []
+        cols = _columns(con, "products")
+        if not {"id", "name", "option_id"}.issubset(cols):
+            return []
+        code_expr = "item_code" if "item_code" in cols else "'' AS item_code"
+        cost_expr = "unit_cost" if "unit_cost" in cols else "0 AS unit_cost"
+        active_where = "WHERE COALESCE(active,1)=1" if "active" in cols else ""
+        aliases = set(_return_product_map(con))
+        rows = con.execute(
+            f"SELECT id,name,option_id,{code_expr},{cost_expr} "
+            f"FROM products {active_where} ORDER BY name,id"
+        ).fetchall()
+        out = []
+        for r in rows:
+            oid = _oid(r["option_id"])
+            code = _text(r["item_code"])
+            placeholder = (
+                code.upper() in {oid.upper(), ("CP-" + oid).upper()}
+                and abs(_num(r["unit_cost"])) <= 1e-9
+            )
+            if not oid or oid in aliases or placeholder:
+                continue
+            out.append({
+                "id": int(r["id"]),
+                "name": _text(r["name"]),
+                "option_id": oid,
+                "item_code": code,
+            })
+        return out
 
 
 def _month_bounds(month: str) -> tuple[date, date]:
@@ -1132,7 +1503,12 @@ def _result_message(label: str, result: dict[str, Any]) -> str:
     rows = int(result.get("rows") or 0)
     matched = int(result.get("matched") or 0)
     extra = ""
-    if "adjusted_rows" in result:
+    if "normal_adjusted_rows" in result:
+        extra = (
+            f" · 새상품 재고조정 {int(result.get('normal_adjusted_rows') or 0):,}개"
+            f" · 반품상품 재고조정 {int(result.get('return_adjusted_rows') or 0):,}개"
+        )
+    elif "adjusted_rows" in result:
         extra = f" · ERP 재고조정 {int(result.get('adjusted_rows') or 0):,}개 상품"
     return f"{label} 완료: {rows:,}개 행 저장 · 품목 연결 {matched:,}개{extra}"
 
@@ -1218,6 +1594,11 @@ def render_page(st: Any, pd: Any, core: Any, db_path=None) -> None:
                 except Exception as exc:
                     st.error(str(exc))
 
+        st.caption(
+            "처음 연동할 때는 주문·매출의 상품명을 먼저 수집할 수 있도록 "
+            "'선택 기간 전체 동기화'를 사용하는 것을 권장합니다."
+        )
+
         if st.button("선택 기간 전체 동기화", type="primary", use_container_width=True, key="coupang_api_all_v09140"):
             completed = []
             try:
@@ -1243,14 +1624,72 @@ def render_page(st: Any, pd: Any, core: Any, db_path=None) -> None:
         c2.metric("현재 재고 옵션", f"{summary['counts']['coupang_rg_inventory']:,}개")
         c3.metric("매출·수수료 상품행", f"{summary['counts']['coupang_revenue_items']:,}개")
         c4.metric("지급내역", f"{summary['counts']['coupang_settlement_histories']:,}건")
+        inv_types = summary.get("inventory_types", {})
+        st.caption(
+            "재고 분류 · "
+            f"새상품 {_integer(inv_types.get('normal', {}).get('qty')):,}개 · "
+            f"반품상품 {_integer(inv_types.get('return', {}).get('qty')):,}개 · "
+            f"미분류 {_integer(inv_types.get('unmatched', {}).get('qty')):,}개"
+        )
 
         missing_total = sum(summary["unmatched"].values())
         if missing_total:
             st.warning(
                 "품목관리 옵션ID와 연결되지 않은 API 자료가 있습니다: "
                 f"주문 {summary['unmatched']['orders']:,}개 · 재고 {summary['unmatched']['inventory']:,}개 · "
-                f"매출 {summary['unmatched']['revenue']:,}개. 품목관리에서 해당 옵션ID를 등록한 뒤 다시 동기화하세요."
+                f"매출 {summary['unmatched']['revenue']:,}개. 정상상품은 품목관리에 등록하고, "
+                "코드만 다른 반품상품은 아래에서 원상품에 연결한 뒤 다시 동기화하세요."
             )
+
+        if summary["unmatched_inventory"]:
+            with st.expander("미분류 재고 옵션을 반품상품으로 연결", expanded=True):
+                st.caption(
+                    "정상상품과 이름은 같지만 옵션ID가 다른 반품상품만 연결하세요. "
+                    "정상상품 자체가 미등록된 경우에는 먼저 품목관리에서 정상 옵션ID를 등록해야 합니다."
+                )
+                unknown = {str(x["vendor_item_id"]): x for x in summary["unmatched_inventory"]}
+                unknown_ids = list(unknown)
+                selected_oid = st.selectbox(
+                    "미분류 쿠팡 옵션",
+                    unknown_ids,
+                    format_func=lambda oid: (
+                        f"{oid} · {unknown[oid].get('api_product_name') or '상품명 미확인'}"
+                        f" · 재고 {_integer(unknown[oid].get('orderable_qty')):,}개"
+                    ),
+                    key="coupang_api_unmatched_option_v09141",
+                )
+                products = _return_mapping_products(core, db)
+                if products:
+                    by_pid = {int(x["id"]): x for x in products}
+                    selected_pid = st.selectbox(
+                        "연결할 정상 원상품",
+                        list(by_pid),
+                        format_func=lambda pid: (
+                            f"{by_pid[pid]['name']} · 옵션ID {by_pid[pid]['option_id']}"
+                            f" · 품목코드 {by_pid[pid]['item_code']}"
+                        ),
+                        key="coupang_api_return_parent_v09141",
+                    )
+                    if st.button(
+                        "선택 옵션을 반품상품으로 연결",
+                        type="primary",
+                        use_container_width=True,
+                        key="coupang_api_save_return_mapping_v09141",
+                    ):
+                        row = unknown[selected_oid]
+                        save_return_mapping(
+                            core,
+                            selected_oid,
+                            selected_pid,
+                            row.get("api_product_name") or "",
+                            db,
+                        )
+                        st.success(
+                            "반품상품 연결을 저장했습니다. 재고 동기화를 다시 누르면 "
+                            "해당 옵션 수량이 원상품의 반품창고 재고에 합산됩니다."
+                        )
+                else:
+                    st.info("연결할 정상상품이 없습니다. 품목관리에서 정상상품과 옵션ID를 먼저 등록하세요.")
 
         if summary["revenue"]:
             st.markdown("#### API 매출·수수료 월별 요약")
@@ -1278,7 +1717,12 @@ def render_page(st: Any, pd: Any, core: Any, db_path=None) -> None:
                     "vendor_item_id": "옵션ID", "external_sku_id": "판매자 SKU",
                     "orderable_qty": "주문 가능 재고", "sales_30d": "최근 30일 판매",
                     "synced_at": "동기화 시각", "product_id": "ERP 상품ID",
+                    "stock_type": "재고구분", "api_product_name": "쿠팡 상품명",
+                    "erp_product_name": "ERP 원상품",
                 })
+                idf["재고구분"] = idf["재고구분"].map({
+                    "normal": "새상품", "return": "반품상품", "unmatched": "미분류",
+                }).fillna(idf["재고구분"])
                 st.dataframe(idf, use_container_width=True, hide_index=True)
 
         if summary["settlements"]:
