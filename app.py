@@ -25,6 +25,7 @@ for _rg_mod in (
     "purchase_match_ui_v091",
     "purchase_new_item_persist_v09136",
     "requested_product_seed_v09133",
+    "coupang_api_sync_v09140",
 ):
     sys.modules.pop(_rg_mod, None)
 importlib.invalidate_caches()
@@ -44,6 +45,11 @@ def _plain_import_module(name, package=None):
 
 
 _original_import_module = _plain_import_module
+
+# v0.9.140: apply() creates local staging/audit tables only. Network requests are
+# always initiated manually from the dedicated page buttons.
+coupang_api_sync_v09140 = _original_import_module("coupang_api_sync_v09140")
+coupang_api_sync_v09140.apply(core)
 
 
 def _apply_purchase_v08(module):
@@ -279,7 +285,7 @@ _ensure_loader()
 source = LOADER.read_text(encoding="utf-8")
 source = source.replace(
     'st.sidebar.caption("v0.7 · legacy ERP import")',
-    'st.sidebar.caption("v0.9.136 · runtime integrity")',
+    'st.sidebar.caption("v0.9.140 · manual Coupang API sync")',
 )
 loader_exec = 'exec(compile(source, str(BASE_APP), "exec"), globals(), globals())'
 if loader_exec not in source:
@@ -293,6 +299,7 @@ source = source.replace(
     'source = production_batch_v095.patch_source(source)\n'
     'source = pnl_views_v0912.patch_source(source)\n'
     'source = provisional_pnl_ui_v0913.patch_source(source)\n'
+    'source = coupang_api_sync_v09140.patch_source(source)\n'
     'source = pnl_month_default_v0915.patch_source(source)\n' + loader_exec,
     1,
 )
@@ -314,6 +321,7 @@ globals()["sales_pnl_zero_v0910"] = sales_pnl_zero_v0910
 globals()["provisional_pnl_ui_v0913"] = provisional_pnl_ui_v0913
 globals()["pnl_month_default_v0914"] = pnl_month_default_v0914
 globals()["pnl_month_default_v0915"] = pnl_month_default_v0915
+globals()["coupang_api_sync_v09140"] = coupang_api_sync_v09140
 globals()["bom_candidate_filter_v0927"] = bom_candidate_filter_v0927
 globals()["AUTO_PRODUCTION_V09106_RESULT"] = AUTO_PRODUCTION_V09106_RESULT
 globals()["AD_FORCE_CLEANUP_V09111_RESULT"] = AD_FORCE_CLEANUP_V09111_RESULT
