@@ -1,17 +1,21 @@
-"""RG Manager v0.9.107 return-sale option matching.
+"""RG Manager v0.9.158 return-sale option matching.
 
 Business rule
 -------------
-- Exact ERP option IDs remain ordinary sales for managed normal products.
-- Explicit return_discount_aliases always remain returned-item discount sales.
-- User-marked return option IDs are never treated as normal parent products.
-- Historical/archived non-placeholder ERP products remain valid originals for old sales files.
-- When the same monthly sales file contains both the normal option and a cheaper
-  alternate option with the same full sales-stat name, map the cheaper option to
-  the normal ERP original before falling back to fuzzy matching.
-- A newly seen user-marked return option may inherit the same parent from an
-  already-known return alias when both have the same full sales-stat name.
-- Ambiguous/no-price cases are blocked rather than guessed.
+- Exact verified normal option IDs remain ordinary sales.
+- Explicit return_discount_aliases always remain returned-item resale aliases.
+- Auto-created placeholder products (CP-option id, zero cost) are NEVER treated
+  as managed normal products merely because active=1.
+- When the normal-option registry exists, an unknown option that is not in that
+  registry may be auto-linked to one registered normal product when the normalized
+  product name is a unique very-strong structural match and package quantity does
+  not conflict. Price discount is supporting evidence, not mandatory, because
+  Coupang returned-item resale prices can be above a current/coupon-adjusted normal
+  realized price.
+- Existing placeholder duplicates already stored in the ERP are repaired through
+  the same resolver on startup/rerun; future unknown ambiguous options are blocked
+  instead of silently becoming separate managed products.
+- Historical/archived genuine ERP products remain valid originals for old sales.
 """
 from __future__ import annotations
 
@@ -59,6 +63,19 @@ def _name_score(a: Any, b: Any) -> float:
     return ratio
 
 
+def _strong_name_relation(a: Any, b: Any) -> bool:
+    """Conservative structural match used only with the verified normal registry."""
+    aq, bq = _pack_qty(a), _pack_qty(b)
+    if aq is not None and bq is not None and aq != bq:
+        return False
+    ca, cb = _name_core(a), _name_core(b)
+    if min(len(ca), len(cb)) < 8:
+        return False
+    if not (ca in cb or cb in ca):
+        return False
+    return _name_score(a, b) >= 0.90
+
+
 def _row_unit_price(row) -> float | None:
     if not row:
         return None
@@ -97,6 +114,92 @@ def _known_return_option_ids() -> set[str]:
         return set()
 
 
+def _normal_registry_ids(core, db) -> set[str]:
+    """Verified normal RG option IDs loaded from the user's RG inbound workbook."""
+    try:
+        with core._conn(db) as c:
+            exists = c.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='coupang_normal_option_registry'"
+            ).fetchone()
+            if not exists:
+                return set()
+            return {
+                str(r["vendor_item_id"] or "").strip()
+                for r in c.execute("SELECT vendor_item_id FROM coupang_normal_option_registry")
+                if str(r["vendor_item_id"] or "").strip()
+            }
+    except Exception:
+        return set()
+
+
+def _repair_existing_candidates(rd, core, db, resolve) -> dict[str, int]:
+    """Repair already-created zero-cost CP-* children through the same safe resolver."""
+    repaired = 0
+    skipped = 0
+    aliases = rd._alias_map(core, db)
+    normal_ids = _normal_registry_ids(core, db)
+    amount_col = rd._amount_column(core, db)
+
+    products = rd._load_products(core, db)
+    candidates = []
+    for p in products:
+        oid = str(p.get("option_id") or "")
+        if not oid or oid in aliases or oid in normal_ids:
+            continue
+        try:
+            placeholder = bool(rd._placeholder(p))
+        except Exception:
+            placeholder = False
+        if placeholder:
+            candidates.append(p)
+
+    for child in candidates:
+        oid = str(child.get("option_id") or "")
+        try:
+            with core._conn(db) as c:
+                if amount_col:
+                    rows = c.execute(
+                        f'''SELECT import_id,COALESCE(SUM(net_qty),0) qty,
+                                   COALESCE(SUM("{amount_col}"),0) amount
+                            FROM sales_stats WHERE product_id=? GROUP BY import_id''',
+                        (int(child["id"]),),
+                    ).fetchall()
+                else:
+                    rows = c.execute(
+                        """SELECT import_id,COALESCE(SUM(net_qty),0) qty
+                           FROM sales_stats WHERE product_id=? GROUP BY import_id""",
+                        (int(child["id"]),),
+                    ).fetchall()
+        except Exception:
+            skipped += 1
+            continue
+
+        for sr in rows:
+            qty = _num(sr["qty"])
+            if abs(qty) <= 1e-12:
+                continue
+            parsed = [{
+                "option_id": oid,
+                "name": str(child.get("name") or ""),
+                "name_key": str(child.get("name_key") or ""),
+                "qty": qty,
+                "amount": _num(sr["amount"]) if amount_col and "amount" in sr.keys() else None,
+                "amount_known": bool(amount_col),
+            }]
+            try:
+                mappings = resolve(core, db, parsed)
+            except Exception:
+                skipped += 1
+                continue
+            parent_pid = mappings.get(oid)
+            if not parent_pid:
+                continue
+            rd._post_discount(core, db, int(sr["import_id"]), parsed, {oid: int(parent_pid)})
+            repaired += 1
+
+    return {"repaired": repaired, "skipped": skipped, "candidates": len(candidates)}
+
+
 def apply(return_discount_module, core_module) -> None:
     global _APPLIED
     rd = return_discount_module
@@ -111,6 +214,13 @@ def apply(return_discount_module, core_module) -> None:
         oid = str(p.get("option_id") or "")
         if oid and (oid in aliases or oid in known_returns):
             return False
+        # Critical v0.9.158 fix: import-created CP-* zero-cost placeholders are
+        # not normal products just because the core importer marked them active.
+        try:
+            if rd._placeholder(p):
+                return False
+        except Exception:
+            pass
         if int(p.get("active") or 0) == 1:
             return True
         try:
@@ -123,6 +233,7 @@ def apply(return_discount_module, core_module) -> None:
         by_oid = {str(p.get("option_id") or ""): p for p in products if p.get("option_id")}
         aliases = rd._alias_map(core, db)
         known_returns = _known_return_option_ids()
+        normal_ids = _normal_registry_ids(core, db)
 
         managed = [
             p for p in products
@@ -190,6 +301,29 @@ def apply(return_discount_module, core_module) -> None:
                 mappings[oid] = next(iter(inherited))
                 continue
 
+            # v0.9.158 structural rule. Only trust this without price evidence
+            # when the user has a verified normal-option registry. The child must
+            # not itself be registered normal, and exactly one registered normal
+            # product must be a very-strong name/package match.
+            if normal_ids and oid not in normal_ids:
+                strong = []
+                for p in managed:
+                    poid = str(p.get("option_id") or "")
+                    if poid not in normal_ids:
+                        continue
+                    same_file_row = parsed_by_oid.get(poid)
+                    candidate_name = (
+                        same_file_row.get("name")
+                        if same_file_row and same_file_row.get("name")
+                        else p.get("name")
+                    )
+                    if _strong_name_relation(row.get("name"), candidate_name):
+                        strong.append(p)
+                strong_ids = {int(p["id"]) for p in strong}
+                if len(strong_ids) == 1:
+                    mappings[oid] = next(iter(strong_ids))
+                    continue
+
             scored = []
             for p in managed:
                 poid = str(p.get("option_id") or "")
@@ -230,7 +364,9 @@ def apply(return_discount_module, core_module) -> None:
                 mappings[oid] = int(chosen[1]["id"])
                 continue
 
-            if discount_price is None:
+            if normal_ids and oid not in normal_ids:
+                reason = "정상옵션 목록에 없고 원상품 자동매칭이 확정되지 않음"
+            elif discount_price is None:
                 reason = "할인판매 단가를 확인할 수 없음"
             elif not scored:
                 reason = "유사한 ERP 원상품 없음"
@@ -246,9 +382,10 @@ def apply(return_discount_module, core_module) -> None:
             lines = [f"{oid} | {name} ({reason})" for oid, name, reason in unresolved[:20]]
             more = "" if len(unresolved) <= 20 else f" 외 {len(unresolved)-20}개"
             raise ValueError(
-                "ERP에 없는 쿠팡 옵션ID를 자동으로 새 품목 처리하지 않았습니다. "
-                "동일 옵션ID는 정상판매로 처리하고, 다른 옵션ID는 같은 파일의 원상품/기존 "
-                "반품매칭/할인단가를 확인한 경우에만 반품 할인판매로 연결합니다.\n"
+                "ERP에 없는 쿠팡 옵션ID를 별도 정상상품으로 자동 생성하지 않았습니다. "
+                "정상옵션 목록에 있는 ID는 정상판매로 처리하고, 그 밖의 새 ID는 원상품이 "
+                "안전하게 하나로 확정되는 경우에만 반품 재판매로 연결합니다. 애매한 경우 "
+                "잘못 합산하지 않고 업로드를 중단합니다.\n"
                 + "\n".join(lines) + more
             )
         return mappings
@@ -270,6 +407,16 @@ def apply(return_discount_module, core_module) -> None:
     rd._post_discount = post_discount
     rd._rg_return_sale_match_v0944_applied = True
     _APPLIED = True
+
+    # Repair old placeholder duplicates with the exact same rule used for future
+    # uploads. This is intentionally after rd._post_discount is replaced so the
+    # repaired child is archived and inventory is moved to 반품창고 correctly.
+    try:
+        core_module._rg_return_sale_repair_v09158 = _repair_existing_candidates(
+            rd, core_module, core_module.DEFAULT_DB, resolve
+        )
+    except Exception as exc:
+        core_module._rg_return_sale_repair_v09158 = {"repaired": 0, "error": str(exc)}
 
     import canonical_rg_cleanup_v0947
     canonical_rg_cleanup_v0947.apply(core_module, rd)
