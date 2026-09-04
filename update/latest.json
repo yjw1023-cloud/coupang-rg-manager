@@ -1,6 +1,6 @@
 {
-  "version": "0.9.156",
-  "message": "잠정손익의 자동 입출고·배송비 단가를 수정합니다. 기존처럼 VAT 포함 비용을 쓰거나 입출고비와 배송비를 서로 다른 최근 주문에서 따로 뽑지 않고, 동일 상품의 과거 옵션ID 이력까지 묶어 가장 최근에 입출고비와 배송비가 함께 존재하는 동일 주문의 VAT 제외 최종비용(final_cost_prevat)을 1개당 단가로 사용합니다. 수동 물류비 설정은 계속 최우선이며 정산 원본 데이터는 변경하지 않습니다.",
+  "version": "0.9.157",
+  "message": "보조거울 반품 재판매 옵션 95928633818을 정상 옵션 95834379201의 반품판매 자식 옵션으로 명시 연결합니다. 잠정손익에서는 별도 상품행으로 표시하지 않고 원상품 행에 판매수량·매출·비용·이익을 합산하며, 기존 반품판매 처리 규칙대로 일반 쿠팡RG 판매차감은 제거하고 반품창고 판매차감으로 정리합니다.",
   "files": [
     "app.py",
     "VERSION.txt",
@@ -66,6 +66,7 @@
     "goal_data_status_v0985.py",
     "sales_pnl_ui_v098.py",
     "return_discount_v099.py",
+    "return_sale_alias_v09157.py",
     "sales_unmatched_confirm_v09123.py",
     "return_sale_match_v0944.py",
     "sales_import_guard_v0941.py",
