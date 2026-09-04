@@ -1,17 +1,22 @@
-"""v0.9.151 hotfix for sales-stat return quantity enrichment.
+"""v0.9.152 hotfix for sales-stat return quantity enrichment.
 
 SQLite exposes ``rowid`` using the INTEGER PRIMARY KEY column name when a table
-has one.  v0.9.150 selected ``rowid`` and then attempted ``row['rowid']``, which
+has one. v0.9.150 selected ``rowid`` and then attempted ``row['rowid']``, which
 raises ``IndexError: No item with that key`` on the current sales_stats schema.
-This patch aliases rowid explicitly and replaces only the enrichment function.
+
+v0.9.152 also fixes Streamlit hot-reload behavior: importlib.reload() re-executes
+v0.9.150 in the existing module dictionary, so the old marker attribute can remain
+while the buggy enrich_import function is recreated. Therefore this apply() MUST
+replace enrich_import on every call and must not short-circuit on the marker.
 """
 from __future__ import annotations
 
 
 def apply(base):
-    if getattr(base, "_rg_sales_stats_returns_hotfix_v09151", False):
-        return base
-
+    # Intentionally DO NOT return early when the marker already exists.
+    # The base module is reloaded on every Streamlit rerun; reload recreates the
+    # old v0.9.150 function but can leave custom attributes in the module dict.
+    # Reinstall this fixed function every time.
     def enrich_import(core, db, import_id: int, parsed):
         base.ensure_schema(core, db)
         result = {
@@ -92,4 +97,5 @@ def apply(base):
 
     base.enrich_import = enrich_import
     base._rg_sales_stats_returns_hotfix_v09151 = True
+    base._rg_sales_stats_returns_hotfix_v09152 = True
     return base
