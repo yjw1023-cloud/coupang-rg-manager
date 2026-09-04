@@ -13,6 +13,8 @@ The estimator now:
   historical product family;
 - finds the most recent order that contains BOTH 입출고비 and 배송비;
 - uses final_cost_prevat / abs(qty) for each component from that same order;
+- if duplicate settlement rows exist for an order/component, only the newest row
+  is used so duplicated imports cannot double the unit cost;
 - falls back to the latest pre-VAT row per component only when no complete pair
   exists;
 - never edits settlement facts; it only changes provisional estimates.
@@ -140,6 +142,8 @@ def _logistics_units(core, db, product_id: int) -> dict[str, Any] | None:
 
     # Build one candidate per physical order. Both components must come from the
     # same order so a later partial/promo row cannot be mixed with another order.
+    # For the same order/component keep only the newest settlement row; this also
+    # protects against old duplicate report imports.
     groups: dict[str, dict[str, Any]] = {}
     fallback: dict[str, tuple[str, int, float]] = {}
     for r in rows:
@@ -169,19 +173,18 @@ def _logistics_units(core, db, product_id: int) -> dict[str, Any] | None:
             {
                 "event_date": event,
                 "max_id": rid,
-                "입출고비": 0.0,
-                "배송비": 0.0,
-                "types": set(),
+                "components": {},
             },
         )
         g["event_date"] = max(str(g["event_date"]), event)
         g["max_id"] = max(int(g["max_id"]), rid)
-        g[fee] += unit
-        g["types"].add(fee)
+        prev = g["components"].get(fee)
+        if prev is None or (event, rid) > (prev[0], prev[1]):
+            g["components"][fee] = (event, rid, unit)
 
     complete = [
         g for g in groups.values()
-        if {"입출고비", "배송비"}.issubset(g["types"])
+        if {"입출고비", "배송비"}.issubset(set(g["components"]))
     ]
     if complete:
         complete.sort(
@@ -190,8 +193,8 @@ def _logistics_units(core, db, product_id: int) -> dict[str, Any] | None:
         )
         g = complete[0]
         return {
-            "inout_unit": float(g["입출고비"]),
-            "delivery_unit": float(g["배송비"]),
+            "inout_unit": float(g["components"]["입출고비"][2]),
+            "delivery_unit": float(g["components"]["배송비"][2]),
             "source": "latest_complete_order_prevat",
             "event_date": str(g["event_date"]),
             "related_product_ids": sorted(related),
