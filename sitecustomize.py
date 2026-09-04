@@ -145,3 +145,13 @@ try:
     _core_v09133.REQUESTED_PRODUCT_SEED_V09133_RESULT = _seed_v09133.apply(_core_v09133)
 except Exception as exc:
     print(f"RG Manager v0.9.133 requested product/BOM seed failed: {exc}", file=sys.stderr)
+
+# v0.9.161: register the three user-confirmed rubber-glove RG options and exact
+# JDS0020/JDS0021/JDS0022 BOMs. Commercial defaults are fallback-only; actual
+# sales/settlement/API facts override them when available.
+try:
+    _core_v09161 = _original_import_module("core")
+    _glove_seed_v09161 = _original_import_module("rubber_glove_seed_v09161")
+    _core_v09161.RUBBER_GLOVE_SEED_V09161_RESULT = _glove_seed_v09161.apply(_core_v09161)
+except Exception as exc:
+    print(f"RG Manager v0.9.161 rubber glove product/BOM seed failed: {exc}", file=sys.stderr)
