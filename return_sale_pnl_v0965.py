@@ -3,6 +3,10 @@
 Financial arithmetic stays on signed net quantity, while the visible 판매수량
 shows actual gross units sold.  Returned-item gross sales and cancellations are
 kept as subsets of the original product's totals.
+
+v0.9.157:
+- explicitly links side-mirror return-resale option 95928633818 to normal option
+  95834379201 before the existing consolidation/repair path runs.
 """
 from __future__ import annotations
 
@@ -11,6 +15,9 @@ from typing import Any
 import pandas as pd
 
 import return_sale_pnl_v0963 as base
+import return_sale_alias_v09157 as alias_v09157
+
+alias_v09157.apply(base)
 
 
 def _num(v: Any) -> float:
