@@ -1,16 +1,24 @@
-"""RG Manager v0.9.136/v0.9.138 durable purchase-new-item registration.
+"""RG Manager v0.9.136/v0.9.138/v0.9.159 durable purchase-new-item registration.
 
 Fixes three failure modes in the v0.9.132 new-item flow:
 1. A newly confirmed JDS raw item must be committed to the ERP DB immediately.
 2. The source-name/detail -> product mapping must survive Streamlit reruns/page moves.
 3. v0.9.138 bridges the durable/visible matching choice into the legacy purchase
    selectbox BEFORE it renders, so final confirmation actually writes purchase rows.
+4. v0.9.159 preserves purchase Excel option/detail information for new JDS items.
+   Current purchase sheets use C=product name and D=option/detail; older F/G layouts
+   remain supported as a fallback. When the operator leaves the default new-item
+   name unchanged, the detail is appended so size/color variants never collapse
+   into identical ERP product names.
 """
 from __future__ import annotations
 
+import io
 import re
 import sys
 from typing import Any
+
+from openpyxl import load_workbook
 
 _APPLIED = False
 _TABLE = "purchase_source_product_map"
@@ -18,6 +26,70 @@ _TABLE = "purchase_source_product_map"
 
 def _norm_text(v: Any) -> str:
     return str(v or "").strip()
+
+
+def _effective_new_name(source_name: Any, source_detail: Any, requested_name: Any) -> str:
+    """Preserve a source option/detail in the ERP name unless the user renamed it."""
+    source_name = _norm_text(source_name)
+    source_detail = _norm_text(source_detail)
+    requested_name = _norm_text(requested_name)
+    if not requested_name:
+        requested_name = source_name
+    if source_detail and requested_name == source_name:
+        return f"{source_name} [{source_detail}]"
+    return requested_name
+
+
+def _parse_purchase_excel_option_aware(data: bytes, base_module) -> list[dict[str, Any]]:
+    """Read current C/D purchase source columns, with legacy F/G fallback.
+
+    Fixed numeric columns remain W=unit cost and AB=quantity.
+    """
+    if not data:
+        return []
+    wb = load_workbook(io.BytesIO(data), data_only=True, read_only=True)
+    rows: list[dict[str, Any]] = []
+    try:
+        for ws in wb.worksheets:
+            for r in range(9, ws.max_row + 1):
+                # Current user workbook: C=product name, D=option/detail.
+                source_name = _norm_text(ws.cell(r, 3).value)
+                source_detail = _norm_text(ws.cell(r, 4).value)
+
+                # Older workbook layout retained for compatibility.
+                if not source_name:
+                    source_name = _norm_text(ws.cell(r, 6).value)
+                    source_detail = _norm_text(ws.cell(r, 7).value)
+
+                unit_cost = ws.cell(r, 23).value
+                qty = ws.cell(r, 28).value
+                if not source_name:
+                    continue
+                if unit_cost in (None, "") or qty in (None, ""):
+                    continue
+                q = base_module._num(qty)
+                cost = base_module._num(unit_cost)
+                if q == 0:
+                    continue
+                rows.append(
+                    {
+                        "index": len(rows) + 1,
+                        "sheet": ws.title,
+                        "source_row": r,
+                        "source_name": source_name,
+                        "source_detail": source_detail,
+                        "marking": _norm_text(ws.cell(r, 1).value),
+                        "qty": q,
+                        "unit_cost": cost,
+                        "amount": q * cost,
+                    }
+                )
+    finally:
+        try:
+            wb.close()
+        except Exception:
+            pass
+    return rows
 
 
 def _ensure_schema(core_module, db_path) -> None:
@@ -108,7 +180,7 @@ def _create_or_reuse_products(patch_module, core_module, db_path, selected_group
             source_name = _norm_text(g.get("source_name"))
             source_detail = _norm_text(g.get("source_detail"))
             key = (source_name, source_detail)
-            name = _norm_text(g.get("new_name"))
+            name = _effective_new_name(source_name, source_detail, g.get("new_name"))
             if not name:
                 raise ValueError("신규 품목명이 비어 있는 항목이 있습니다.")
 
@@ -180,6 +252,13 @@ def apply(patch_module, core_module):
 
     base = patch_module.base
     original_review = patch_module._render_review_table
+
+    # v0.9.159: current purchase workbook columns are C=product and D=option/detail.
+    # Keep old F/G support so older purchase files still load.
+    def parse_purchase_excel(data):
+        return _parse_purchase_excel_option_aware(data, base)
+
+    base._parse_purchase_excel = parse_purchase_excel
 
     def create_new_products(core_obj, db_path, selected_groups):
         return _create_or_reuse_products(patch_module, core_obj, db_path, selected_groups)
