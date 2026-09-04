@@ -22,6 +22,7 @@ for _rg_mod in (
     "recent_input_unify_v09112",
     "return_discount_v099",
     "return_sale_match_v0944",
+    "return_sale_alias_v09157",
     "purchase_match_ui_v091",
     "purchase_new_item_persist_v09136",
     "requested_product_seed_v09133",
@@ -285,7 +286,7 @@ _ensure_loader()
 source = LOADER.read_text(encoding="utf-8")
 source = source.replace(
     'st.sidebar.caption("v0.7 · legacy ERP import")',
-    'st.sidebar.caption("v0.9.155 · 잠정손익 평균비용 표시")',
+    'st.sidebar.caption("v0.9.157 · 보조거울 반품판매 통합")',
 )
 loader_exec = 'exec(compile(source, str(BASE_APP), "exec"), globals(), globals())'
 if loader_exec not in source:
