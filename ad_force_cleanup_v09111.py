@@ -1,11 +1,10 @@
-"""RG Manager v0.9.134 runtime bootstrap.
+"""RG Manager v0.9.149 runtime bootstrap.
 
 This module is invoked directly from app.py on every Streamlit rerun and is
 explicitly purged from Python's module cache before import. Besides the existing
-advertising cleanup/recent-input bootstrap, v0.9.134 also runs the idempotent
-v0.9.133 requested-product/BOM seed so an in-app updater refresh writes the new
-products to the local SQLite DB immediately without requiring a full Python
-process restart.
+advertising cleanup/recent-input bootstrap, it also runs the idempotent requested-
+product/BOM seed and the v0.9.149 inventory/API separation patch so an in-app
+updater refresh takes effect without requiring a full Python-process restart.
 """
 from __future__ import annotations
 
@@ -49,6 +48,29 @@ def _apply_requested_product_seed(core, db):
         return {"ok": False, "finished_count": 0, "bom_count": 0, "unresolved": [{"reason": str(exc)}]}
 
 
+def _apply_inventory_api_separation(core, db):
+    try:
+        import importlib
+        import coupang_api_sync_v09140
+        import inventory_api_separation_v09149
+        import inventory_ui_v084
+
+        # The patch file itself can be replaced by the in-app updater while the
+        # Streamlit process is alive, so reload only the patch module.
+        inventory_api_separation_v09149 = importlib.reload(
+            inventory_api_separation_v09149
+        )
+        return inventory_api_separation_v09149.apply(
+            core,
+            coupang_api_sync_v09140,
+            inventory_ui_v084,
+            db,
+        )
+    except Exception as exc:
+        print(f"RG Manager v0.9.149 inventory/API separation failed: {exc}")
+        return {"api_inventory_read_only": False, "error": str(exc)}
+
+
 def apply(core, db=None):
     db = db or core.DEFAULT_DB
     core.init_db(db)
@@ -57,6 +79,7 @@ def apply(core, db=None):
     # exists. This makes updater-applied DB/bootstrap changes effective immediately.
     recent_result = _apply_recent_input_unify(core)
     product_seed_result = _apply_requested_product_seed(core, db)
+    inventory_api_result = _apply_inventory_api_separation(core, db)
 
     result = {
         "already_applied": False,
@@ -66,6 +89,7 @@ def apply(core, db=None):
         "flag_written": False,
         "recent_input_unify": recent_result,
         "requested_product_seed_v09133": product_seed_result,
+        "inventory_api_separation_v09149": inventory_api_result,
     }
 
     with core._conn(db) as c:
