@@ -1,6 +1,6 @@
 {
-  "version": "0.9.155",
-  "message": "잠정손익 표에서 반품철회수량 열을 숨기고, 예상 실현단가 바로 옆에 상품별 평균 수수료와 평균 입출고배송비를 표시합니다. 평균 수수료는 잠정손익에 적용된 판매수수료 절대금액을 순판매수량으로 나눈 1개당 평균이며, 평균 입출고배송비는 입출고비와 배송비의 절대금액 합계를 순판매수량으로 나눈 1개당 평균입니다. 판매·반품·재고 및 손익 계산식 자체는 변경하지 않습니다.",
+  "version": "0.9.156",
+  "message": "잠정손익의 자동 입출고·배송비 단가를 수정합니다. 기존처럼 VAT 포함 비용을 쓰거나 입출고비와 배송비를 서로 다른 최근 주문에서 따로 뽑지 않고, 동일 상품의 과거 옵션ID 이력까지 묶어 가장 최근에 입출고비와 배송비가 함께 존재하는 동일 주문의 VAT 제외 최종비용(final_cost_prevat)을 1개당 단가로 사용합니다. 수동 물류비 설정은 계속 최우선이며 정산 원본 데이터는 변경하지 않습니다.",
   "files": [
     "app.py",
     "VERSION.txt",
@@ -101,6 +101,7 @@
     "pnl_views_v0912.py",
     "provisional_pnl_ui_v0913.py",
     "provisional_pnl_expense_guard_v09154.py",
+    "provisional_logistics_unit_v09156.py",
     "provisional_summary_qty_v09120.py",
     "pnl_month_default_v0914.py",
     "pnl_month_default_v0915.py",
