@@ -14,9 +14,14 @@ This module is deliberately narrow:
   advertising are always expenses regardless of the source sign;
 - negative net sales still reverse COGS and commission, preserving the existing
   return/cancellation direction rule.
+
+v0.9.156 also installs the corrected automatic logistics-unit estimator before
+forcing the snapshot rule version. The estimator itself lives in
+provisional_logistics_unit_v09156.py.
 """
 from __future__ import annotations
 
+import importlib
 import math
 from typing import Any
 
@@ -151,8 +156,20 @@ def apply(ui_module, snapshot_refresh_module):
     snapshot_refresh_module._RULE_VERSION = RULE_VERSION
     ui_module._rg_provisional_expense_guard_v09154 = True
     snapshot_refresh_module._rg_provisional_expense_guard_v09154 = True
+
+    logistics_result = {"ok": False, "error": "not applied"}
+    try:
+        core = importlib.import_module("core")
+        logistics = importlib.import_module("provisional_logistics_unit_v09156")
+        logistics = importlib.reload(logistics)
+        logistics_result = logistics.apply(core, snapshot_refresh_module)
+    except Exception as exc:
+        logistics_result = {"ok": False, "error": str(exc)}
+        print(f"RG Manager v0.9.156 provisional logistics estimator failed: {exc}")
+
     return {
         "ok": True,
-        "rule_version": RULE_VERSION,
+        "rule_version": getattr(snapshot_refresh_module, "_RULE_VERSION", RULE_VERSION),
         "snapshot_refresh_forced": True,
+        "logistics_v09156": logistics_result,
     }
