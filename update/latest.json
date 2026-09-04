@@ -1,6 +1,6 @@
 {
-  "version": "0.9.147",
-  "message": "쿠팡 API 연속 호출 시 발생하던 HTTP 429 호출 제한을 보완했습니다. 실제 요청 사이에 안전 간격을 두고, 429 응답을 받으면 쿠팡의 Retry-After 지시를 우선 적용해 최대 3회 자동 재시도합니다. 재시도마다 HMAC 서명도 새로 만듭니다. 동기화 시작은 기존처럼 사용자가 버튼을 눌렀을 때만 가능합니다.",
+  "version": "0.9.148",
+  "message": "잠정손익 화면에 당월 잠정실적 초기화 기능을 추가했습니다. 당월 판매통계 Excel과 쿠팡 API 주문·반품·철회 자료를 다시 시작할 수 있으며, Excel 판매통계로 발생한 쿠팡RG 판매차감도 함께 되돌립니다. 확정손익용 매출·수수료 API 자료, API 재고, 매입·생산, 광고자료와 수동조정은 삭제하지 않습니다. 월을 걸친 판매통계는 안전하게 분리할 수 없어 자동 초기화하지 않고 경고합니다.",
   "files": [
     "app.py",
     "VERSION.txt",
@@ -83,6 +83,7 @@
     "provisional_ad_report_v0956.py",
     "ad_upload_unify_v09103.py",
     "provisional_manual_cleanup_v0957.py",
+    "provisional_month_reset_v09148.py",
     "pnl_month_v0959.py",
     "pnl_month_v0960.py",
     "pnl_month_v0961.py",
