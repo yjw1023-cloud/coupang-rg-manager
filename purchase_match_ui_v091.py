@@ -5,6 +5,10 @@ hid: when a purchase row has no self-warehouse match, the operator can explicitl
 confirm that it is a new item. The ERP then creates a raw/self-warehouse item with
 an automatically assigned JDS#### code and immediately connects the purchase row
 back to that new item before the normal purchase-confirmation pipeline continues.
+
+v0.9.160 adds an explicit top-level "new product" choice to the compact matching
+selector. This lets the operator reject a false automatic match and move that row
+into the new-item registration workflow without first finding an empty match.
 """
 from __future__ import annotations
 
@@ -14,6 +18,8 @@ from typing import Any
 import purchase_match_ui_v090 as base
 
 _APPLIED = False
+_NEW_ITEM_CHOICE = "＋ 신규상품 등록"
+_NEW_ITEM_SENTINEL = "__RG_PURCHASE_NEW_ITEM__"
 
 
 def _product_title(product: dict[str, Any]) -> str:
@@ -59,16 +65,28 @@ def _unused_jds_codes(core_module, db_path, count: int) -> list[str]:
     raise RuntimeError("JDS0001~JDS9999 품목코드를 모두 사용 중입니다.")
 
 
+def _resolved_override(overrides, idx: int, current_pid):
+    """Return (selected_pid, explicitly_new) for one compact review row."""
+    key = str(int(idx))
+    if key not in overrides:
+        return current_pid, False
+    raw = overrides.get(key)
+    if raw == _NEW_ITEM_SENTINEL:
+        return None, True
+    try:
+        return (int(raw) if raw is not None else None), False
+    except Exception:
+        return current_pid, False
+
+
 def _unresolved_groups(excel_rows, current_pids, overrides):
-    """Group currently-unmatched rows by source name/detail so duplicates create once."""
+    """Group currently-unmatched/new rows by source name/detail so duplicates create once."""
     groups: dict[tuple[str, str], dict[str, Any]] = {}
     for row in excel_rows:
         idx = int(row["index"])
-        target_pid = overrides.get(str(idx), current_pids.get(idx))
-        try:
-            target_pid = int(target_pid) if target_pid is not None else None
-        except Exception:
-            target_pid = None
+        target_pid, explicitly_new = _resolved_override(
+            overrides, idx, current_pids.get(idx)
+        )
         if target_pid is not None:
             continue
 
@@ -83,6 +101,7 @@ def _unresolved_groups(excel_rows, current_pids, overrides):
                 "indices": [],
                 "qty": 0.0,
                 "amount": 0.0,
+                "explicit_new": False,
             },
         )
         q = base._num(row.get("qty"))
@@ -90,6 +109,7 @@ def _unresolved_groups(excel_rows, current_pids, overrides):
         g["indices"].append(idx)
         g["qty"] += q
         g["amount"] += q * u
+        g["explicit_new"] = bool(g.get("explicit_new") or explicitly_new)
 
     out = []
     for key, g in groups.items():
@@ -145,7 +165,7 @@ def _render_new_item_registration(
 
     st_obj.markdown("### 신규 아이템 확인")
     st_obj.warning(
-        f"기존 자체창고 품목과 매칭되지 않은 매입상품이 {len(groups):,}개 있습니다. "
+        f"기존 자체창고 품목과 매칭되지 않았거나 신규상품으로 지정한 매입상품이 {len(groups):,}개 있습니다. "
         "기존 품목이면 위 '매칭 수정'에서 선택하고, 정말 신규 품목이면 아래에서 신규등록을 확인하세요."
     )
     st_obj.caption(
@@ -167,7 +187,7 @@ def _render_new_item_registration(
             source_display += f" · {g['source_detail']}"
         rows.append(
             {
-                "신규등록": bool(select_all),
+                "신규등록": bool(select_all or g.get("explicit_new")),
                 "No.": no,
                 "매입상품": source_display,
                 "신규 품목명": g["source_name"] or source_display,
@@ -277,7 +297,8 @@ def _render_review_table(st_obj, pd_obj, core_module, db_path, file_fp: str,
     by_pid = {int(p["product_id"]): p for p in products}
     choice_to_pid = {_choice_label(p): int(p["product_id"]) for p in products}
     placeholder = "— 매칭상품 선택 —"
-    options = [placeholder] + list(choice_to_pid.keys())
+    # v0.9.160: the explicit new-product action is always the first dropdown item.
+    options = [_NEW_ITEM_CHOICE, placeholder] + list(choice_to_pid.keys())
 
     overrides_all = st_obj.session_state.setdefault(base._OVERRIDE_KEY, {})
     overrides = overrides_all.setdefault(file_fp, {})
@@ -298,22 +319,23 @@ def _render_review_table(st_obj, pd_obj, core_module, db_path, file_fp: str,
         if current_pid is None:
             current_pid = base._pid_from_display(mr.get("current_display", ""), products)
 
-        selected_pid = overrides.get(str(idx), current_pid)
-        try:
-            selected_pid = int(selected_pid) if selected_pid is not None else None
-        except Exception:
-            selected_pid = current_pid
+        selected_pid, explicitly_new = _resolved_override(overrides, idx, current_pid)
         current_pids[idx] = current_pid
 
         selected = by_pid.get(selected_pid)
         code = str(selected.get("item_code") or "") if selected else ""
         title = _product_title(selected) if selected else ""
         stock = base._fmt_qty(selected.get("own_stock")) if selected else ""
-        choice = _choice_label(selected) if selected else placeholder
+        if explicitly_new:
+            choice = _NEW_ITEM_CHOICE
+        else:
+            choice = _choice_label(selected) if selected else placeholder
 
         status_base = str(mr.get("status") or "")
         rate = str(mr.get("match_rate") or "")
-        if str(idx) in overrides and selected_pid != current_pid:
+        if explicitly_new:
+            status = "신규등록"
+        elif str(idx) in overrides and selected_pid != current_pid:
             status = "수동 변경"
         elif "확인" in status_base:
             status = "확인 필요"
@@ -342,14 +364,16 @@ def _render_review_table(st_obj, pd_obj, core_module, db_path, file_fp: str,
 
     auto_count = sum(1 for r in table_rows if str(r["상태"]).startswith("자동"))
     manual_count = sum(1 for r in table_rows if r["상태"] == "수동 변경")
-    need_count = sum(1 for r in table_rows if r["상태"] in ("확인 필요", "미매칭"))
+    need_count = sum(
+        1 for r in table_rows if r["상태"] in ("확인 필요", "미매칭", "신규등록")
+    )
     c1, c2, c3 = st_obj.columns(3)
     c1.metric("자동매칭", f"{auto_count}개")
     c2.metric("수동수정", f"{manual_count}개")
     c3.metric("확인필요", f"{need_count}개")
     st_obj.caption(
-        "기존 품목이면 오른쪽 '매칭 수정'에서 선택합니다. 기존 품목이 없는 신규 아이템은 "
-        "표 아래 '신규 아이템 확인'에서 JDS 코드 자동등록 후 바로 매입매칭할 수 있습니다."
+        "자동매칭이 잘못된 신규상품이면 오른쪽 '매칭 수정'을 열고 최상단 '＋ 신규상품 등록'을 선택하세요. "
+        "그러면 아래 '신규 아이템 확인'으로 이동해 JDS 코드로 신규등록할 수 있습니다."
     )
 
     df = pd_obj.DataFrame(table_rows)
@@ -370,7 +394,7 @@ def _render_review_table(st_obj, pd_obj, core_module, db_path, file_fp: str,
                 options=options,
                 required=True,
                 width="large",
-                help="기존 자체창고 품목이면 여기서 선택하세요. 신규 품목은 아래 신규등록 영역을 사용합니다.",
+                help="신규상품이면 최상단 '＋ 신규상품 등록', 기존 품목이면 아래 JDS 품목을 선택하세요.",
             ),
         }
     except Exception:
@@ -392,24 +416,42 @@ def _render_review_table(st_obj, pd_obj, core_module, db_path, file_fp: str,
     changed = False
     for _, er in edited.iterrows():
         idx = int(er["No."])
+        key = str(idx)
         choice = str(er.get("매칭 수정") or placeholder)
-        pid = choice_to_pid.get(choice)
-        if pid is None:
-            continue
-
         current_pid = current_pids.get(idx)
-        old_override = overrides.get(str(idx))
-        if pid != current_pid:
-            overrides[str(idx)] = pid
+
+        before = (key in overrides, overrides.get(key))
+        if choice == _NEW_ITEM_CHOICE:
+            # Explicitly reject any automatic match. The sentinel intentionally
+            # resolves to no product so the row appears in the new-item section.
+            overrides[key] = _NEW_ITEM_SENTINEL
+        elif choice == placeholder:
+            # Placeholder means cancel a manual override and return to the engine's
+            # original automatic/unmatched state.
+            overrides.pop(key, None)
         else:
-            overrides.pop(str(idx), None)
-        new_override = overrides.get(str(idx))
-        if old_override != new_override:
+            pid = choice_to_pid.get(choice)
+            if pid is None:
+                continue
+            if pid != current_pid:
+                overrides[key] = pid
+            else:
+                overrides.pop(key, None)
+
+        after = (key in overrides, overrides.get(key))
+        if before != after:
             changed = True
 
-        mr = meta_rows.get(str(idx), {})
-        target_pid = overrides.get(str(idx), current_pid)
-        if target_pid is not None and not base._set_original_widget_choice(st_obj, mr, int(target_pid)):
+        # A new-item sentinel has no product ID yet. The durable new-item flow will
+        # create the JDS product first, then replace this sentinel with that PID.
+        if overrides.get(key) == _NEW_ITEM_SENTINEL:
+            continue
+
+        mr = meta_rows.get(key, {})
+        target_pid = overrides.get(key, current_pid)
+        if target_pid is not None and not base._set_original_widget_choice(
+            st_obj, mr, int(target_pid)
+        ):
             unresolved_widget = True
 
     overrides_all[file_fp] = overrides
@@ -417,6 +459,8 @@ def _render_review_table(st_obj, pd_obj, core_module, db_path, file_fp: str,
 
     if unresolved_widget:
         st_obj.warning("일부 오래된 매칭 위젯은 직접 연결키가 없어 수정값 반영을 확인할 수 없습니다. 프로그램을 최신 버전으로 다시 업데이트해 주세요.")
+    elif any(v == _NEW_ITEM_SENTINEL for v in overrides.values()):
+        st_obj.info("'신규상품 등록'으로 지정한 항목은 아래 신규 아이템 확인에서 등록을 완료해 주세요.")
     elif overrides:
         st_obj.info("수동으로 바꾼 매칭은 아래 매입 확정 처리에 그대로 사용됩니다.")
 
