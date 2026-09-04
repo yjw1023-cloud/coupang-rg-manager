@@ -1,20 +1,17 @@
-"""RG Manager v0.9.161 rubber-glove finished product/BOM seed.
+"""RG Manager v0.9.162 rubber-glove finished-product/BOM seed.
 
-Registers the three user-confirmed Coupang Rocket Growth finished options and
-links each one to the exact own-warehouse purchase item created immediately
-before this release:
-- S -> JDS0020 x 5
-- M -> JDS0021 x 5
-- L -> JDS0022 x 5
+Hotfix for v0.9.161: the purchase matching screen can show proposed JDS codes
+before the operator has finished committing those new raw items to the DB.  A
+missing JDS0020/JDS0021/JDS0022 is therefore a normal pending state, not an app-
+startup error.
 
-Commercial defaults confirmed by the user are stored for audit/fallback:
-- selling price: 13,900 KRW
-- commission: 10.8% = 1,501.2 KRW per finished unit at list price
-- combined inbound/outbound + delivery: 2,800 KRW per finished unit
-
-The logistics split was not supplied, so the ERP stores the 2,800 KRW as a
-combined default and only applies it when no actual logistics fact is available.
-Actual settlement/API facts always win. No inventory quantity is created here.
+Behavior:
+- always ensure the three Coupang RG finished products exist;
+- always store the user-confirmed commercial fallback values;
+- link S/M/L to JDS0020/JDS0021/JDS0022 x 5 only when that exact raw item exists;
+- if a component is not committed yet, leave BOM pending and retry on the next
+  Streamlit rerun/app start;
+- never create, move, or change inventory quantity here.
 """
 from __future__ import annotations
 
@@ -47,7 +44,7 @@ SELLING_PRICE = 13900.0
 COMMISSION_RATE = 0.108
 COMMISSION_UNIT = SELLING_PRICE * COMMISSION_RATE
 LOGISTICS_UNIT_TOTAL = 2800.0
-_RULE = "v0.9.161-rubber-glove-commercial-defaults"
+_RULE = "v0.9.162-rubber-glove-deferred-bom"
 
 
 def _num(v: Any) -> float:
@@ -143,24 +140,22 @@ def _ensure_finished(core, con, req):
     return int(cur.lastrowid), "created"
 
 
-def _exact_component(con, code: str):
+def _component_if_ready(con, code: str):
     row = con.execute(
         """SELECT id,item_code,option_id,name,item_type,unit_cost,active
            FROM products WHERE item_code=? ORDER BY id LIMIT 1""",
         (str(code),),
     ).fetchone()
     if not row:
-        raise RuntimeError(f"BOM 구성품을 찾을 수 없습니다: {code}")
+        return None, "pending_missing"
     if _oid(row["option_id"]):
-        raise RuntimeError(f"BOM 구성품 {code}가 자체창고 품목이 아닙니다.")
+        return None, "pending_not_raw"
     if str(row["item_type"] or "") != "raw":
-        raise RuntimeError(f"BOM 구성품 {code}의 품목유형이 raw가 아닙니다.")
-    return row
+        return None, "pending_not_raw"
+    return row, "ready"
 
 
 def _upsert_bom(con, parent_id: int, component_id: int, qty_per: float):
-    # The user explicitly confirmed that this purchased item is the BOM for the
-    # new finished option. Remove only other component rows for this new parent.
     con.execute(
         "DELETE FROM bom_items WHERE parent_product_id=? AND component_product_id<>?",
         (int(parent_id), int(component_id)),
@@ -171,8 +166,12 @@ def _upsert_bom(con, parent_id: int, component_id: int, qty_per: float):
         (int(parent_id), int(component_id)),
     ).fetchone()
     if row:
-        con.execute("UPDATE bom_items SET qty_per=? WHERE id=?", (float(qty_per), int(row["id"])))
-        return int(row["id"]), "updated"
+        old = float(row["qty_per"] or 0)
+        con.execute(
+            "UPDATE bom_items SET qty_per=? WHERE id=?",
+            (float(qty_per), int(row["id"])),
+        )
+        return int(row["id"]), "unchanged" if abs(old - float(qty_per)) <= 1e-12 else "updated"
     cur = con.execute(
         "INSERT INTO bom_items(parent_product_id,component_product_id,qty_per) VALUES(?,?,?)",
         (int(parent_id), int(component_id), float(qty_per)),
@@ -204,10 +203,9 @@ def _upsert_commercial(core, con, option_id: str, product_id: int) -> None:
 def _commercial_map(core, db):
     try:
         with core._conn(db) as con:
-            exists = con.execute(
+            if not con.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='product_commercial_defaults'"
-            ).fetchone()
-            if not exists:
+            ).fetchone():
                 return {}, {}
             rows = con.execute(
                 """SELECT option_id,product_id,selling_price,commission_rate,
@@ -221,16 +219,6 @@ def _commercial_map(core, db):
         return {}, {}
 
 
-def _nullable(v: Any):
-    if v is None:
-        return None
-    try:
-        x = float(v)
-        return x if math.isfinite(x) else None
-    except Exception:
-        return None
-
-
 def _apply_defaults_to_df(df, core, db):
     try:
         import pandas as pd
@@ -238,24 +226,23 @@ def _apply_defaults_to_df(df, core, db):
         return df
     if not isinstance(df, pd.DataFrame) or df.empty:
         return df
-
     by_oid, by_pid = _commercial_map(core, db)
     if not by_oid and not by_pid:
         return df
     out = df.copy()
-
     for idx in out.index:
         default = None
-        if "option_id" in out.columns:
-            default = by_oid.get(_oid(out.at[idx, "option_id"]))
-        if default is None and "옵션ID" in out.columns:
-            default = by_oid.get(_oid(out.at[idx, "옵션ID"]))
+        for col in ("option_id", "옵션ID"):
+            if col in out.columns:
+                default = by_oid.get(_oid(out.at[idx, col]))
+                if default:
+                    break
         if default is None and "product_id" in out.columns:
             try:
                 default = by_pid.get(int(_num(out.at[idx, "product_id"])))
             except Exception:
                 default = None
-        if default is None:
+        if not default:
             continue
 
         q = 0.0
@@ -264,69 +251,41 @@ def _apply_defaults_to_df(df, core, db):
                 q = _num(out.at[idx, col])
                 break
         aq = abs(q)
+        if aq <= 0:
+            continue
 
-        # Selling price is a fallback only. Real paid/revenue data must not be
-        # replaced by list price after sales/statistics are available.
-        if aq > 0:
-            for col in ("expected_revenue", "예상매출"):
-                if col in out.columns and abs(_num(out.at[idx, col])) <= 1e-9:
-                    out.at[idx, col] = aq * _num(default["selling_price"])
-            for col in ("expected_unit_price", "예상 실현단가"):
-                if col in out.columns and abs(_num(out.at[idx, col])) <= 1e-9:
-                    out.at[idx, col] = _num(default["selling_price"])
-
-        # Commission: actual imported commission wins; use confirmed 10.8% only
-        # when there is no commission value yet.
+        for col in ("expected_revenue", "예상매출"):
+            if col in out.columns and abs(_num(out.at[idx, col])) <= 1e-9:
+                out.at[idx, col] = aq * _num(default["selling_price"])
+        for col in ("expected_unit_price", "예상 실현단가"):
+            if col in out.columns and abs(_num(out.at[idx, col])) <= 1e-9:
+                out.at[idx, col] = _num(default["selling_price"])
         for col in ("expected_commission", "판매수수료", "commission"):
-            if col in out.columns and aq > 0 and abs(_num(out.at[idx, col])) <= 1e-9:
+            if col in out.columns and abs(_num(out.at[idx, col])) <= 1e-9:
                 value = aq * _num(default["commission_unit"])
                 out.at[idx, col] = -value if col == "판매수수료" else value
 
-        # User supplied only the combined RG logistics amount. Apply the total only
-        # when neither actual/manual component exists. Store it in delivery as the
-        # display bucket; a later actual settlement pair replaces this fallback.
-        manual_inout = _nullable(out.at[idx, "manual_expected_inout"]) if "manual_expected_inout" in out.columns else None
-        manual_delivery = _nullable(out.at[idx, "manual_expected_delivery"]) if "manual_expected_delivery" in out.columns else None
         exp_inout = _num(out.at[idx, "expected_inout"]) if "expected_inout" in out.columns else 0.0
         exp_delivery = _num(out.at[idx, "expected_delivery"]) if "expected_delivery" in out.columns else 0.0
-        if aq > 0 and manual_inout is None and manual_delivery is None and abs(exp_inout) <= 1e-9 and abs(exp_delivery) <= 1e-9:
-            unit = _num(default["logistics_unit_total"])
+        manual_inout = out.at[idx, "manual_expected_inout"] if "manual_expected_inout" in out.columns else None
+        manual_delivery = out.at[idx, "manual_expected_delivery"] if "manual_expected_delivery" in out.columns else None
+        if manual_inout is None and manual_delivery is None and abs(exp_inout) <= 1e-9 and abs(exp_delivery) <= 1e-9:
+            total = aq * _num(default["logistics_unit_total"])
             if "delivery_unit" in out.columns:
-                out.at[idx, "delivery_unit"] = unit
+                out.at[idx, "delivery_unit"] = _num(default["logistics_unit_total"])
             if "expected_delivery" in out.columns:
-                out.at[idx, "expected_delivery"] = aq * unit
+                out.at[idx, "expected_delivery"] = total
             if "배송비" in out.columns and abs(_num(out.at[idx, "배송비"])) <= 1e-9:
-                out.at[idx, "배송비"] = -aq * unit
-
-        # Keep raw provisional profit fields coherent where present.
-        if all(c in out.columns for c in (
-            "expected_revenue", "cogs", "expected_commission",
-            "expected_inout", "expected_delivery", "expected_return_reserve", "ad_spend"
-        )):
-            rev = _num(out.at[idx, "expected_revenue"])
-            profit_ex = (
-                rev - _num(out.at[idx, "cogs"])
-                - _num(out.at[idx, "expected_commission"])
-                - _num(out.at[idx, "expected_inout"])
-                - _num(out.at[idx, "expected_delivery"])
-                - _num(out.at[idx, "expected_return_reserve"])
-            )
-            if "profit_ex_ad" in out.columns:
-                out.at[idx, "profit_ex_ad"] = profit_ex
-            profit = profit_ex - _num(out.at[idx, "ad_spend"])
-            if "profit" in out.columns:
-                out.at[idx, "profit"] = profit
-            if "margin_pct" in out.columns:
-                out.at[idx, "margin_pct"] = profit / rev * 100.0 if abs(rev) > 1e-12 else 0.0
+                out.at[idx, "배송비"] = -total
     return out
 
 
 def _patch_estimated_pnl(core) -> None:
-    if getattr(core, "_rg_rubber_glove_defaults_v09161_applied", False):
+    if getattr(core, "_rg_rubber_glove_defaults_v09162_applied", False):
         return
     base = getattr(core, "estimated_pnl", None)
     if not callable(base):
-        core._rg_rubber_glove_defaults_v09161_applied = True
+        core._rg_rubber_glove_defaults_v09162_applied = True
         return
 
     def estimated_pnl(*args, **kwargs):
@@ -343,22 +302,39 @@ def _patch_estimated_pnl(core) -> None:
         return _apply_defaults_to_df(result, core, db)
 
     core.estimated_pnl = estimated_pnl
-    core._rg_rubber_glove_defaults_v09161_applied = True
+    core._rg_rubber_glove_defaults_v09162_applied = True
 
 
 def apply(core, db_path=None):
     db = db_path or core.DEFAULT_DB
     core.init_db(db)
     results = []
+    pending = []
     with core._conn(db) as con:
         _ensure_tables(con)
         for req in REQUESTS:
-            component = _exact_component(con, req["component_code"])
             parent_id, product_status = _ensure_finished(core, con, req)
+            _upsert_commercial(core, con, req["option_id"], parent_id)
+            component, component_status = _component_if_ready(con, req["component_code"])
+            if component is None:
+                pending.append(req["component_code"])
+                results.append(
+                    {
+                        "option_id": req["option_id"],
+                        "name": req["finished_name"],
+                        "product_id": parent_id,
+                        "product_status": product_status,
+                        "component_code": req["component_code"],
+                        "component_status": component_status,
+                        "qty_per": float(req["qty_per"]),
+                        "bom_status": "pending",
+                    }
+                )
+                continue
+
             bom_id, bom_status = _upsert_bom(
                 con, parent_id, int(component["id"]), float(req["qty_per"])
             )
-            _upsert_commercial(core, con, req["option_id"], parent_id)
             results.append(
                 {
                     "option_id": req["option_id"],
@@ -367,14 +343,17 @@ def apply(core, db_path=None):
                     "product_status": product_status,
                     "component_code": req["component_code"],
                     "component_name": str(component["name"] or ""),
+                    "component_status": component_status,
                     "qty_per": float(req["qty_per"]),
                     "bom_id": bom_id,
                     "bom_status": bom_status,
-                    "selling_price": SELLING_PRICE,
-                    "commission_rate": COMMISSION_RATE,
-                    "commission_unit": COMMISSION_UNIT,
-                    "logistics_unit_total": LOGISTICS_UNIT_TOTAL,
                 }
             )
     _patch_estimated_pnl(core)
-    return {"ok": True, "rule": _RULE, "items": results, "inventory_changed": False}
+    return {
+        "ok": True,
+        "rule": _RULE,
+        "items": results,
+        "pending_components": pending,
+        "inventory_changed": False,
+    }
