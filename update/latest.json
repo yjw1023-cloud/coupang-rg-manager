@@ -1,6 +1,6 @@
 {
-  "version": "0.9.152",
-  "message": "판매통계 Excel 재업로드 시 계속 발생하던 'No item with that key' 오류의 Streamlit hot-reload 원인을 수정했습니다. v0.9.150 모듈을 reload할 때 기존 핫픽스 적용 표시가 남아 구버전 enrich_import가 다시 살아나도 핫픽스가 재적용되지 않던 문제였습니다. 이제 매 재실행마다 rowid 별칭을 사용하는 수정 함수를 강제로 다시 설치합니다. 판매통계 Excel 기준 반품관리, 재고 API 조회전용, 주문/반품 API 미사용 원칙은 그대로 유지됩니다.",
+  "version": "0.9.153",
+  "message": "판매통계 Excel의 판매수량·취소/반품수량·순판매수량을 다시 검증하도록 수정했습니다. 판매/취소/순판매 열은 서로 다른 열이어야 하며 반드시 '판매수량 - 취소·반품수량 = 순판매수량' 관계를 만족해야만 저장합니다. 대형 견출지처럼 원본이 판매 55, 취소·반품 3, 순판매 52인 경우 그대로 55/3/52로 저장하고, 104/52처럼 불가능한 값은 저장을 차단합니다. 기존 net_qty와 판매재고 차감은 변경하지 않습니다.",
   "files": [
     "app.py",
     "VERSION.txt",
@@ -9,6 +9,7 @@
     "inventory_api_separation_v09149.py",
     "sales_stats_returns_v09150.py",
     "sales_stats_returns_hotfix_v09151.py",
+    "sales_stats_quantity_guard_v09153.py",
     "data_management_sync_v0988.py",
     "ad_delete_cleanup_v09108.py",
     "ad_orphan_cleanup_v09109.py",
