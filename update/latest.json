@@ -102,6 +102,7 @@
     "provisional_pnl_ui_v0913.py",
     "provisional_pnl_expense_guard_v09154.py",
     "provisional_logistics_unit_v09156.py",
+    "provisional_logistics_runtime_v09156.py",
     "provisional_summary_qty_v09120.py",
     "pnl_month_default_v0914.py",
     "pnl_month_default_v0915.py",
