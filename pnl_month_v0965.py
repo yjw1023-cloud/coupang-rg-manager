@@ -5,6 +5,9 @@ net sales, and returned-item resale quantities.  v0.9.126 additionally presents
 the existing cancel/refund signal to the operator as `반품수량` and calculates
 `반품률 = 반품수량 / 판매수량 * 100` for each product.  Financial arithmetic and
 inventory logic continue to use the existing signed net quantity and are not changed.
+
+v0.9.148 adds an explicit current-month provisional-input reset control before the
+monthly table is rendered.
 """
 from __future__ import annotations
 
@@ -59,6 +62,12 @@ def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
     manual_net.apply(manual_adjust)
 
     db = db_path or core.DEFAULT_DB
+
+    # v0.9.148: current-month sales facts can be explicitly cleared regardless
+    # of whether they came from sales-stat Excel or manual Coupang API sync.
+    reset = importlib.import_module("provisional_month_reset_v09148")
+    reset.render_current_month_reset(st_obj, core, db)
+
     base._NUMERIC_COLS.update({
         "취소수량", "반품철회수량", "순판매수량", "반품수량", "반품률",
         "반품판매수량", "반품판매취소", "반품판매매출"
