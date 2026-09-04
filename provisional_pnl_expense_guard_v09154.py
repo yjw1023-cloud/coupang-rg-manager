@@ -16,8 +16,9 @@ This module is deliberately narrow:
   return/cancellation direction rule.
 
 v0.9.156 also installs the corrected automatic logistics-unit estimator before
-forcing the snapshot rule version. The estimator itself lives in
-provisional_logistics_unit_v09156.py.
+forcing the snapshot rule version. The calculation lives in
+provisional_logistics_unit_v09156.py and its safe wrapper-chain installer lives in
+provisional_logistics_runtime_v09156.py.
 """
 from __future__ import annotations
 
@@ -160,9 +161,9 @@ def apply(ui_module, snapshot_refresh_module):
     logistics_result = {"ok": False, "error": "not applied"}
     try:
         core = importlib.import_module("core")
-        logistics = importlib.import_module("provisional_logistics_unit_v09156")
-        logistics = importlib.reload(logistics)
-        logistics_result = logistics.apply(core, snapshot_refresh_module)
+        runtime = importlib.import_module("provisional_logistics_runtime_v09156")
+        runtime = importlib.reload(runtime)
+        logistics_result = runtime.apply(core, snapshot_refresh_module)
     except Exception as exc:
         logistics_result = {"ok": False, "error": str(exc)}
         print(f"RG Manager v0.9.156 provisional logistics estimator failed: {exc}")
