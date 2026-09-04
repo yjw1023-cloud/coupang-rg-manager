@@ -285,7 +285,7 @@ _ensure_loader()
 source = LOADER.read_text(encoding="utf-8")
 source = source.replace(
     'st.sidebar.caption("v0.7 · legacy ERP import")',
-    'st.sidebar.caption("v0.9.154 · 잠정손익 비용부호 수정")',
+    'st.sidebar.caption("v0.9.155 · 잠정손익 평균비용 표시")',
 )
 loader_exec = 'exec(compile(source, str(BASE_APP), "exec"), globals(), globals())'
 if loader_exec not in source:
