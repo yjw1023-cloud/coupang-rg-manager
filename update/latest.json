@@ -1,12 +1,13 @@
 {
-  "version": "0.9.149",
-  "message": "재고를 ERP 장부재고와 쿠팡 판매가능재고로 분리했습니다. 재고 화면에 두 수량과 차이, API 조회시각을 함께 표시합니다. 재고 API 동기화는 이제 쿠팡 판매가능재고 스냅샷만 저장하고 ERP 장부재고를 수정하지 않습니다. 과거 API 재고조정 원장은 감사이력으로 보존하면서 동일 거래일의 반대수량 조정취소를 한 번만 생성해 장부영향을 중립화합니다. 잠정 판매자료는 판매통계 Excel만 사용하며, API 연동 화면에서 주문 동기화와 반품·취소 동기화를 제거했습니다. 매출·수수료 및 지급내역 API는 유지합니다.",
+  "version": "0.9.150",
+  "message": "판매통계 Excel 업로드 시 판매상품수·취소/반품수량·순판매수량을 함께 보존하도록 수정했습니다. 반품관리와 잠정 판매수량 표시는 주문/반품 API가 아니라 판매통계 Excel만 기준으로 사용합니다. 동일 판매통계 파일을 다시 업로드해도 기존 판매차감은 중복 생성하지 않고 기존 import에 취소·반품수량만 보강할 수 있습니다. 재고 API는 계속 판매가능재고 조회 전용이며 ERP 장부재고를 수정하지 않습니다.",
   "files": [
     "app.py",
     "VERSION.txt",
     "sitecustomize.py",
     "coupang_api_sync_v09140.py",
     "inventory_api_separation_v09149.py",
+    "sales_stats_returns_v09150.py",
     "data_management_sync_v0988.py",
     "ad_delete_cleanup_v09108.py",
     "ad_orphan_cleanup_v09109.py",
