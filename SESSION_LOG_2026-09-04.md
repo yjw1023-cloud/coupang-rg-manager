@@ -52,3 +52,34 @@
 - 확정 매출 API와 광고자료는 유지되는지.
 - 당월 주문/반품 성공 sync run은 `reset`, 매출 sync run과 전월 sync run은 `success`로 유지되는지.
 - 과거 월 초기화 호출은 거부되는지.
+
+## v0.9.156 — 잠정손익 입출고·배송비 자동단가 수정
+
+### 사용자 확인값
+- 차 커피 수납 정리함 `94138813047`: 1개당 입출고배송비 2,800원.
+- 수납 지퍼백 여행용 `94121677686`: 1개당 입출고배송비 2,800원.
+- 나뭇잎 점착식 메모지 `94103975794`: 1개당 입출고배송비 2,625원.
+- v0.9.155 화면에서는 각각 3,080원 / 3,080원 / 1,557원으로 표시되어 원천 계산을 재검증함.
+
+### 확인한 기존 원인
+- 기존 `core.get_products()`의 잠정 물류단가는 `logistics_fees.final_cost_vat / ABS(qty)`를 사용해 VAT 포함 금액을 자동 예상단가로 사용하고 있었음.
+- `hist_inout_unit`과 `hist_delivery_unit`을 각각 `ORDER BY event_date DESC,id DESC LIMIT 1`로 독립 조회해 서로 다른 주문의 입출고비와 배송비가 섞일 수 있었음.
+- `import_logistics()`는 원본 상세의 VAT 제외 최종비용을 `final_cost_prevat`에 보존하고, 별도로 월 합계 보정을 적용한 VAT 포함값을 `final_cost_vat`에 저장하고 있음.
+
+### v0.9.156 변경 원칙
+- 잠정손익 자동 물류단가는 `final_cost_prevat` 기준으로 계산.
+- 입출고비와 배송비를 동일 `order_id`의 한 쌍으로 묶고, 두 비용이 모두 존재하는 가장 최근 정상 주문을 사용.
+- 같은 주문/비용이 중복 저장된 경우 최신 행 한 건만 사용해 중복 정산자료가 단가를 배가시키지 않도록 함.
+- 현재 정상상품과 상품명이 정확히 같은 과거 옵션ID 및 명시적 반품판매 alias의 정산이력을 같은 상품군으로 조회.
+- 완전한 동일 주문 쌍이 없을 때만 각 비용의 최신 VAT 제외 행을 fallback으로 사용.
+- 상품/월 수동 입출고·배송비 조정은 기존처럼 자동값보다 우선.
+- 정산 원본 `logistics_fees`는 수정하지 않고 잠정손익 예상값만 변경.
+- 기존 이동평균원가/수수료 보정 wrapper chain을 보존한 상태에서 `core.estimated_pnl` 반환값의 물류비 부분만 교정.
+- `pnl_snapshot_refresh_v0966` 규칙 버전을 `0.9.156-logistics-preVAT-same-order`로 올려 기존 당월 snapshot이 새 규칙으로 재계산되도록 함.
+
+### 관련 파일
+- `provisional_logistics_unit_v09156.py`
+- `provisional_logistics_runtime_v09156.py`
+- `provisional_pnl_expense_guard_v09154.py`
+- `VERSION.txt`
+- `update/latest.json`
