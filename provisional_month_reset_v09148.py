@@ -5,8 +5,9 @@ The reset is intentionally narrow:
 - reverse only the inventory deductions created by those sales-stat imports;
 - remove current-month Coupang API order / return / withdrawal rows used by provisional P&L;
 - preserve confirmed revenue/commission API facts, inventory API snapshots/adjustments,
-  purchases, production, advertising reports, manual adjustments, product master and
-  API sync audit history.
+  purchases, production, advertising reports, manual adjustments and product master;
+- preserve API sync audit rows but mark overlapping successful order/return runs as
+  ``reset`` so old coverage is not mistaken for newly synchronized coverage.
 
 Cross-month sales-stat imports are not split or deleted because the source does not
 contain a reliable daily decomposition. They are reported to the operator and left
@@ -140,6 +141,45 @@ def _ensure_audit_table(con) -> None:
     )
 
 
+def _mark_api_runs_reset(con, month: str, start: str, end: str) -> int:
+    """Preserve API audit rows but exclude old order/return runs from coverage."""
+    if not _exists(con, "coupang_api_sync_runs"):
+        return 0
+    cols = _cols(con, "coupang_api_sync_runs")
+    required = {"sync_type", "period_start", "period_end", "status"}
+    if not required.issubset(cols):
+        return 0
+    count = int(con.execute(
+        """SELECT COUNT(*) n FROM coupang_api_sync_runs
+           WHERE sync_type IN ('orders','returns') AND status='success'
+             AND period_end>=? AND period_start<=?""",
+        (start, end),
+    ).fetchone()["n"] or 0)
+    if not count:
+        return 0
+    if "message" in cols:
+        note = f"[당월 잠정실적 초기화 {month}]"
+        con.execute(
+            """UPDATE coupang_api_sync_runs
+               SET status='reset',
+                   message=CASE
+                     WHEN COALESCE(message,'')='' THEN ?
+                     ELSE message || ' ' || ?
+                   END
+               WHERE sync_type IN ('orders','returns') AND status='success'
+                 AND period_end>=? AND period_start<=?""",
+            (note, note, start, end),
+        )
+    else:
+        con.execute(
+            """UPDATE coupang_api_sync_runs SET status='reset'
+               WHERE sync_type IN ('orders','returns') AND status='success'
+                 AND period_end>=? AND period_start<=?""",
+            (start, end),
+        )
+    return count
+
+
 def reset_month(core: Any, month: str | None = None, db_path=None) -> dict[str, Any]:
     month = str(month or current_month())
     if month != current_month():
@@ -162,6 +202,7 @@ def reset_month(core: Any, month: str | None = None, db_path=None) -> dict[str, 
             "api_orders": 0,
             "api_returns": 0,
             "api_withdrawals": 0,
+            "api_sync_runs_reset": 0,
         }
 
         if ids:
@@ -228,6 +269,11 @@ def reset_month(core: Any, month: str | None = None, db_path=None) -> dict[str, 
                 "DELETE FROM coupang_return_withdrawals WHERE created_date>=? AND created_date<=?",
                 (start, end),
             )
+
+        # Coverage helpers count only status='success'. Keep the historical run
+        # rows for audit, but mark the cleared period as reset so a later partial
+        # resync cannot inherit stale full-month coverage from before this reset.
+        result["api_sync_runs_reset"] = _mark_api_runs_reset(con, month, start, end)
 
         _ensure_audit_table(con)
         reset_at = str(core.now_iso())
@@ -307,6 +353,11 @@ def render_current_month_reset(st_obj: Any, core: Any, db_path=None) -> None:
                 f"반품/취소 {int(result['api_returns']):,}행 · "
                 f"철회 {int(result['api_withdrawals']):,}행을 정리했습니다."
             )
+            if int(result.get("api_sync_runs_reset") or 0):
+                st_obj.caption(
+                    f"기존 주문/반품 API 동기화 이력 {int(result['api_sync_runs_reset']):,}건은 "
+                    "삭제하지 않고 '초기화됨' 상태로 보존했습니다."
+                )
             try:
                 st_obj.session_state.pop(confirm_key, None)
             except Exception:
