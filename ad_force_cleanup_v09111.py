@@ -1,10 +1,10 @@
-"""RG Manager v0.9.149 runtime bootstrap.
+"""RG Manager v0.9.150 runtime bootstrap.
 
 This module is invoked directly from app.py on every Streamlit rerun and is
 explicitly purged from Python's module cache before import. Besides the existing
 advertising cleanup/recent-input bootstrap, it also runs the idempotent requested-
-product/BOM seed and the v0.9.149 inventory/API separation patch so an in-app
-updater refresh takes effect without requiring a full Python-process restart.
+product/BOM seed, the v0.9.149 inventory/API separation patch, and the v0.9.150
+sales-stat gross/cancellation quantity preservation patch.
 """
 from __future__ import annotations
 
@@ -39,8 +39,6 @@ def _apply_requested_product_seed(core, db):
     try:
         import importlib
         import requested_product_seed_v09133
-        # The updater may have replaced the module while this Python process is
-        # still alive. Reload so the current file on disk is always executed.
         requested_product_seed_v09133 = importlib.reload(requested_product_seed_v09133)
         return requested_product_seed_v09133.apply(core, db)
     except Exception as exc:
@@ -54,12 +52,7 @@ def _apply_inventory_api_separation(core, db):
         import coupang_api_sync_v09140
         import inventory_api_separation_v09149
         import inventory_ui_v084
-
-        # The patch file itself can be replaced by the in-app updater while the
-        # Streamlit process is alive, so reload only the patch module.
-        inventory_api_separation_v09149 = importlib.reload(
-            inventory_api_separation_v09149
-        )
+        inventory_api_separation_v09149 = importlib.reload(inventory_api_separation_v09149)
         return inventory_api_separation_v09149.apply(
             core,
             coupang_api_sync_v09140,
@@ -71,6 +64,25 @@ def _apply_inventory_api_separation(core, db):
         return {"api_inventory_read_only": False, "error": str(exc)}
 
 
+def _apply_sales_stats_returns(core, db):
+    try:
+        import importlib
+        import return_management_v093
+        import sales_quantity_v0965
+        import sales_stats_returns_v09150
+        sales_stats_returns_v09150 = importlib.reload(sales_stats_returns_v09150)
+        sales_stats_returns_v09150.apply(
+            core,
+            db,
+            return_management_v093,
+            sales_quantity_v0965,
+        )
+        return {"ok": True, "source": "sales_stats_excel"}
+    except Exception as exc:
+        print(f"RG Manager v0.9.150 sales-stat return preservation failed: {exc}")
+        return {"ok": False, "error": str(exc)}
+
+
 def apply(core, db=None):
     db = db or core.DEFAULT_DB
     core.init_db(db)
@@ -80,6 +92,7 @@ def apply(core, db=None):
     recent_result = _apply_recent_input_unify(core)
     product_seed_result = _apply_requested_product_seed(core, db)
     inventory_api_result = _apply_inventory_api_separation(core, db)
+    sales_stats_return_result = _apply_sales_stats_returns(core, db)
 
     result = {
         "already_applied": False,
@@ -90,6 +103,7 @@ def apply(core, db=None):
         "recent_input_unify": recent_result,
         "requested_product_seed_v09133": product_seed_result,
         "inventory_api_separation_v09149": inventory_api_result,
+        "sales_stats_returns_v09150": sales_stats_return_result,
     }
 
     with core._conn(db) as c:
@@ -105,7 +119,6 @@ def apply(core, db=None):
             result["already_applied"] = True
             return result
 
-        # Canonical provisional advertising data.
         if _exists(c, "provisional_ad_report_imports"):
             rows = c.execute(
                 """SELECT id FROM provisional_ad_report_imports
@@ -122,7 +135,6 @@ def apply(core, db=None):
                 c.execute("DELETE FROM provisional_ad_report_imports WHERE id=?", (rid,))
                 result["canonical_deleted"] += 1
 
-        # Generic recent-input history and option-level ad rows.
         if _exists(c, "imports"):
             cols = _cols(c, "imports")
             where = ["data_type='ad_performance'", "file_name=?"]
