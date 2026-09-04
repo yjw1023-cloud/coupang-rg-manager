@@ -51,6 +51,14 @@ class ResetTests(unittest.TestCase):
                 CREATE TABLE coupang_return_withdrawals(cancel_id TEXT,item_index INTEGER,created_date TEXT);
                 CREATE TABLE coupang_revenue_items(order_id TEXT,recognition_date TEXT);
                 CREATE TABLE provisional_ad_report_imports(id INTEGER PRIMARY KEY,period_start TEXT,period_end TEXT);
+                CREATE TABLE coupang_api_sync_runs(
+                    id INTEGER PRIMARY KEY,
+                    sync_type TEXT,
+                    period_start TEXT,
+                    period_end TEXT,
+                    status TEXT,
+                    message TEXT
+                );
                 """
             )
             con.executemany(
@@ -92,6 +100,15 @@ class ResetTests(unittest.TestCase):
             )
             con.execute("INSERT INTO coupang_revenue_items VALUES('SEP','2026-09-02')")
             con.execute("INSERT INTO provisional_ad_report_imports VALUES(1,'2026-09-01','2026-09-04')")
+            con.executemany(
+                "INSERT INTO coupang_api_sync_runs VALUES(?,?,?,?,?,?)",
+                [
+                    (1, "orders", "2026-09-01", "2026-09-04", "success", "sep orders"),
+                    (2, "returns", "2026-09-01", "2026-09-04", "success", "sep returns"),
+                    (3, "revenue", "2026-09-01", "2026-09-04", "success", "sep revenue"),
+                    (4, "orders", "2026-08-01", "2026-08-31", "success", "aug orders"),
+                ],
+            )
         self.original_current_month = reset.current_month
         reset.current_month = lambda: "2026-09"
 
@@ -110,6 +127,7 @@ class ResetTests(unittest.TestCase):
         result = reset.reset_month(self.core, "2026-09")
         self.assertEqual(result["sales_imports"], 1)
         self.assertEqual(result["inventory_deduction_qty"], 5)
+        self.assertEqual(result["api_sync_runs_reset"], 2)
 
         with self.core._conn(self.core.DEFAULT_DB) as con:
             self.assertEqual(con.execute("SELECT COUNT(*) n FROM imports WHERE id=1").fetchone()["n"], 0)
@@ -122,6 +140,18 @@ class ResetTests(unittest.TestCase):
             self.assertEqual(con.execute("SELECT COUNT(*) n FROM coupang_revenue_items").fetchone()["n"], 1)
             self.assertEqual(con.execute("SELECT COUNT(*) n FROM provisional_ad_report_imports").fetchone()["n"], 1)
             self.assertEqual(con.execute("SELECT COUNT(*) n FROM provisional_month_reset_log").fetchone()["n"], 1)
+            statuses = {
+                int(r["id"]): str(r["status"])
+                for r in con.execute("SELECT id,status FROM coupang_api_sync_runs ORDER BY id")
+            }
+            self.assertEqual(statuses[1], "reset")
+            self.assertEqual(statuses[2], "reset")
+            self.assertEqual(statuses[3], "success")
+            self.assertEqual(statuses[4], "success")
+            self.assertIn(
+                "당월 잠정실적 초기화 2026-09",
+                con.execute("SELECT message FROM coupang_api_sync_runs WHERE id=1").fetchone()["message"],
+            )
 
     def test_past_month_cannot_be_reset(self):
         with self.assertRaises(ValueError):
