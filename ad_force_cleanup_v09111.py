@@ -1,10 +1,11 @@
-"""RG Manager v0.9.150 runtime bootstrap.
+"""RG Manager v0.9.151 runtime bootstrap.
 
 This module is invoked directly from app.py on every Streamlit rerun and is
 explicitly purged from Python's module cache before import. Besides the existing
 advertising cleanup/recent-input bootstrap, it also runs the idempotent requested-
-product/BOM seed, the v0.9.149 inventory/API separation patch, and the v0.9.150
-sales-stat gross/cancellation quantity preservation patch.
+product/BOM seed, the v0.9.149 inventory/API separation patch, the v0.9.150
+sales-stat gross/cancellation quantity preservation patch, and the v0.9.151
+SQLite rowid hotfix for sales-stat return enrichment.
 """
 from __future__ import annotations
 
@@ -70,6 +71,8 @@ def _apply_sales_stats_returns(core, db):
         import return_management_v093
         import sales_quantity_v0965
         import sales_stats_returns_v09150
+        import sales_stats_returns_hotfix_v09151
+
         sales_stats_returns_v09150 = importlib.reload(sales_stats_returns_v09150)
         sales_stats_returns_v09150.apply(
             core,
@@ -77,9 +80,13 @@ def _apply_sales_stats_returns(core, db):
             return_management_v093,
             sales_quantity_v0965,
         )
-        return {"ok": True, "source": "sales_stats_excel"}
+        sales_stats_returns_hotfix_v09151 = importlib.reload(
+            sales_stats_returns_hotfix_v09151
+        )
+        sales_stats_returns_hotfix_v09151.apply(sales_stats_returns_v09150)
+        return {"ok": True, "source": "sales_stats_excel", "hotfix": "v0.9.151"}
     except Exception as exc:
-        print(f"RG Manager v0.9.150 sales-stat return preservation failed: {exc}")
+        print(f"RG Manager v0.9.151 sales-stat return preservation failed: {exc}")
         return {"ok": False, "error": str(exc)}
 
 
