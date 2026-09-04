@@ -26,6 +26,7 @@ for _rg_mod in (
     "purchase_match_ui_v091",
     "purchase_new_item_persist_v09136",
     "requested_product_seed_v09133",
+    "rubber_glove_seed_v09161",
     "coupang_api_sync_v09140",
 ):
     sys.modules.pop(_rg_mod, None)
@@ -138,6 +139,12 @@ product_visibility_v0995.apply_runtime(core)
 # The seed itself is idempotent, so this is safe on Streamlit reruns.
 requested_product_seed_v09133 = _original_import_module("requested_product_seed_v09133")
 REQUESTED_PRODUCT_SEED_V09133_RESULT = requested_product_seed_v09133.apply(core)
+
+# v0.9.161: user-confirmed rubber-glove S/M/L RG products, exact 5-unit BOMs,
+# and fallback commercial defaults. This also runs on every app rerun so an
+# updater refresh does not require a full Python restart.
+rubber_glove_seed_v09161 = _original_import_module("rubber_glove_seed_v09161")
+RUBBER_GLOVE_SEED_V09161_RESULT = rubber_glove_seed_v09161.apply(core)
 
 # v0.9.44 dedicated item deletion / manual return-option cleanup page.
 item_delete_ui_v0944 = _original_import_module("item_delete_ui_v0944")
@@ -286,7 +293,7 @@ _ensure_loader()
 source = LOADER.read_text(encoding="utf-8")
 source = source.replace(
     'st.sidebar.caption("v0.7 · legacy ERP import")',
-    'st.sidebar.caption("v0.9.157 · 보조거울 반품판매 통합")',
+    'st.sidebar.caption("v0.9.161 · 고무장갑 완제품/BOM 등록")',
 )
 loader_exec = 'exec(compile(source, str(BASE_APP), "exec"), globals(), globals())'
 if loader_exec not in source:
@@ -327,4 +334,5 @@ globals()["bom_candidate_filter_v0927"] = bom_candidate_filter_v0927
 globals()["AUTO_PRODUCTION_V09106_RESULT"] = AUTO_PRODUCTION_V09106_RESULT
 globals()["AD_FORCE_CLEANUP_V09111_RESULT"] = AD_FORCE_CLEANUP_V09111_RESULT
 globals()["REQUESTED_PRODUCT_SEED_V09133_RESULT"] = REQUESTED_PRODUCT_SEED_V09133_RESULT
+globals()["RUBBER_GLOVE_SEED_V09161_RESULT"] = RUBBER_GLOVE_SEED_V09161_RESULT
 exec(compile(source, str(LOADER), "exec"), globals(), globals())
