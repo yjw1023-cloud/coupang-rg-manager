@@ -1,11 +1,11 @@
-"""RG Manager v0.9.151 runtime bootstrap.
+"""RG Manager v0.9.154 runtime bootstrap.
 
 This module is invoked directly from app.py on every Streamlit rerun and is
 explicitly purged from Python's module cache before import. Besides the existing
 advertising cleanup/recent-input bootstrap, it also runs the idempotent requested-
 product/BOM seed, the v0.9.149 inventory/API separation patch, the v0.9.150
-sales-stat gross/cancellation quantity preservation patch, and the v0.9.151
-SQLite rowid hotfix for sales-stat return enrichment.
+sales-stat gross/cancellation quantity preservation patch, the v0.9.151 SQLite
+rowid hotfix, and the v0.9.154 provisional P&L expense-sign guard.
 """
 from __future__ import annotations
 
@@ -90,6 +90,25 @@ def _apply_sales_stats_returns(core, db):
         return {"ok": False, "error": str(exc)}
 
 
+def _apply_provisional_expense_guard():
+    try:
+        import importlib
+        import provisional_pnl_ui_v0913
+        import pnl_snapshot_refresh_v0966
+        import provisional_pnl_expense_guard_v09154
+
+        provisional_pnl_expense_guard_v09154 = importlib.reload(
+            provisional_pnl_expense_guard_v09154
+        )
+        return provisional_pnl_expense_guard_v09154.apply(
+            provisional_pnl_ui_v0913,
+            pnl_snapshot_refresh_v0966,
+        )
+    except Exception as exc:
+        print(f"RG Manager v0.9.154 provisional P&L expense guard failed: {exc}")
+        return {"ok": False, "error": str(exc)}
+
+
 def apply(core, db=None):
     db = db or core.DEFAULT_DB
     core.init_db(db)
@@ -100,6 +119,7 @@ def apply(core, db=None):
     product_seed_result = _apply_requested_product_seed(core, db)
     inventory_api_result = _apply_inventory_api_separation(core, db)
     sales_stats_return_result = _apply_sales_stats_returns(core, db)
+    provisional_expense_result = _apply_provisional_expense_guard()
 
     result = {
         "already_applied": False,
@@ -111,6 +131,7 @@ def apply(core, db=None):
         "requested_product_seed_v09133": product_seed_result,
         "inventory_api_separation_v09149": inventory_api_result,
         "sales_stats_returns_v09150": sales_stats_return_result,
+        "provisional_pnl_expense_guard_v09154": provisional_expense_result,
     }
 
     with core._conn(db) as c:
