@@ -9,6 +9,7 @@ The goal input tab is simplified to:
 v0.9.94 excludes goal-management-excluded products from the template and upload save path.
 v0.9.99 adds Excel-only unit helper columns for commission, RG logistics and COGS.
 v0.9.173 shows the operator how to archive obsolete products or exclude active products from goal management.
+v0.9.174 prefills unsaved target rows with previous-month actual performance.
 """
 from __future__ import annotations
 
@@ -204,8 +205,6 @@ def _upload_rows(uploaded, base) -> pd.DataFrame:
     missing = [c for c in _REQUIRED_UPLOAD_COLUMNS if c not in df.columns]
     if missing:
         raise ValueError("필수 열이 없습니다: " + ", ".join(missing))
-    # Excel-only helper columns are optional on upload so older target templates
-    # remain compatible. They are display/calculation aids and are never saved.
     for col in _TEMPLATE_COLUMNS:
         if col not in df.columns:
             df[col] = None
@@ -303,9 +302,9 @@ def _save_uploaded_goals(core, db, month: str, df: pd.DataFrame, base, old):
 def _render_excel_goal_input(st, core, db, month: str, base, old):
     st.markdown("### 목표 엑셀 입력")
     st.caption(
-        "양식을 내려받아 목표 숫자를 입력한 뒤 그대로 업로드하세요. "
-        "목표·실적표와 같은 순서이며 옵션ID 기준으로 자동 저장됩니다. "
-        "수수료단가·입출고배송비단가·상품원가단가는 엑셀에서 자동 계산되는 참고용 열입니다."
+        "양식을 내려받으면 저장된 목표가 있는 상품은 그 목표를 유지하고, 목표가 없는 상품은 직전 달 실제 실적으로 자동 채웁니다. "
+        "전월 확정실적이 있으면 확정실적을 우선하고, 없으면 잠정실적을 사용합니다. 숫자를 수정한 뒤 그대로 업로드하세요. "
+        "수수료단가·입출고배송비단가·상품원가단가는 참고용 열입니다."
     )
     st.info(
         "**더 이상 판매하지 않는 상품 정리 방법**\n\n"
@@ -405,3 +404,9 @@ def render_page(st, pd_obj, core, db_path=None):
         base._render_review(st, core, db, month, progress, source_label)
     with tabs[3]:
         base._render_history(st, core, db)
+
+
+# Apply the previous-month actual prefill patch whenever this module is imported.
+# app.py already clears this module from the Streamlit cache on rerun.
+import sys as _sys
+importlib.import_module("goal_prev_actual_template_v09174").apply(_sys.modules[__name__])
