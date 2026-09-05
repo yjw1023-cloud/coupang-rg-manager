@@ -1,9 +1,14 @@
 """RG Manager requested Coupang finished-product/BOM seed.
 
-The seed is idempotent and runs on app startup/rerun. v0.9.139 additionally
-repairs the three blackout-blind BOMs after seeding, because their first temporary
-raw rows were created at cost 0 before the later purchase Excel created/updated
-the actual purchased JDS rows.
+The seed runs on app startup/rerun. v0.9.139 additionally repairs the three
+blackout-blind BOMs after seeding, because their first temporary raw rows were
+created at cost 0 before the later purchase Excel created/updated the actual
+purchased JDS rows.
+
+v0.9.182 changes the seed contract: startup registration is bootstrap-only.
+If a finished product already has a BOM, that operator-managed BOM is preserved
+exactly and is never deleted/recreated from the old seed defaults. This prevents
+manual BOM edits from being reset on every Streamlit rerun.
 """
 from __future__ import annotations
 
@@ -96,7 +101,7 @@ REQUESTS = [
         "option_id": "95995366301",
         "finished_name": "자동차 컵홀더 패드 깔개 실리콘, 2개 블랙",
         "raw_name": "자동차 컵홀더 패드 블랙 2개",
-        "qty": 1.0,
+        "qty": 2.0,
         "aliases": ["컵홀더깔개", "컵홀더 깔개", "컵홀더 패드", "자동차 컵홀더"],
         "tokens": ["컵홀더"],
     },
@@ -274,14 +279,30 @@ def _prepare_component(core_module, con, req, parent_id: int):
     return component, how or "matched"
 
 
+def _current_bom_rows(core_module, db, parent_id: int):
+    with core_module._conn(db) as con:
+        return con.execute(
+            """SELECT b.component_product_id,b.qty_per,c.item_code,c.name
+               FROM bom_items b JOIN products c ON c.id=b.component_product_id
+               WHERE b.parent_product_id=? ORDER BY b.rowid""",
+            (int(parent_id),),
+        ).fetchall()
+
+
 def _add_exact_bom(core_module, db, parent_id: int, component, qty: float, preserve_component_state: bool):
+    # v0.9.182: this function is a startup bootstrap, not an authoritative runtime
+    # recipe enforcer. Once an operator has any current BOM for the finished item,
+    # preserve it exactly. Manual component/quantity edits must survive reruns.
+    existing = _current_bom_rows(core_module, db, parent_id)
+    if existing:
+        return existing[0]
+
     cid = int(component["id"])
     if int(parent_id) == cid:
         raise RuntimeError("완제품과 BOM 구성품이 동일합니다.")
     old_active = int(component["active"] or 0)
     old_type = str(component["item_type"] or "")
     with core_module._conn(db) as con:
-        con.execute("DELETE FROM bom_items WHERE parent_product_id=?", (int(parent_id),))
         if preserve_component_state:
             con.execute("UPDATE products SET item_type='raw',active=1,updated_at=? WHERE id=?",
                         (core_module.now_iso(), cid))
@@ -300,13 +321,7 @@ def _add_exact_bom(core_module, db, parent_id: int, component, qty: float, prese
             with core_module._conn(db) as con:
                 con.execute("UPDATE products SET item_type=?,active=?,updated_at=? WHERE id=?",
                             (old_type, old_active, core_module.now_iso(), cid))
-    with core_module._conn(db) as con:
-        rows = con.execute(
-            """SELECT b.component_product_id,b.qty_per,c.item_code,c.name
-               FROM bom_items b JOIN products c ON c.id=b.component_product_id
-               WHERE b.parent_product_id=? ORDER BY b.rowid""",
-            (int(parent_id),),
-        ).fetchall()
+    rows = _current_bom_rows(core_module, db, parent_id)
     if len(rows) != 1:
         raise RuntimeError(f"BOM 저장 검증 실패: parent={parent_id}, rows={len(rows)}")
     row = rows[0]
@@ -354,10 +369,8 @@ def apply(core_module, db_path=None):
                 "reason": f"BOM 등록 실패: {exc}",
             })
 
-    # v0.9.139: the seed above intentionally preserves the original idempotent
-    # behavior, then corrects only the three blackout BOMs if a different JDS row
-    # now owns real purchase history/cost. This must run AFTER the seed, otherwise
-    # a later seed pass would reconnect the zero-cost temporary component.
+    # v0.9.139: correct only the dedicated blackout-cost linkage issue. This
+    # repair remains intentionally separate from the generic bootstrap policy.
     try:
         import blackout_bom_cost_repair_v09139 as _blackout_repair
         result["blackout_bom_cost_repair"] = _blackout_repair.apply(core_module, db)
