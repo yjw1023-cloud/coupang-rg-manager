@@ -1,14 +1,16 @@
-"""v0.9.101 target Excel display/rounding fix.
+"""Target Excel display/rounding + previous-month actual prefill wiring.
 
 - Remove trailing decimal points from numeric cells by using integer display format.
 - Write Excel-only helper unit columns (G/I/M) as pre-calculated whole-won numbers,
   not formulas.
-- Keep helper columns as display-only aids; upload/save behavior remains unchanged.
+- v0.9.176: always apply the previous-month actual prefill patch to the freshly
+  reloaded goal_excel_upload module before generating the workbook.
 """
 from __future__ import annotations
 
 from decimal import Decimal, ROUND_HALF_UP
 from io import BytesIO
+import importlib
 
 
 def _num(value) -> float:
@@ -33,7 +35,16 @@ def _unit(total, qty) -> int:
 
 
 def apply(upload_module):
-    if upload_module is None or getattr(upload_module, "_rg_goal_excel_format_v09100_applied", False):
+    if upload_module is None:
+        return upload_module
+
+    # goal_data_status_v0985 reloads goal_excel_upload_v0984 on every render.
+    # Apply the previous-month actual wrapper to that fresh module here, on the
+    # exact export path, so the feature cannot exist as an unreferenced patch.
+    prev = importlib.import_module("goal_prev_actual_template_v09174")
+    prev.apply(upload_module)
+
+    if getattr(upload_module, "_rg_goal_excel_format_v09100_applied", False):
         return upload_module
 
     original = upload_module._template_bytes
