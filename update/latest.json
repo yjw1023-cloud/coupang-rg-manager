@@ -1,10 +1,9 @@
 {
-  "version": "0.9.181",
-  "message": "목표입력 Excel의 전월 수량이 계속 0으로 나오던 실제 원인을 수정했습니다. 8월처럼 예전에 등록한 판매자료는 당시에는 net_qty만 저장되었고, 나중에 추가된 sales_qty/cancel_qty 컬럼은 스키마에는 존재해도 과거 행에는 0 또는 NULL로 남아 있을 수 있습니다. 기존 코드는 sales_qty 컬럼이 존재한다는 이유만으로 0을 실제 판매수량으로 취급했습니다. 이제 sales_qty가 0이지만 net_qty가 양수인 과거 판매자료는 판매수량을 net_qty + cancel_qty로 복원하고, 과거 cancel_qty도 없으면 net_qty를 판매수량으로 사용합니다. 주문/반품 API 자료는 사용하지 않습니다. 목표 Excel은 이 복원된 전월 판매수량을 E열에 넣고 매출/수량으로 단가와 각 단가열을 다시 계산합니다. 기존 판매자료를 다시 업로드할 필요는 없습니다.",
+  "version": "0.9.182",
+  "message": "BOM 구성에서 이미 등록된 같은 완제품+같은 구성품의 소요수량을 바꿔 저장해도 현재 BOM이 수정되지 않던 문제를 수정했습니다. 기존 BOM 저장 경로는 같은 조합이 이미 있으면 추가 INSERT만 시도해 기존 qty_per를 수정하지 못하면서도 오류가 없어 저장 성공 알림이 표시될 수 있었습니다. 이제 같은 완제품+구성품 조합이 있으면 bom_items.qty_per를 UPDATE하고, 처음 추가하는 구성품이면 기존 add_bom 경로로 INSERT합니다. 동일 조합의 중복 BOM 행이 있으면 하나로 정리하며, 수량 변경 내용은 bom_change_log에 기록합니다. 과거 생산/재고 이력은 변경하지 않습니다. 실행 중 업데이트에서도 적용되도록 매 앱 rerun 때 강제로 불러오는 호환 모듈에 패치를 연결했습니다.",
   "files": [
     "VERSION.txt",
-    "sales_quantity_v0965.py",
-    "goal_prev_actual_template_v09174.py",
-    "goal_excel_format_v09100.py"
+    "bom_save_upsert_v09182.py",
+    "rubber_glove_seed_v09161.py"
   ]
 }
