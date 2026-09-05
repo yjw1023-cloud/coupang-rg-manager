@@ -1,4 +1,4 @@
-"""Compatibility entrypoint for v0.9.176.
+"""Compatibility entrypoint for v0.9.182.
 
 v0.9.172 is based on an audit of the user's live rocketgrowth.db, not inferred
 JDS codes. It first repairs the 18th purchase import, then reapplies the normal
@@ -10,6 +10,10 @@ v0.9.175 clears the warehouse-stocktake exporter cache so updated API stock
 prefill takes effect immediately. v0.9.176 also clears the target-Excel format
 and previous-actual modules so the fixed prefill wiring is loaded immediately
 after an in-app update without a full process restart.
+
+v0.9.182 also force-loads the BOM upsert patch on every app rerun. Saving an
+already-existing finished/component pair therefore edits bom_items.qty_per instead
+of reporting success after an insert-ignore no-op.
 """
 from __future__ import annotations
 
@@ -33,9 +37,17 @@ def apply(core, db_path=None):
         "inventory_stocktake_v0969",
         "goal_excel_format_v09100",
         "goal_prev_actual_template_v09174",
+        "bom_save_upsert_v09182",
     ):
         sys.modules.pop(name, None)
     importlib.invalidate_caches()
+
+    # v0.9.182: core.add_bom historically behaved like add-only for an existing
+    # parent/component pair. Load the edit-aware wrapper before the BOM screen is
+    # rendered so the same Save button becomes INSERT-or-UPDATE as operators expect.
+    bom_upsert = importlib.import_module("bom_save_upsert_v09182")
+    bom_upsert = importlib.reload(bom_upsert)
+    bom_upsert.apply(core)
 
     # Important order: repair the actual purchase/product/inventory ownership first.
     purchase_repair_result = _purchase_repair.apply(core, db_path=db_path)
@@ -56,4 +68,5 @@ def apply(core, db_path=None):
         "base": base_result,
         "buy_code_normalize": buy_result,
         "jds_code_generation": code_generation_result,
+        "bom_save_upsert": True,
     }
