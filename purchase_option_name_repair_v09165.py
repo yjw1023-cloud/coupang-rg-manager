@@ -1,18 +1,19 @@
 """Restore purchase option/detail text into own-item names.
 
-v0.9.165
-- Purchase source mapping stores source_name + source_detail (Excel C/D).
-- Some recently created own-warehouse SKUs were persisted with only source_name,
-  leaving variants such as ribbon colors/options visually indistinguishable.
-- Repair only when one product has exactly one non-empty mapped detail and the
-  current product name is still exactly the untouched source_name.
+v0.9.166
+- Primary source: purchase_source_product_map(source_name, source_detail, product_id).
+- Fallback/verification source: actual purchase_lines linked to product_id.
+- This fixes recently registered SKUs whose purchase was committed but whose durable
+  source mapping did not retain the option/detail row.
+- Repair only when one product resolves to exactly one non-empty source/detail pair
+  and the current product name is still exactly the untouched source_name.
 - Never overwrite a manually renamed product.
-- Patch future new-item naming so a default name always becomes
+- Patch future new-item naming so default names always become
   `source_name [source_detail]` when detail exists.
 """
 from __future__ import annotations
 
-RULE = "v0.9.165-purchase-option-name"
+RULE = "v0.9.166-purchase-option-name-from-lines"
 
 
 def _norm(v):
@@ -36,45 +37,87 @@ def _table_exists(con, name):
     ).fetchone() is not None
 
 
+def _columns(con, table):
+    try:
+        return {str(r["name"]) for r in con.execute(f'PRAGMA table_info("{table}")').fetchall()}
+    except Exception:
+        return set()
+
+
+def _observations(con):
+    """Return product_id -> set[(source_name, source_detail)] from durable facts."""
+    out = {}
+
+    if _table_exists(con, "purchase_source_product_map"):
+        cols = _columns(con, "purchase_source_product_map")
+        if {"product_id", "source_name", "source_detail"}.issubset(cols):
+            rows = con.execute(
+                """SELECT product_id,source_name,source_detail
+                   FROM purchase_source_product_map
+                   WHERE product_id IS NOT NULL
+                     AND TRIM(COALESCE(source_name,''))<>''
+                     AND TRIM(COALESCE(source_detail,''))<>''"""
+            ).fetchall()
+            for r in rows:
+                pair = (_norm(r["source_name"]), _norm(r["source_detail"]))
+                if pair[0] and pair[1]:
+                    out.setdefault(int(r["product_id"]), set()).add(pair)
+
+    # Actual committed purchase rows are the authoritative fallback.  The user's
+    # purchase workbook C/D values flow into source_name/source_detail here.
+    if _table_exists(con, "purchase_lines"):
+        cols = _columns(con, "purchase_lines")
+        if {"product_id", "source_name", "source_detail"}.issubset(cols):
+            rows = con.execute(
+                """SELECT product_id,source_name,source_detail
+                   FROM purchase_lines
+                   WHERE product_id IS NOT NULL
+                     AND TRIM(COALESCE(source_name,''))<>''
+                     AND TRIM(COALESCE(source_detail,''))<>''"""
+            ).fetchall()
+            for r in rows:
+                pair = (_norm(r["source_name"]), _norm(r["source_detail"]))
+                if pair[0] and pair[1]:
+                    out.setdefault(int(r["product_id"]), set()).add(pair)
+
+    return out
+
+
 def _repair_existing(core, db):
     changed = []
     skipped_multi = []
-    with core._conn(db) as con:
-        if not _table_exists(con, "purchase_source_product_map"):
-            return changed, skipped_multi
+    no_source = []
 
+    with core._conn(db) as con:
+        observations = _observations(con)
         rows = con.execute(
-            """SELECT m.product_id,m.source_name,m.source_detail,
-                      p.item_code,p.name,p.option_id,p.active
-               FROM purchase_source_product_map m
-               JOIN products p ON p.id=m.product_id
-               WHERE p.option_id IS NULL AND p.active=1
-                 AND TRIM(COALESCE(m.source_detail,''))<>''
-               ORDER BY m.product_id,m.created_at"""
+            """SELECT id,item_code,name,option_id,active
+               FROM products
+               WHERE option_id IS NULL AND active=1
+               ORDER BY id"""
         ).fetchall()
 
-        grouped = {}
-        for r in rows:
-            pid = int(r["product_id"])
-            grouped.setdefault(pid, []).append(r)
-
-        for pid, group in grouped.items():
-            pairs = {
-                (_norm(r["source_name"]), _norm(r["source_detail"]))
-                for r in group
-                if _norm(r["source_name"]) and _norm(r["source_detail"])
-            }
+        for product in rows:
+            pid = int(product["id"])
+            pairs = observations.get(pid, set())
+            if not pairs:
+                continue
             if len(pairs) != 1:
                 skipped_multi.append(pid)
                 continue
 
             source_name, source_detail = next(iter(pairs))
-            current_name = _norm(group[-1]["name"])
+            current_name = _norm(product["name"])
+
+            # Do not modify a deliberate/manual/system rename.  We only repair the
+            # exact broken state: current name equals the plain purchase source name.
             if current_name != source_name:
-                # User/manual/system rename exists; do not overwrite it.
                 continue
 
             new_name = f"{source_name} [{source_detail}]"
+            if new_name == current_name:
+                continue
+
             con.execute(
                 "UPDATE products SET name=?,updated_at=? WHERE id=?",
                 (new_name, core.now_iso(), pid),
@@ -82,7 +125,7 @@ def _repair_existing(core, db):
             changed.append(
                 {
                     "product_id": pid,
-                    "item_code": _norm(group[-1]["item_code"]),
+                    "item_code": _norm(product["item_code"]),
                     "old_name": current_name,
                     "new_name": new_name,
                 }
@@ -92,7 +135,8 @@ def _repair_existing(core, db):
             con.commit()
         except Exception:
             pass
-    return changed, skipped_multi
+
+    return changed, skipped_multi, no_source
 
 
 def _patch_future_naming():
@@ -107,7 +151,7 @@ def _patch_future_naming():
 def apply(core, db_path=None):
     db = db_path or core.DEFAULT_DB
     core.init_db(db)
-    changed, skipped_multi = _repair_existing(core, db)
+    changed, skipped_multi, no_source = _repair_existing(core, db)
     patched = _patch_future_naming()
     return {
         "ok": True,
