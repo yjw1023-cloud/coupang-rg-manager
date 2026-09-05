@@ -1,12 +1,18 @@
-"""Show actual BOM requirement quantities on the production batch preview.
+"""Show BOM requirement quantities and current usable component stock on production preview.
 
 v0.9.183
 - Replace the low-value `N개 구성품` preview with per-finished-unit BOM quantities.
 - A one-component BOM shows e.g. `2개 소요`.
 - Multi-component BOMs show each component code/name with its own qty so operators
   can judge whether the recipe is correct before executing production.
-- This is presentation/validation metadata only; production and inventory writes
-  are unchanged.
+
+v0.9.185
+- Add `현재 사용가능 기초재고` immediately to the right of the status column.
+- Stock means the current ERP book stock of each BOM component in `자체창고`,
+  which is the same warehouse consumed by production execution.
+- One-component BOMs show a single quantity; multi-component BOMs show each
+  component code/name and its own available quantity.
+- Preview only: production and inventory write behavior is unchanged.
 """
 from __future__ import annotations
 
@@ -33,6 +39,9 @@ def _attach_bom_qty(core_module, db_path, rows):
         return rows
 
     with core_module._conn(db_path) as con:
+        own = con.execute("SELECT id FROM warehouses WHERE name='자체창고' LIMIT 1").fetchone()
+        own_id = int(own["id"]) if own else None
+
         for r in targets:
             pid = int(r["product_id"])
             bom = con.execute(
@@ -45,12 +54,37 @@ def _attach_bom_qty(core_module, db_path, rows):
             ).fetchall()
             if not bom:
                 r["bom_qty_display"] = "없음"
+                r["component_stock_display"] = "-"
                 continue
+
+            stock_by_component = {}
+            for x in bom:
+                component_id = int(x["component_product_id"])
+                if own_id is None:
+                    stock = 0.0
+                else:
+                    stock_row = con.execute(
+                        """SELECT COALESCE(SUM(qty_delta),0) AS qty
+                           FROM inventory_txns
+                           WHERE product_id=? AND warehouse_id=?""",
+                        (component_id, own_id),
+                    ).fetchone()
+                    stock = float(stock_row["qty"] or 0) if stock_row else 0.0
+                stock_by_component[component_id] = stock
+
             if len(bom) == 1:
-                r["bom_qty_display"] = f"{_fmt_qty(bom[0]['qty_per'])}개 소요"
+                one = bom[0]
+                component_id = int(one["component_product_id"])
+                r["bom_qty_display"] = f"{_fmt_qty(one['qty_per'])}개 소요"
+                r["component_stock_display"] = f"{_fmt_qty(stock_by_component.get(component_id, 0))}개"
                 continue
+
             r["bom_qty_display"] = " / ".join(
                 f"{_component_label(x)} × {_fmt_qty(x['qty_per'])}"
+                for x in bom
+            )
+            r["component_stock_display"] = " / ".join(
+                f"{_component_label(x)} {_fmt_qty(stock_by_component.get(int(x['component_product_id']), 0))}개"
                 for x in bom
             )
     return rows
@@ -81,6 +115,23 @@ def apply(production_module, core_module):
                 values.append(display)
             frame["BOM"] = values
             frame = frame.rename(columns={"BOM": "BOM (완제품 1개당 소요)"})
+
+        stock_values = []
+        for r in rows:
+            display = str(r.get("component_stock_display") or "").strip()
+            if not display:
+                display = "-" if not r.get("bom_count") else "0개"
+            stock_values.append(display)
+        frame["현재 사용가능 기초재고"] = stock_values
+
+        # Keep the requested placement: immediately to the right of 상태.
+        cols = list(frame.columns)
+        stock_col = "현재 사용가능 기초재고"
+        if stock_col in cols and "상태" in cols:
+            cols.remove(stock_col)
+            status_index = cols.index("상태")
+            cols.insert(status_index + 1, stock_col)
+            frame = frame[cols]
         return frame
 
     production_module.validate_rows = validate_rows
