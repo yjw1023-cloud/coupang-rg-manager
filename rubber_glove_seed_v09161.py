@@ -1,14 +1,20 @@
-"""Compatibility entrypoint for v0.9.172.
+"""Compatibility entrypoint for v0.9.175.
 
 v0.9.172 is based on an audit of the user's live rocketgrowth.db, not inferred
 JDS codes. It first repairs the 18th purchase import, then reapplies the normal
 glove finished-product/commercial defaults against the repaired durable source
 mapping, normalizes any remaining BUY codes, and keeps every JDS generator on
 max(existing)+1.
+
+v0.9.175 also clears the warehouse-stocktake exporter module from Python's cache
+on each Streamlit rerun. app.py already reloads this compatibility entrypoint, so
+the updated Coupang API stock prefill takes effect immediately after an in-app
+update without requiring a full process restart.
 """
 from __future__ import annotations
 
 import importlib
+import sys
 import purchase_import32_repair_v09172 as _purchase_repair
 import rubber_glove_seed_v09163_base as _base
 import buy_code_normalize_v09164 as _buy
@@ -21,6 +27,11 @@ _code_generation = importlib.reload(_code_generation)
 
 
 def apply(core, db_path=None):
+    # v0.9.175: inventory_stocktake_v0969 is imported later in app.py. Remove any
+    # previous Streamlit-run copy now so the later import reads the updated file.
+    sys.modules.pop("inventory_stocktake_v0969", None)
+    importlib.invalidate_caches()
+
     # Important order: repair the actual purchase/product/inventory ownership first.
     purchase_repair_result = _purchase_repair.apply(core, db_path=db_path)
 
