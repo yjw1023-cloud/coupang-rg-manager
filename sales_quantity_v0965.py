@@ -1,6 +1,6 @@
 """v0.9.65 monthly sales quantity semantics.
 
-The legacy provisional P&L used net_qty as the visible `판매수량`.  That is useful
+The legacy provisional P&L used net_qty as the visible `판매수량`. That is useful
 for inventory/COGS but confusing to an operator: a product can have a real sale
 and a cancellation in the same month and appear as zero sales.
 
@@ -11,8 +11,12 @@ when they exist and exposes three distinct quantities:
 - 반품철회수량: later withdrawals that restore a return request
 - 순판매수량: the signed net quantity used by P&L/inventory arithmetic
 
-If the DB is an older schema that only has net_qty, it safely falls back to the
-existing net quantity and reports that the gross count is not exact.
+v0.9.179 policy:
+- monthly sales quantity is sourced from imported sales_stats only;
+- legacy Coupang order/return API tables are intentionally ignored, even if they
+  still exist in the database;
+- if the DB is an older schema that only has net_qty, safely fall back to the
+  existing net quantity and report that the gross count is not exact.
 """
 from __future__ import annotations
 
@@ -78,84 +82,23 @@ def _month_bounds(month: str) -> tuple[str, str]:
 
 
 def month_counts(core, db, month: str):
-    """Return option-ID quantity counts plus source metadata for one month."""
+    """Return option-ID quantity counts from imported sales_stats for one month.
+
+    Order/return API tables are deliberately not consulted. This keeps quantity
+    semantics aligned with the ERP workflow where the operator imports the monthly
+    sales data and no longer uses Coupang order API synchronization.
+    """
     start, end = _month_bounds(month)
     core.init_db(db)
     with core._conn(db) as con:
         sc = _cols(con, "sales_stats")
         ic = _cols(con, "imports")
         pc = _cols(con, "products")
-        # Provisional sales are grouped by the customer's paid date.  Revenue
-        # recognition rows are reserved for confirmed P&L and must not alter
-        # the provisional month or its visible sales quantity.
-        if _exists(con, "coupang_rg_order_items") and {"id", "option_id", "item_code"}.issubset(pc):
-            api_rows = con.execute(
-                """SELECT o.product_id,p.option_id,p.item_code,
-                          SUM(ABS(o.sales_quantity)) gross_qty
-                   FROM coupang_rg_order_items o
-                   JOIN products p ON p.id=o.product_id
-                   WHERE o.paid_date>=? AND o.paid_date<=?
-                     AND o.product_id IS NOT NULL
-                   GROUP BY o.product_id,p.option_id,p.item_code""",
-                (start, end),
-            ).fetchall()
-            try:
-                import coupang_api_sync_v09140 as coupang_api
 
-                return_events = coupang_api._matched_return_events(con, start, end)
-            except Exception:
-                return_events = {}
-            if api_rows or return_events:
-                api_counts = {}
-                for row in api_rows:
-                    oid = _oid(row["option_id"]) or _oid(row["item_code"])
-                    if oid:
-                        api_counts[oid] = {
-                            "product_id": int(row["product_id"]),
-                            "sales_qty": _num(row["gross_qty"]),
-                            "cancel_qty": 0.0,
-                            "withdrawal_qty": 0.0,
-                            "net_qty": _num(row["gross_qty"]),
-                        }
-                product_options = {
-                    int(row["id"]): (_oid(row["option_id"]) or _oid(row["item_code"]))
-                    for row in con.execute("SELECT id,option_id,item_code FROM products")
-                }
-                for product_id, event in return_events.items():
-                    oid = product_options.get(int(product_id), "")
-                    if not oid:
-                        continue
-                    info = api_counts.setdefault(oid, {
-                        "product_id": int(product_id),
-                        "sales_qty": 0.0,
-                        "cancel_qty": 0.0,
-                        "withdrawal_qty": 0.0,
-                        "net_qty": 0.0,
-                    })
-                    info["cancel_qty"] = _num(event.get("return_qty"))
-                    info["withdrawal_qty"] = _num(event.get("withdrawal_qty"))
-                    info["net_qty"] = (
-                        _num(info["sales_qty"])
-                        - _num(info["cancel_qty"])
-                        + _num(info["withdrawal_qty"])
-                    )
-                return_synced = int(con.execute(
-                    """SELECT COUNT(*) n FROM coupang_api_sync_runs
-                       WHERE sync_type='returns' AND status='success'
-                         AND period_end>=? AND period_start<=?""",
-                    (start, end),
-                ).fetchone()["n"]) > 0
-                return api_counts, {
-                    "exact": return_synced,
-                    "sales_exact": True,
-                    "returns_exact": return_synced,
-                    "source": "coupang_order_return_api" if return_synced else "coupang_order_api",
-                    "rows": len(api_counts),
-                }
         if not {"product_id", "import_id"}.issubset(sc) or not {"id", "period_start", "period_end"}.issubset(ic):
-            return {}, {"exact": False, "reason": "판매통계 수량 구조 없음"}
+            return {}, {"exact": False, "reason": "판매통계 수량 구조 없음", "source": "sales_stats"}
         if not {"id", "option_id", "item_code"}.issubset(pc):
-            return {}, {"exact": False, "reason": "상품 옵션ID 구조 없음"}
+            return {}, {"exact": False, "reason": "상품 옵션ID 구조 없음", "source": "sales_stats"}
 
         net_col = _pick(sc, ("net_qty", "net_sales_qty", "순판매수량", "순판매상품수"))
         gross_col = _pick(sc, (
@@ -168,7 +111,7 @@ def month_counts(core, db, month: str):
         ))
 
         if not (net_col or gross_col):
-            return {}, {"exact": False, "reason": "판매수량 컬럼 없음"}
+            return {}, {"exact": False, "reason": "판매수량 컬럼 없음", "source": "sales_stats"}
 
         gross_expr = (
             f"SUM(CASE WHEN COALESCE(s.{_q(gross_col)},0)>0 THEN COALESCE(s.{_q(gross_col)},0) ELSE 0 END)"
@@ -225,6 +168,9 @@ def month_counts(core, db, month: str):
     exact = bool(gross_col or (net_col and cancel_col))
     return out, {
         "exact": exact,
+        "sales_exact": exact,
+        "returns_exact": bool(cancel_col),
+        "source": "sales_stats",
         "gross_col": gross_col,
         "cancel_col": cancel_col,
         "net_col": net_col,
