@@ -3,13 +3,16 @@
 When a target workbook is downloaded for month M:
 - keep already-saved goals for M unchanged;
 - for products without a saved goal, use actual performance from M-1;
-- prefer confirmed actuals per product, falling back to the same final provisional
-  calculation path used by the goal/performance screen;
-- v0.9.177 reads confirmed sold quantity directly from confirmed_monthly_pnl when
-  available, because the legacy confirmed goal helper could carry a zero quantity
-  while still containing confirmed revenue/cost figures;
-- if confirmed quantity is unavailable, fall back to previous-month provisional
-  sold quantity;
+- prefer confirmed actual amounts/costs per product, falling back to the same final
+  provisional calculation path used by the goal/performance screen;
+- v0.9.178 reads previous-month sold quantity directly from
+  sales_quantity_v0965.month_counts() by option ID. This bypasses the intermediate
+  P&L dataframe, where a missing `판매수량` column could leave quantity at zero even
+  while revenue/cost figures were populated;
+- direct monthly quantity uses the existing sales_quantity module's authoritative
+  source selection (Coupang order API when available, otherwise sales_stats);
+- if no direct monthly count exists for an option, confirmed/provisional quantity is
+  retained only as a fallback;
 - leave products with no previous-month activity blank.
 
 This changes only the downloaded template defaults. It does not write goals until
@@ -59,13 +62,7 @@ def _previous_provisional(upload_module, core, db, month, base, old):
 
 
 def _confirmed_qty_by_pid(core, db, month, base, old):
-    """Read confirmed sold quantity directly from the confirmed P&L dataframe.
-
-    The old goal helper initializes confirmed quantity from provisional data. For
-    closed months that provisional quantity can be unavailable/zero even though the
-    confirmed P&L already contains product-level quantity. Prefer the confirmed
-    dataframe itself and use option-id mapping only when product_id is absent.
-    """
+    """Fallback quantity directly from confirmed P&L when such a column exists."""
     try:
         mdf, _meta = core.confirmed_monthly_pnl(month)
     except Exception:
@@ -105,25 +102,34 @@ def _confirmed_qty_by_pid(core, db, month, base, old):
         for col in qty_columns:
             value = r.get(col)
             try:
-                if upload_module_pd_isna(value):
+                import pandas as pd
+                if pd.isna(value):
                     continue
             except Exception:
-                pass
+                if value is None:
+                    continue
             qty = _num(value)
             break
-        if qty is None:
-            continue
-        out[int(pid)] = out.get(int(pid), 0.0) + float(qty)
+        if qty is not None:
+            out[int(pid)] = out.get(int(pid), 0.0) + float(qty)
     return out
 
 
-def upload_module_pd_isna(value):
-    """Small local NaN check without importing pandas at module import time."""
+def _sales_qty_by_oid(upload_module, core, db, month, base):
+    """Authoritative monthly gross sold quantity keyed by normalized option ID."""
     try:
-        import pandas as pd
-        return bool(pd.isna(value))
+        qty_mod = upload_module.importlib.import_module("sales_quantity_v0965")
+        counts, _meta = qty_mod.month_counts(core, db, month)
     except Exception:
-        return value is None
+        return {}
+
+    out = {}
+    for raw_oid, info in (counts or {}).items():
+        oid = str(base._oid(raw_oid) or "")
+        if not oid:
+            continue
+        out[oid] = _num((info or {}).get("sales_qty"))
+    return out
 
 
 def apply(upload_module):
@@ -149,6 +155,7 @@ def apply(upload_module):
         provisional = _previous_provisional(upload_module, core, db, prev_month, base, old)
         confirmed = old._confirmed_details(core, db, prev_month, provisional, base)
         confirmed_qty = _confirmed_qty_by_pid(core, db, prev_month, base, old)
+        direct_sales_qty = _sales_qty_by_oid(upload_module, core, db, prev_month, base)
 
         # Map the option IDs in the target workbook back to the managed product IDs.
         scope = upload_module.importlib.import_module("goal_scope_v0994")
@@ -169,17 +176,22 @@ def apply(upload_module):
 
             if confirmed and pid in confirmed:
                 metrics = dict(confirmed[pid])
-                qty = confirmed_qty.get(pid)
-                # If the confirmed dataframe has no quantity column/value, use the
-                # final provisional sold quantity for that same previous month.
-                if qty is None or (abs(_num(qty)) <= 1e-12 and abs(_num(metrics.get("revenue"))) > 1e-12):
-                    qty = _num((provisional.get(pid) or {}).get("qty"))
-                metrics["qty"] = _num(qty)
             else:
-                metrics = provisional.get(pid)
-
+                source_metrics = provisional.get(pid)
+                metrics = dict(source_metrics) if source_metrics else None
             if not metrics:
                 continue
+
+            # v0.9.178: use the direct monthly sales-count source first. Presence of
+            # the key matters: a genuine direct count of zero is still authoritative.
+            if oid in direct_sales_qty:
+                qty = direct_sales_qty[oid]
+            else:
+                qty = confirmed_qty.get(pid)
+                if qty is None:
+                    qty = _num((provisional.get(pid) or {}).get("qty"))
+            metrics["qty"] = _num(qty)
+
             _fill_from_metrics(row, metrics)
 
         return upload_module.pd.DataFrame(records, columns=list(df.columns))
