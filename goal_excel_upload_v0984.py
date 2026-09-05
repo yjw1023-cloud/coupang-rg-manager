@@ -8,6 +8,7 @@ The goal input tab is simplified to:
 
 v0.9.94 excludes goal-management-excluded products from the template and upload save path.
 v0.9.99 adds Excel-only unit helper columns for commission, RG logistics and COGS.
+v0.9.173 shows the operator how to archive obsolete products or exclude active products from goal management.
 """
 from __future__ import annotations
 
@@ -305,6 +306,17 @@ def _render_excel_goal_input(st, core, db, month: str, base, old):
         "양식을 내려받아 목표 숫자를 입력한 뒤 그대로 업로드하세요. "
         "목표·실적표와 같은 순서이며 옵션ID 기준으로 자동 저장됩니다. "
         "수수료단가·입출고배송비단가·상품원가단가는 엑셀에서 자동 계산되는 참고용 열입니다."
+    )
+    st.info(
+        "**더 이상 판매하지 않는 상품 정리 방법**\n\n"
+        "• **완전히 판매 종료한 옛 상품**: `품목관리 → 품목 삭제/보관`에서 여러 상품을 체크한 뒤 "
+        "`선택 품목 보관처리`를 누르세요. 현재 ERP상 재고가 남아 있지만 실제 재고가 0인 상품은 "
+        "`재고 0 정리 후 선택 품목 보관`으로 처리할 수 있습니다. 이 경우 과거 이력은 그대로 남고 상품만 비활성화됩니다.\n\n"
+        "• **상품은 ERP에서 활성 상태로 두고 목표·실적관리에서만 제외**: "
+        "`목표·실적관리 → ⚙️ 목표관리 상품 설정 → 목표관리에서 제외 → 상품 선택 → 선택 상품 제외`\n\n"
+        "이렇게 제외하면 해당 상품은 **목표·실적표와 목표 엑셀 양식에서만 빠지며**, "
+        "매출·재고·정산 이력에는 아무 영향이 없습니다.\n\n"
+        "※ 완전히 판매 종료한 옛 상품은 **보관처리**하는 것을 권장합니다."
     )
 
     try:
