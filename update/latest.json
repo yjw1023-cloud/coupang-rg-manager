@@ -1,10 +1,11 @@
 {
-  "version": "0.9.164",
-  "message": "자체창고 품목 중 BUY-로 시작하는 구형 임시 품목코드는 별도의 숨은 JDS 코드가 있었던 것이 아니라 실제 item_code로 남아 있던 값이었습니다. 이번 업데이트에서 BUY-* 자체창고 품목만 현재 최대 JDS 번호 다음의 연속 JDS 코드로 안전하게 변경합니다. product_id는 그대로 유지하므로 기존 매입이력·재고·BOM 연결과 수량은 변경하지 않습니다. 기존 BUY 코드와 새 JDS 코드는 이력 테이블에 기록합니다. 신규 JDS 발급도 최대번호+1 규칙을 계속 적용합니다.",
+  "version": "0.9.165",
+  "message": "매입 신규품목의 옵션/상세값이 품목명에서 빠져 동일 상품명이 여러 SKU로 보이던 문제를 수정합니다. purchase_source_product_map의 상품명+옵션 매핑을 이용해 현재 상품명이 원본 상품명과 그대로 같은 품목에만 [옵션]을 붙여 복구하며, 사용자가 직접 이름을 바꾼 품목은 덮어쓰지 않습니다. 앞으로 신규 매입품목도 옵션이 있으면 기본 품목명을 상품명 [옵션] 형식으로 생성합니다. 재고수량·매입이력·BOM 연결은 변경하지 않습니다.",
   "files": [
     "VERSION.txt",
     "rubber_glove_seed_v09161.py",
     "rubber_glove_seed_v09163_base.py",
-    "buy_code_normalize_v09164.py"
+    "buy_code_normalize_v09164.py",
+    "purchase_option_name_repair_v09165.py"
   ]
 }
