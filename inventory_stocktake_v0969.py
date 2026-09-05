@@ -1,4 +1,4 @@
-"""RG Manager v0.9.69 warehouse-specific stocktake workbook filtering.
+"""RG Manager warehouse-specific stocktake workbook filtering.
 
 Fixes v0.9.68 export where every warehouse sheet repeated the same product master.
 
@@ -8,6 +8,13 @@ Export eligibility:
 - 반품창고: finished products only (returns are original finished goods).
 - Any extra warehouse: only products that currently have non-zero stock there.
 - Archived products are shown only when that specific warehouse still has stock.
+
+v0.9.175:
+- 쿠팡RG sheet pre-fills `실사수량` with the latest Coupang API
+  `coupang_rg_inventory.orderable_qty` for normal stock only.
+- Missing API rows remain blank instead of being treated as zero.
+- ERP현재고 remains the accounting/ledger balance, so the existing difference
+  formula immediately shows API saleable stock minus ERP ledger stock.
 
 The upload/preview/commit safety rules remain those of v0.9.68.
 
@@ -45,6 +52,59 @@ def _eligible_for_sheet(p: dict, wh_name: str, qty: float) -> bool:
     return has_here
 
 
+def _api_rg_saleable_stock(core, db) -> dict[int, dict[str, object]]:
+    """Return current normal RG API stock keyed by ERP product id.
+
+    The current inventory table is replaced only after a successful full API
+    inventory fetch, so rows in this table are the latest complete snapshot.
+    Return/unmatched options are intentionally excluded from the normal RG sheet.
+    """
+    try:
+        import coupang_api_sync_v09140 as api
+        api.ensure_schema(core, db)
+    except Exception:
+        return {}
+
+    try:
+        with core._conn(db) as con:
+            exists = con.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='coupang_rg_inventory'"
+            ).fetchone()
+            if not exists:
+                return {}
+            cols = {
+                str(r["name"])
+                for r in con.execute("PRAGMA table_info(coupang_rg_inventory)").fetchall()
+            }
+            required = {"product_id", "orderable_qty", "synced_at", "stock_type"}
+            if not required.issubset(cols):
+                return {}
+            rows = con.execute(
+                """SELECT product_id,
+                          COALESCE(SUM(orderable_qty),0) qty,
+                          MAX(synced_at) synced_at
+                   FROM coupang_rg_inventory
+                   WHERE product_id IS NOT NULL
+                     AND stock_type='normal'
+                   GROUP BY product_id"""
+            ).fetchall()
+    except Exception:
+        return {}
+
+    out: dict[int, dict[str, object]] = {}
+    for r in rows:
+        try:
+            pid = int(r["product_id"])
+            qty = float(r["qty"] or 0)
+        except Exception:
+            continue
+        out[pid] = {
+            "qty": qty,
+            "synced_at": str(r["synced_at"] or "").strip(),
+        }
+    return out
+
+
 def _build_workbook(core, db) -> bytes:
     try:
         from openpyxl import Workbook
@@ -59,20 +119,27 @@ def _build_workbook(core, db) -> bytes:
     if not warehouses:
         raise ValueError("등록된 창고가 없습니다.")
 
+    # Latest successfully fetched normal-product saleable inventory from Coupang.
+    # This is used only as a pre-filled physical/API count in the RG worksheet;
+    # the accounting ledger remains untouched until the workbook is uploaded and
+    # explicitly confirmed through the existing stocktake workflow.
+    api_rg_stock = _api_rg_saleable_stock(core, db)
+
     wb = Workbook()
     ws = wb.active
     ws.title = "사용방법"
     ws["A1"] = "RG Manager 재고 실사"
     ws["A1"].font = Font(size=16, bold=True)
     ws["A3"] = "1. 자체창고 시트는 자체창고 품목, 쿠팡RG·반품창고 시트는 완제품만 표시됩니다."
-    ws["A4"] = "2. 각 창고 시트의 '실사수량' 열에 실제 확인한 수량만 입력하세요."
-    ws["A5"] = "3. 실사하지 않은 행은 빈칸으로 두면 조정 대상에서 제외됩니다."
-    ws["A6"] = "4. ERP상품ID·창고·품목코드·쿠팡 옵션ID·상품명·ERP현재고는 수정하지 않는 것을 권장합니다."
-    ws["A7"] = "5. 업로드 시 ERP의 현재 재고를 다시 조회한 뒤 차이만 '재고실사조정' 이력으로 반영합니다."
-    ws["A8"] = "6. 같은 파일은 중복 적용할 수 없습니다."
-    ws["A10"] = "다운로드 시각"
-    ws["B10"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    ws.column_dimensions["A"].width = 100
+    ws["A4"] = "2. 쿠팡RG 시트의 '실사수량'은 최근 쿠팡 API로 조회한 판매가능재고가 자동 입력됩니다."
+    ws["A5"] = "3. API에 조회되지 않은 쿠팡RG 상품과 자체창고·반품창고는 실제 확인한 수량만 '실사수량'에 입력하세요."
+    ws["A6"] = "4. 실사하지 않은 행은 빈칸으로 두면 조정 대상에서 제외됩니다."
+    ws["A7"] = "5. ERP상품ID·창고·품목코드·쿠팡 옵션ID·상품명·ERP현재고는 수정하지 않는 것을 권장합니다."
+    ws["A8"] = "6. 업로드 시 ERP의 현재 재고를 다시 조회한 뒤 차이만 '재고실사조정' 이력으로 반영합니다."
+    ws["A9"] = "7. 같은 파일은 중복 적용할 수 없습니다."
+    ws["A11"] = "다운로드 시각"
+    ws["B11"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    ws.column_dimensions["A"].width = 110
     ws.column_dimensions["B"].width = 22
 
     header_fill = PatternFill("solid", fgColor="CFE3FF")
@@ -104,10 +171,21 @@ def _build_workbook(core, db) -> bytes:
             qty = balances.get((pid, wid), 0.0)
             if not _eligible_for_sheet(p, wh_name, qty):
                 continue
+
+            actual_qty = None
+            note = None
+            if wh_name == "쿠팡RG" and pid in api_rg_stock:
+                api_row = api_rg_stock[pid]
+                actual_qty = float(api_row.get("qty") or 0)
+                synced_at = str(api_row.get("synced_at") or "").strip()
+                note = "쿠팡 API 판매가능재고 자동입력"
+                if synced_at:
+                    note += f" · 조회 {synced_at}"
+
             rows.append((
                 p["name"].lower(), p["display_code"], pid,
                 [pid, wh_name, p["display_code"], p["option_id"], p["name"],
-                 "사용중" if p["active"] else "보관", qty, None, None, None],
+                 "사용중" if p["active"] else "보관", qty, actual_qty, None, note],
             ))
 
         rows.sort(key=lambda x: (x[0], x[1], x[2]))
@@ -147,7 +225,7 @@ def _build_workbook(core, db) -> bytes:
         sh.freeze_panes = "A2"
         sh.auto_filter.ref = f"A1:J{data_last}"
         sh.column_dimensions["A"].hidden = True
-        widths = {"B": 14, "C": 18, "D": 18, "E": 52, "F": 10, "G": 14, "H": 14, "I": 14, "J": 28}
+        widths = {"B": 14, "C": 18, "D": 18, "E": 52, "F": 10, "G": 14, "H": 14, "I": 14, "J": 40}
         for col, width in widths.items():
             sh.column_dimensions[col].width = width
         sh.row_dimensions[1].height = 24
