@@ -1,4 +1,4 @@
-"""Compatibility entrypoint for v0.9.175.
+"""Compatibility entrypoint for v0.9.176.
 
 v0.9.172 is based on an audit of the user's live rocketgrowth.db, not inferred
 JDS codes. It first repairs the 18th purchase import, then reapplies the normal
@@ -6,10 +6,10 @@ glove finished-product/commercial defaults against the repaired durable source
 mapping, normalizes any remaining BUY codes, and keeps every JDS generator on
 max(existing)+1.
 
-v0.9.175 also clears the warehouse-stocktake exporter module from Python's cache
-on each Streamlit rerun. app.py already reloads this compatibility entrypoint, so
-the updated Coupang API stock prefill takes effect immediately after an in-app
-update without requiring a full process restart.
+v0.9.175 clears the warehouse-stocktake exporter cache so updated API stock
+prefill takes effect immediately. v0.9.176 also clears the target-Excel format
+and previous-actual modules so the fixed prefill wiring is loaded immediately
+after an in-app update without a full process restart.
 """
 from __future__ import annotations
 
@@ -27,9 +27,14 @@ _code_generation = importlib.reload(_code_generation)
 
 
 def apply(core, db_path=None):
-    # v0.9.175: inventory_stocktake_v0969 is imported later in app.py. Remove any
-    # previous Streamlit-run copy now so the later import reads the updated file.
-    sys.modules.pop("inventory_stocktake_v0969", None)
+    # These modules are imported later in app/goal rendering. Remove old
+    # Streamlit-run copies now so the updated files are read on the next import.
+    for name in (
+        "inventory_stocktake_v0969",
+        "goal_excel_format_v09100",
+        "goal_prev_actual_template_v09174",
+    ):
+        sys.modules.pop(name, None)
     importlib.invalidate_caches()
 
     # Important order: repair the actual purchase/product/inventory ownership first.
