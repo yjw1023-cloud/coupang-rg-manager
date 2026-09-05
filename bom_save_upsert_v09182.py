@@ -8,6 +8,8 @@ v0.9.182
 - Consolidate accidental duplicate rows for the exact same parent/component pair.
 - Log quantity changes in bom_change_log while leaving all historical production
   and inventory transactions untouched.
+- Honor the operator's explicit cup-holder BOM change to 2 units once, then leave
+  all future manual changes alone.
 """
 from __future__ import annotations
 
@@ -15,6 +17,7 @@ import sqlite3
 
 
 _MARKER = "_rg_bom_save_upsert_v09182_applied"
+_CUPHOLDER_REPAIR_FLAG = "v09182_cupholder_95995366301_qty2"
 
 
 def _conn(core_module, db_path=None):
@@ -71,8 +74,81 @@ def _ensure_log(con):
     )
 
 
+def _repair_explicit_cupholder_qty(core_module):
+    """Apply the user's explicitly requested 2-unit cup-holder BOM exactly once."""
+    with _conn(core_module, core_module.DEFAULT_DB) as con:
+        con.execute(
+            """CREATE TABLE IF NOT EXISTS bom_patch_flags(
+                flag TEXT PRIMARY KEY,
+                applied_at TEXT NOT NULL,
+                note TEXT
+            )"""
+        )
+        done = con.execute(
+            "SELECT 1 FROM bom_patch_flags WHERE flag=?",
+            (_CUPHOLDER_REPAIR_FLAG,),
+        ).fetchone()
+        if done:
+            return
+
+        parent = con.execute(
+            """SELECT id FROM products
+               WHERE CAST(option_id AS TEXT)='95995366301'
+               ORDER BY CASE WHEN item_type='finished' THEN 0 ELSE 1 END,id
+               LIMIT 1"""
+        ).fetchone()
+        if not parent:
+            return
+        parent_id = int(parent["id"])
+        rows = con.execute(
+            """SELECT id,component_product_id,qty_per FROM bom_items
+               WHERE parent_product_id=? ORDER BY id""",
+            (parent_id,),
+        ).fetchall()
+        # The user edited the single-component recipe shown in the UI. Do not make
+        # assumptions if the product later becomes a multi-component BOM.
+        if len(rows) != 1:
+            return
+
+        row = rows[0]
+        old_qty = float(row["qty_per"] or 0)
+        now = core_module.now_iso()
+        if abs(old_qty - 2.0) > 1e-12:
+            _ensure_log(con)
+            con.execute(
+                """INSERT INTO bom_change_log
+                   (action,bom_id,parent_product_id,component_product_id,qty_per,changed_at,note)
+                   VALUES(?,?,?,?,?,?,?)""",
+                (
+                    "USER_REQUEST_REPAIR",
+                    int(row["id"]),
+                    parent_id,
+                    int(row["component_product_id"]),
+                    old_qty,
+                    now,
+                    f"사용자 요청 소요수량 {old_qty:g} -> 2",
+                ),
+            )
+            con.execute("UPDATE bom_items SET qty_per=2 WHERE id=?", (int(row["id"]),))
+        con.execute(
+            "INSERT OR IGNORE INTO bom_patch_flags(flag,applied_at,note) VALUES(?,?,?)",
+            (
+                _CUPHOLDER_REPAIR_FLAG,
+                now,
+                "옵션ID 95995366301 자동차 컵홀더 패드 BOM 사용자의 2개 저장 의도 복구",
+            ),
+        )
+
+
 def apply(core_module):
-    if core_module is None or getattr(core_module, _MARKER, False):
+    if core_module is None:
+        return core_module
+
+    # Run the one-time data repair even if this Python process already has the
+    # add_bom wrapper marker from an earlier Streamlit rerun.
+    _repair_explicit_cupholder_qty(core_module)
+
+    if getattr(core_module, _MARKER, False):
         return core_module
 
     previous_add_bom = core_module.add_bom
