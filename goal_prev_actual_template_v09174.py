@@ -3,7 +3,8 @@
 When a target workbook is downloaded for month M:
 - keep already-saved goals for M unchanged;
 - for products without a saved goal, use actual performance from M-1;
-- prefer confirmed actuals per product, falling back to provisional actuals;
+- prefer confirmed actuals per product, falling back to the same final provisional
+  calculation path used by the goal/performance screen;
 - leave products with no previous-month activity blank.
 
 This changes only the downloaded template defaults. It does not write goals until
@@ -43,6 +44,15 @@ def _fill_from_metrics(row, metrics):
     row["매출이익"] = profit
 
 
+def _previous_provisional(upload_module, core, db, month, base, old):
+    """Use the same final provisional calculation as the visible goal table."""
+    try:
+        status = upload_module.importlib.import_module("goal_data_status_v0985")
+        return status._fresh_provisional(core, db, month, base, old)
+    except Exception:
+        return old._provisional_details(core, db, month, base)
+
+
 def apply(upload_module):
     if upload_module is None or getattr(upload_module, "_rg_goal_prev_actual_v09174_applied", False):
         return upload_module
@@ -63,7 +73,7 @@ def apply(upload_module):
         } if current_goals is not None and not current_goals.empty else set()
 
         prev_month = base._add_month(month, -1)
-        provisional = old._provisional_details(core, db, prev_month, base)
+        provisional = _previous_provisional(upload_module, core, db, prev_month, base, old)
         confirmed = old._confirmed_details(core, db, prev_month, provisional, base)
 
         # Map the option IDs in the target workbook back to the managed product IDs.
@@ -84,7 +94,7 @@ def apply(upload_module):
                 continue
 
             # Confirmed month-end numbers are preferred. If a product has no
-            # confirmed row, use the provisional actuals available for that month.
+            # confirmed row, use the final provisional actuals for that month.
             metrics = confirmed.get(pid) if confirmed and pid in confirmed else provisional.get(pid)
             if not metrics:
                 continue
