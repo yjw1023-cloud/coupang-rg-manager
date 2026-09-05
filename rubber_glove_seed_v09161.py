@@ -1,8 +1,8 @@
-"""Compatibility entrypoint for v0.9.167.
+"""Compatibility entrypoint for v0.9.168.
 
 Runs the v0.9.163 rubber-glove registration logic, v0.9.164 BUY->JDS code
-normalization, v0.9.166 purchase option/detail name repair, and the v0.9.167
-deterministic rubber-glove BOM repair.
+normalization, v0.9.166 purchase option/detail name repair, and the strengthened
+v0.9.168 deterministic rubber-glove BOM repair.
 
 Modules that can be replaced by the hot updater are explicitly reloaded because
 Streamlit may keep previous module objects alive after files change on disk.
