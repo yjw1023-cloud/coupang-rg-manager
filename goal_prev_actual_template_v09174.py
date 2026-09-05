@@ -5,14 +5,12 @@ When a target workbook is downloaded for month M:
 - for products without a saved goal, use actual performance from M-1;
 - prefer confirmed actual amounts/costs per product, falling back to the same final
   provisional calculation path used by the goal/performance screen;
-- v0.9.178 reads previous-month sold quantity directly from
-  sales_quantity_v0965.month_counts() by option ID. This bypasses the intermediate
-  P&L dataframe, where a missing `판매수량` column could leave quantity at zero even
-  while revenue/cost figures were populated;
-- direct monthly quantity uses the existing sales_quantity module's authoritative
-  source selection (Coupang order API when available, otherwise sales_stats);
-- if no direct monthly count exists for an option, confirmed/provisional quantity is
-  retained only as a fallback;
+- v0.9.179 reads previous-month sold quantity from the imported sales_stats data
+  by option ID through sales_quantity_v0965.month_counts();
+- Coupang order/return API tables are not used for this quantity, even if legacy API
+  rows still remain in the database;
+- if no monthly sales_stats count exists for an option, confirmed/provisional quantity
+  is retained only as a fallback;
 - leave products with no previous-month activity blank.
 
 This changes only the downloaded template defaults. It does not write goals until
@@ -116,7 +114,7 @@ def _confirmed_qty_by_pid(core, db, month, base, old):
 
 
 def _sales_qty_by_oid(upload_module, core, db, month, base):
-    """Authoritative monthly gross sold quantity keyed by normalized option ID."""
+    """Previous-month gross sold quantity from imported sales_stats by option ID."""
     try:
         qty_mod = upload_module.importlib.import_module("sales_quantity_v0965")
         counts, _meta = qty_mod.month_counts(core, db, month)
@@ -182,8 +180,8 @@ def apply(upload_module):
             if not metrics:
                 continue
 
-            # v0.9.178: use the direct monthly sales-count source first. Presence of
-            # the key matters: a genuine direct count of zero is still authoritative.
+            # Use imported previous-month sales_stats first. Presence of the key
+            # matters: a genuine sales count of zero is still authoritative.
             if oid in direct_sales_qty:
                 qty = direct_sales_qty[oid]
             else:
