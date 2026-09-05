@@ -1,9 +1,11 @@
-"""v0.9.167 deterministic rubber-glove BOM repair.
+"""v0.9.168 deterministic rubber-glove BOM repair.
 
-The original v0.9.163 seed could leave BOMs pending after the newly-created raw
-items were renumbered away from JDS0020~JDS0022 while their S/M/L option text was
-not visible in products.name.  This repair resolves the three raw products using
-all durable signals available, then writes all three 5-unit BOMs atomically.
+The original repair could still leave the three glove BOMs pending when the raw
+item names no longer contained '고무장갑'.  This version keeps the durable
+mapping/name paths but adds a final strict fingerprint across ALL active raw
+products using the actual 자체창고 stock + unit-cost combination from the
+confirmed purchase.  All three components must resolve uniquely and to distinct
+product IDs before any BOM is written.
 
 No inventory quantity is created, moved, or adjusted.
 """
@@ -12,7 +14,7 @@ from __future__ import annotations
 import math
 import re
 
-RULE = "v0.9.167-rubber-glove-bom-repair"
+RULE = "v0.9.168-rubber-glove-bom-strict-fingerprint"
 
 TARGETS = {
     "S": {
@@ -99,6 +101,8 @@ def _existing_bom_component(con, parent_id, size):
            WHERE b.parent_product_id=? AND p.active=1""",
         (int(parent_id),),
     ).fetchall()
+    if len(rows) == 1:
+        return rows[0]
     glove_rows = [r for r in rows if "고무장갑" in _norm(r["name"])]
     if len(glove_rows) == 1:
         return glove_rows[0]
@@ -128,6 +132,29 @@ def _mapped_component(con, size):
     return matches[0] if len(ids) == 1 else None
 
 
+def _purchase_line_component(con, size):
+    if not _table_exists(con, "purchase_lines"):
+        return None
+    cols = _columns(con, "purchase_lines")
+    if not {"product_id", "source_name", "source_detail"}.issubset(cols):
+        return None
+    rows = con.execute(
+        """SELECT DISTINCT p.id,p.item_code,p.name,p.unit_cost,p.item_type,p.option_id,
+                          l.source_name,l.source_detail
+           FROM purchase_lines l
+           JOIN products p ON p.id=l.product_id
+           WHERE p.active=1 AND p.option_id IS NULL
+             AND l.product_id IS NOT NULL"""
+    ).fetchall()
+    matches = [
+        r for r in rows
+        if "고무장갑" in _norm(r["source_name"])
+        and _size_match(r["source_detail"], size)
+    ]
+    ids = {int(r["id"]) for r in matches}
+    return matches[0] if len(ids) == 1 else None
+
+
 def _named_component(con, size):
     rows = con.execute(
         """SELECT id,item_code,name,unit_cost,item_type,option_id
@@ -141,46 +168,53 @@ def _named_component(con, size):
     return matches[0] if len(ids) == 1 else None
 
 
-def _fingerprint_component(con, size):
+def _strict_stock_cost_component(con, size):
+    """Final safe fallback: exact own-stock plus near-exact cost, name independent."""
     target = TARGETS[size]
     rows = con.execute(
         """SELECT id,item_code,name,unit_cost,item_type,option_id
            FROM products
            WHERE active=1 AND option_id IS NULL
-             AND name LIKE '%고무장갑%'
            ORDER BY id DESC"""
     ).fetchall()
-    if not rows:
-        return None
+    matches = []
+    for r in rows:
+        stock = _own_stock(con, int(r["id"]))
+        cost = _num(r["unit_cost"])
+        if abs(stock - float(target["expected_own_stock"])) <= 0.01 and abs(cost - float(target["expected_unit_cost"])) <= 3.0:
+            matches.append(r)
+    ids = {int(r["id"]) for r in matches}
+    if len(ids) == 1:
+        return matches[0]
+    return None
 
+
+def _fingerprint_component(con, size):
+    """Broader ranked fallback after the strict exact-stock match."""
+    target = TARGETS[size]
+    rows = con.execute(
+        """SELECT id,item_code,name,unit_cost,item_type,option_id
+           FROM products
+           WHERE active=1 AND option_id IS NULL
+           ORDER BY id DESC"""
+    ).fetchall()
     scored = []
     for r in rows:
         cost = _num(r["unit_cost"])
         stock = _own_stock(con, int(r["id"]))
         cost_diff = abs(cost - float(target["expected_unit_cost"]))
         stock_diff = abs(stock - float(target["expected_own_stock"]))
-        # Current unconsumed purchase stock is the strongest signal; unit cost is
-        # the second signal.  Reject clearly unrelated glove products.
-        if cost_diff > 8.0:
+        if cost_diff > 8.0 or stock_diff > 1.0:
             continue
-        score = stock_diff * 10.0 + cost_diff
+        score = stock_diff * 100.0 + cost_diff
         scored.append((score, stock_diff, cost_diff, int(r["id"]), r))
-
     if not scored:
         return None
-    scored.sort(key=lambda x: (x[0], x[3]))
+    scored.sort(key=lambda x: (x[0], -x[3]))
     best = scored[0]
-
-    # Exact/near-exact stock from this purchase is decisive.
     if best[1] <= 0.01 and best[2] <= 8.0:
-        return best[4]
-
-    # If stock has subsequently been adjusted, accept only a uniquely close cost.
-    close = [x for x in scored if x[2] <= 1.25]
-    if len(close) == 1:
-        return close[0][4]
-    if len(close) >= 2 and close[0][2] + 0.25 < close[1][2]:
-        return close[0][4]
+        if len(scored) == 1 or best[0] + 0.25 < scored[1][0]:
+            return best[4]
     return None
 
 
@@ -188,7 +222,9 @@ def _resolve_component(con, parent_id, size):
     for resolver in (
         lambda: _existing_bom_component(con, parent_id, size),
         lambda: _mapped_component(con, size),
+        lambda: _purchase_line_component(con, size),
         lambda: _named_component(con, size),
+        lambda: _strict_stock_cost_component(con, size),
         lambda: _fingerprint_component(con, size),
     ):
         row = resolver()
@@ -215,6 +251,43 @@ def _upsert_bom(con, parent_id, component_id, qty_per):
         )
 
 
+def _ensure_audit_table(con):
+    con.execute(
+        """CREATE TABLE IF NOT EXISTS rubber_glove_bom_repair_audit(
+               id INTEGER PRIMARY KEY AUTOINCREMENT,
+               rule TEXT NOT NULL,
+               size TEXT NOT NULL,
+               status TEXT NOT NULL,
+               parent_product_id INTEGER,
+               component_product_id INTEGER,
+               component_code TEXT,
+               component_name TEXT,
+               unit_cost REAL,
+               own_stock REAL,
+               created_at TEXT NOT NULL
+           )"""
+    )
+
+
+def _audit(core, con, size, status, parent=None, component=None):
+    _ensure_audit_table(con)
+    con.execute(
+        """INSERT INTO rubber_glove_bom_repair_audit
+           (rule,size,status,parent_product_id,component_product_id,component_code,component_name,unit_cost,own_stock,created_at)
+           VALUES(?,?,?,?,?,?,?,?,?,?)""",
+        (
+            RULE, size, status,
+            int(parent["id"]) if parent is not None else None,
+            int(component["id"]) if component is not None else None,
+            _norm(component["item_code"]) if component is not None else "",
+            _norm(component["name"]) if component is not None else "",
+            _num(component["unit_cost"]) if component is not None else 0.0,
+            _own_stock(con, int(component["id"])) if component is not None else 0.0,
+            core.now_iso(),
+        ),
+    )
+
+
 def apply(core, db_path=None):
     db = db_path or core.DEFAULT_DB
     core.init_db(db)
@@ -236,10 +309,12 @@ def apply(core, db_path=None):
         for size, target in TARGETS.items():
             parent = _parent(con, target["option_id"])
             if parent is None:
+                _audit(core, con, size, "parent_missing")
                 result["items"].append({"size": size, "status": "parent_missing"})
                 continue
             component = _resolve_component(con, int(parent["id"]), size)
             if component is None:
+                _audit(core, con, size, "component_unresolved", parent=parent)
                 result["items"].append(
                     {"size": size, "status": "component_unresolved", "parent_id": int(parent["id"])}
                 )
@@ -248,10 +323,15 @@ def apply(core, db_path=None):
 
         # Safety: never partially or ambiguously rewrite the three glove BOMs.
         if len(resolved) != 3:
+            con.commit()
             result["status"] = "pending_not_all_three_resolved"
             return result
         component_ids = [int(resolved[s][1]["id"]) for s in ("S", "M", "L")]
         if len(set(component_ids)) != 3:
+            for size in ("S", "M", "L"):
+                parent, component = resolved[size]
+                _audit(core, con, size, "components_not_distinct", parent=parent, component=component)
+            con.commit()
             result["status"] = "pending_components_not_distinct"
             return result
 
@@ -262,21 +342,19 @@ def apply(core, db_path=None):
             component_id = int(component["id"])
             _upsert_bom(con, parent_id, component_id, TARGETS[size]["qty_per"])
 
-            # If the option was lost from the visible raw-item name, add only the
-            # minimal size marker.  Do not overwrite any deliberately renamed name.
             current = con.execute(
                 "SELECT item_code,name,unit_cost FROM products WHERE id=?", (component_id,)
             ).fetchone()
             old_name = _norm(current["name"])
-            if old_name == "고무장갑":
-                new_name = f"고무장갑 [{size}]"
+            new_name = old_name
+            if "고무장갑" in old_name and not _size_match(old_name, size):
+                new_name = f"{old_name} [{size}]"
                 con.execute(
                     "UPDATE products SET name=?,updated_at=? WHERE id=?",
                     (new_name, core.now_iso(), component_id),
                 )
-            else:
-                new_name = old_name
 
+            _audit(core, con, size, "bom_linked", parent=parent, component=component)
             changes.append(
                 {
                     "size": size,
