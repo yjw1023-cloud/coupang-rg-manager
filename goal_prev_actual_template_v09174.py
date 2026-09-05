@@ -1,20 +1,17 @@
 """Previous-month actual prefill for the target Excel workbook.
 
-When a target workbook is downloaded for month M:
-- keep already-saved goals for M unchanged;
-- for products without a saved goal, use actual performance from M-1;
-- prefer confirmed actual amounts/costs per product, falling back to the same final
-  provisional calculation path used by the goal/performance screen;
-- v0.9.179 reads previous-month sold quantity from the imported sales_stats data
-  by option ID through sales_quantity_v0965.month_counts();
-- Coupang order/return API tables are not used for this quantity, even if legacy API
-  rows still remain in the database;
-- if no monthly sales_stats count exists for an option, confirmed/provisional quantity
-  is retained only as a fallback;
-- leave products with no previous-month activity blank.
+v0.9.180 policy:
+- downloading target month M always starts from actual performance of M-1;
+- existing saved goals for M do NOT block this prefill; the workbook is a fresh
+  previous-month baseline that the operator can edit and upload as the new target;
+- confirmed previous-month amounts/costs are preferred, with provisional amounts
+  used only when confirmed details are unavailable;
+- sold quantity is read from imported sales_stats through sales_quantity_v0965;
+- the sales_quantity module is force-reloaded on every workbook generation so an
+  in-app update cannot keep an old cached order-API quantity implementation alive;
+- legacy Coupang order/return API tables are not used for the target workbook.
 
-This changes only the downloaded template defaults. It does not write goals until
-an operator uploads the edited workbook and presses the save button.
+Downloading the workbook never writes goals. Goals change only after upload/save.
 """
 from __future__ import annotations
 
@@ -51,7 +48,6 @@ def _fill_from_metrics(row, metrics):
 
 
 def _previous_provisional(upload_module, core, db, month, base, old):
-    """Use the same final provisional calculation as the visible goal table."""
     try:
         status = upload_module.importlib.import_module("goal_data_status_v0985")
         return status._fresh_provisional(core, db, month, base, old)
@@ -60,7 +56,7 @@ def _previous_provisional(upload_module, core, db, month, base, old):
 
 
 def _confirmed_qty_by_pid(core, db, month, base, old):
-    """Fallback quantity directly from confirmed P&L when such a column exists."""
+    """Last-resort fallback quantity from confirmed P&L if such a column exists."""
     try:
         mdf, _meta = core.confirmed_monthly_pnl(month)
     except Exception:
@@ -117,6 +113,8 @@ def _sales_qty_by_oid(upload_module, core, db, month, base):
     """Previous-month gross sold quantity from imported sales_stats by option ID."""
     try:
         qty_mod = upload_module.importlib.import_module("sales_quantity_v0965")
+        # Critical for in-app updates: do not keep the pre-v0.9.179 module cached.
+        qty_mod = upload_module.importlib.reload(qty_mod)
         counts, _meta = qty_mod.month_counts(core, db, month)
     except Exception:
         return {}
@@ -124,9 +122,8 @@ def _sales_qty_by_oid(upload_module, core, db, month, base):
     out = {}
     for raw_oid, info in (counts or {}).items():
         oid = str(base._oid(raw_oid) or "")
-        if not oid:
-            continue
-        out[oid] = _num((info or {}).get("sales_qty"))
+        if oid:
+            out[oid] = _num((info or {}).get("sales_qty"))
     return out
 
 
@@ -141,21 +138,12 @@ def apply(upload_module):
         if df is None or df.empty:
             return df
 
-        # Existing goals for the selected target month always win. This prevents
-        # a later download from silently replacing targets the operator already saved.
-        current_goals = old._detail_goals(core, db, month, base)
-        goal_pids = {
-            int(r["product_id"])
-            for r in current_goals.to_dict("records")
-        } if current_goals is not None and not current_goals.empty else set()
-
         prev_month = base._add_month(month, -1)
         provisional = _previous_provisional(upload_module, core, db, prev_month, base, old)
         confirmed = old._confirmed_details(core, db, prev_month, provisional, base)
         confirmed_qty = _confirmed_qty_by_pid(core, db, prev_month, base, old)
         direct_sales_qty = _sales_qty_by_oid(upload_module, core, db, prev_month, base)
 
-        # Map the option IDs in the target workbook back to the managed product IDs.
         scope = upload_module.importlib.import_module("goal_scope_v0994")
         products = scope.managed_products(core, db, base)
         oid_to_pid = {}
@@ -169,9 +157,11 @@ def apply(upload_module):
         for row in records:
             oid = str(base._oid(row.get("옵션ID")) or "")
             pid = oid_to_pid.get(oid)
-            if pid is None or pid in goal_pids:
+            if pid is None:
                 continue
 
+            # Always replace the downloaded row with previous-month actuals.
+            # Existing current-month targets are intentionally not preserved here.
             if confirmed and pid in confirmed:
                 metrics = dict(confirmed[pid])
             else:
@@ -180,8 +170,6 @@ def apply(upload_module):
             if not metrics:
                 continue
 
-            # Use imported previous-month sales_stats first. Presence of the key
-            # matters: a genuine sales count of zero is still authoritative.
             if oid in direct_sales_qty:
                 qty = direct_sales_qty[oid]
             else:
@@ -189,7 +177,6 @@ def apply(upload_module):
                 if qty is None:
                     qty = _num((provisional.get(pid) or {}).get("qty"))
             metrics["qty"] = _num(qty)
-
             _fill_from_metrics(row, metrics)
 
         return upload_module.pd.DataFrame(records, columns=list(df.columns))
