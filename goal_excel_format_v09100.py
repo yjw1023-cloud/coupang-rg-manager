@@ -3,8 +3,10 @@
 - Remove trailing decimal points from numeric cells by using integer display format.
 - Write Excel-only helper unit columns (G/I/M) as pre-calculated whole-won numbers,
   not formulas.
-- v0.9.176: always apply the previous-month actual prefill patch to the freshly
+- v0.9.176 always applies the previous-month actual prefill patch to the freshly
   reloaded goal_excel_upload module before generating the workbook.
+- v0.9.177 reloads that patch module first so an in-app update immediately uses
+  the confirmed-quantity fix without requiring a full Python process restart.
 """
 from __future__ import annotations
 
@@ -42,6 +44,7 @@ def apply(upload_module):
     # Apply the previous-month actual wrapper to that fresh module here, on the
     # exact export path, so the feature cannot exist as an unreferenced patch.
     prev = importlib.import_module("goal_prev_actual_template_v09174")
+    prev = importlib.reload(prev)
     prev.apply(upload_module)
 
     if getattr(upload_module, "_rg_goal_excel_format_v09100_applied", False):
