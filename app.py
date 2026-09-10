@@ -29,6 +29,7 @@ for _rg_mod in (
     "rubber_glove_seed_v09161",
     "coupang_api_sync_v09140",
     "goal_excel_upload_v0984",
+    "sales_analysis_v09186",
 ):
     sys.modules.pop(_rg_mod, None)
 importlib.invalidate_caches()
@@ -219,6 +220,9 @@ search_ui_v096.apply()
 pnl_views_v0912 = _original_import_module("pnl_views_v0912")
 pnl_views_v0912.apply(core)
 
+# v0.9.186 dedicated item sales analysis by paid date.
+sales_analysis_v09186 = _original_import_module("sales_analysis_v09186")
+
 # v0.9.8 sales P&L presentation cleanup.
 sales_pnl_ui_v098 = _original_import_module("sales_pnl_ui_v098")
 sales_pnl_ui_v098.apply()
@@ -294,7 +298,7 @@ _ensure_loader()
 source = LOADER.read_text(encoding="utf-8")
 source = source.replace(
     'st.sidebar.caption("v0.7 · legacy ERP import")',
-    'st.sidebar.caption("v0.9.161 · 고무장갑 완제품/BOM 등록")',
+    'st.sidebar.caption("v0.9.186 · 품목별 판매현황")',
 )
 loader_exec = 'exec(compile(source, str(BASE_APP), "exec"), globals(), globals())'
 if loader_exec not in source:
@@ -307,6 +311,7 @@ source = source.replace(
     'source = return_management_v093.patch_source(source)\n'
     'source = production_batch_v095.patch_source(source)\n'
     'source = pnl_views_v0912.patch_source(source)\n'
+    'source = sales_analysis_v09186.patch_source(source)\n'
     'source = provisional_pnl_ui_v0913.patch_source(source)\n'
     'source = coupang_api_sync_v09140.patch_source(source)\n'
     'source = pnl_month_default_v0915.patch_source(source)\n' + loader_exec,
@@ -322,6 +327,7 @@ globals()["return_management_v093"] = return_management_v093
 globals()["production_batch_v095"] = production_batch_v095
 globals()["search_ui_v096"] = search_ui_v096
 globals()["pnl_views_v0912"] = pnl_views_v0912
+globals()["sales_analysis_v09186"] = sales_analysis_v09186
 globals()["sales_pnl_ui_v098"] = sales_pnl_ui_v098
 globals()["return_discount_v099"] = return_discount_v099
 globals()["return_sale_match_v0944"] = return_sale_match_v0944
