@@ -5,10 +5,71 @@ filename period detection, v0.9.103 canonical advertising-data sync/upload,
 v0.9.95 user-facing product visibility guard, v0.9.106 dormant-stock
 production support, v0.9.108 safe advertising deletion, v0.9.109
 advertising source audit/orphan cleanup, v0.9.110 exact one-time ad cleanup,
-and v0.9.133 user-requested Coupang product/BOM registration active from startup.
+and optional-feature startup safety.
 """
 import importlib
+import importlib.abc
+import importlib.machinery
+import importlib.util
 import sys
+
+
+# v0.9.190: optional feature modules must never prevent the ERP from starting.
+# If the real sales-analysis file is absent, Python's normal PathFinder gets the
+# first chance to load it. Only when no real file exists do we provide a small
+# safe module that keeps dashboard/data-management/update screens usable.
+class _RgOptionalFeatureFinder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
+    _NAMES = {"sales_analysis_v09186"}
+
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname not in self._NAMES:
+            return None
+        real_spec = importlib.machinery.PathFinder.find_spec(fullname, path)
+        if real_spec is not None:
+            return None
+        return importlib.util.spec_from_loader(fullname, self)
+
+    def create_module(self, spec):
+        return None
+
+    def exec_module(self, module):
+        if module.__name__ != "sales_analysis_v09186":
+            return
+        module.PAGE_LABEL = "📊  판매분석"
+        module._rg_optional_feature_stub = True
+
+        def render_page(st_obj, pd_obj, core, db_path=None):
+            st_obj.error(
+                "판매분석 기능 파일이 누락되었습니다. ERP 자체는 정상 사용할 수 있습니다. "
+                "데이터·관리의 프로그램 업데이트에서 최신 버전으로 복구해 주세요."
+            )
+
+        def patch_source(source: str) -> str:
+            label = module.PAGE_LABEL
+            if f'"{label}",' not in source:
+                anchor = '"📈  잠정손익",'
+                if anchor in source:
+                    source = source.replace(anchor, f'"{label}",\n        ' + anchor, 1)
+            marker = '# ------------------------------\n# Inventory\n# ------------------------------\nelif page == "📦  재고관리":\n'
+            handler = f'elif page == "{label}":'
+            if marker in source and handler not in source:
+                block = (
+                    '# ------------------------------\n'
+                    '# Sales analysis (safe missing-module page)\n'
+                    '# ------------------------------\n'
+                    f'{handler}\n'
+                    '    sales_analysis_v09186.render_page(st, pd, core)\n\n\n'
+                )
+                source = source.replace(marker, block + marker, 1)
+            return source
+
+        module.render_page = render_page
+        module.patch_source = patch_source
+
+
+if not any(isinstance(x, _RgOptionalFeatureFinder) for x in sys.meta_path):
+    sys.meta_path.insert(0, _RgOptionalFeatureFinder())
+
 
 _original_import_module = importlib.import_module
 
@@ -113,9 +174,6 @@ except Exception as exc:
     print(f"RG Manager v0.9.109 ad source audit failed: {exc}", file=sys.stderr)
 
 # v0.9.110: user explicitly authorized deletion of exactly one stale report.
-# Remove that exact 2026-08-01~2026-08-11 file once from both canonical and
-# generic history, then record a DB migration flag so a future intentional
-# re-upload is never deleted again.
 try:
     _core_v09110 = _original_import_module("core")
     _ad_force_v09110 = _original_import_module("ad_force_cleanup_v09110")
@@ -135,10 +193,6 @@ except Exception as exc:
     print(f"RG Manager v0.9.95 product visibility startup failed: {exc}", file=sys.stderr)
 
 # v0.9.133: register the ten user-supplied Coupang finished products and exact BOMs.
-# Normal base items reuse an existing own/raw item when possible, otherwise receive
-# the first unused JDS#### code. The stainless 2-pack intentionally reuses existing
-# own-warehouse dormant stock at 2 old units per 1 new finished unit; it never
-# creates a duplicate JDS component for that product.
 try:
     _core_v09133 = _original_import_module("core")
     _seed_v09133 = _original_import_module("requested_product_seed_v09133")
@@ -146,9 +200,7 @@ try:
 except Exception as exc:
     print(f"RG Manager v0.9.133 requested product/BOM seed failed: {exc}", file=sys.stderr)
 
-# v0.9.161: register the three user-confirmed rubber-glove RG options and exact
-# JDS0020/JDS0021/JDS0022 BOMs. Commercial defaults are fallback-only; actual
-# sales/settlement/API facts override them when available.
+# v0.9.161: register the three user-confirmed rubber-glove RG options and exact BOMs.
 try:
     _core_v09161 = _original_import_module("core")
     _glove_seed_v09161 = _original_import_module("rubber_glove_seed_v09161")
