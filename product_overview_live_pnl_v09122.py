@@ -11,6 +11,10 @@ builder that follows the monthly provisional P&L pipeline:
 
 For multi-month periods the same live calculation is performed month by month and
 only source snapshots overlapping the requested range are included.
+
+v0.9.187 also repairs the product-overview sales-history display when legacy
+sales_stats rows contain a valid net quantity but a zero/invalid gross quantity.
+The repair is presentation-only: it never mutates imported sales data.
 """
 from __future__ import annotations
 
@@ -252,6 +256,66 @@ def _live_provisional_history(core, db, option_id: str, start: date | None, end:
     return out.sort_values(["기간시작", "기간종료"], ascending=[False, False], kind="stable")
 
 
+def _repair_sales_history_result(result):
+    """Repair impossible gross/net combinations for the overview display only.
+
+    Some legacy/imported sales_stats rows have net_qty populated correctly while
+    their gross sales column exists but is stored as zero. The base overview sees
+    the column and trusts zero, which produces '판매수량 0개' beside valid revenue.
+    Reconstruct gross only when the stored value is logically impossible.
+    """
+    try:
+        sales, meta = result
+    except Exception:
+        return result
+    if sales is None or sales.empty:
+        return sales, meta
+    required = {"판매수량", "순판매수량"}
+    if not required.issubset(sales.columns):
+        return sales, meta
+
+    out = sales.copy()
+    gross = pd.to_numeric(out["판매수량"], errors="coerce").fillna(0.0)
+    net = pd.to_numeric(out["순판매수량"], errors="coerce").fillna(0.0)
+    if "반품신호" in out.columns:
+        signal = pd.to_numeric(out["반품신호"], errors="coerce").fillna(0.0).abs()
+    elif "취소수량" in out.columns:
+        signal = pd.to_numeric(out["취소수량"], errors="coerce").fillna(0.0).abs()
+    else:
+        signal = pd.Series(0.0, index=out.index)
+
+    derived = net.clip(lower=0.0) + signal.clip(lower=0.0)
+    bad_zero = gross.le(0.0) & derived.gt(0.0)
+    bad_less_than_net = net.gt(0.0) & gross.lt(net - 1e-9)
+    repair_mask = bad_zero | bad_less_than_net
+    if repair_mask.any():
+        repaired = derived.where(derived.gt(0.0), net.clip(lower=0.0))
+        out.loc[repair_mask, "판매수량"] = repaired.loc[repair_mask]
+
+        if "반품률" in out.columns:
+            new_gross = pd.to_numeric(out["판매수량"], errors="coerce").fillna(0.0)
+            out["반품률"] = 0.0
+            positive = new_gross.gt(0.0)
+            out.loc[positive, "반품률"] = signal.loc[positive] / new_gross.loc[positive] * 100.0
+
+    return out, meta
+
+
+def _install_sales_history_fix(base):
+    original = getattr(base, "_rg_sales_history_original_v09187", None)
+    if original is None:
+        original = getattr(base, "_sales_history", None)
+        if original is None:
+            return
+        base._rg_sales_history_original_v09187 = original
+
+    def fixed_sales_history(core, db, product_id, start, end):
+        return _repair_sales_history_result(original(core, db, product_id, start, end))
+
+    base._sales_history = fixed_sales_history
+    base._rg_sales_history_fix_v09187_applied = True
+
+
 def apply(product_overview_module):
     global _APPLIED
     if _APPLIED or getattr(product_overview_module, "_rg_live_pnl_v09122_applied", False):
@@ -260,6 +324,7 @@ def apply(product_overview_module):
     if base is None:
         raise RuntimeError("상품 통합현황 기반 모듈을 찾지 못했습니다.")
     base._provisional_history = _live_provisional_history
+    _install_sales_history_fix(base)
     product_overview_module._rg_live_pnl_v09122_applied = True
     _APPLIED = True
     return product_overview_module
