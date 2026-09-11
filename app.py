@@ -1,7 +1,9 @@
 from pathlib import Path
+import builtins
 import hashlib
 import importlib
 import sys
+import threading
 import urllib.request
 
 import core
@@ -10,29 +12,47 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+# v0.9.194: Streamlit can briefly run an old and a new script thread at the same
+# time during rerun/update. sys.modules is process-global, so one rerun must never
+# pop a module while another rerun is still importing it; that produces importlib
+# KeyError(name) after the module body has already executed. Keep one process-wide
+# re-entrant lock in builtins and use it for both cache eviction and app-level
+# imports. Also never evict a module whose import spec is currently initializing.
+if not hasattr(builtins, "_rg_import_rerun_lock_v09194"):
+    builtins._rg_import_rerun_lock_v09194 = threading.RLock()
+_RG_IMPORT_LOCK = builtins._rg_import_rerun_lock_v09194
+
 # v0.9.62: Streamlit reruns reuse Python's module cache. The updater replaces
 # files on disk, but without clearing selected modules an already-running ERP can
 # keep executing the previous implementation until the whole process is restarted.
-for _rg_mod in (
-    "pnl_month_default_v0915",
-    "pnl_month_v0959",
-    "pnl_month_v0960",
-    "pnl_month_v0961",
-    "ad_force_cleanup_v09111",
-    "recent_input_unify_v09112",
-    "return_discount_v099",
-    "return_sale_match_v0944",
-    "return_sale_alias_v09157",
-    "purchase_match_ui_v091",
-    "purchase_new_item_persist_v09136",
-    "requested_product_seed_v09133",
-    "rubber_glove_seed_v09161",
-    "coupang_api_sync_v09140",
-    "goal_excel_upload_v0984",
-    "sales_analysis_v09186",
-):
-    sys.modules.pop(_rg_mod, None)
-importlib.invalidate_caches()
+with _RG_IMPORT_LOCK:
+    for _rg_mod in (
+        "pnl_month_default_v0915",
+        "pnl_month_v0959",
+        "pnl_month_v0960",
+        "pnl_month_v0961",
+        "ad_force_cleanup_v09111",
+        "recent_input_unify_v09112",
+        "return_discount_v099",
+        "return_sale_match_v0944",
+        "return_sale_alias_v09157",
+        "purchase_match_ui_v091",
+        "purchase_new_item_persist_v09136",
+        "requested_product_seed_v09133",
+        "rubber_glove_seed_v09161",
+        "coupang_api_sync_v09140",
+        "goal_excel_upload_v0984",
+        "sales_analysis_v09186",
+        "rg_barcode_print_v09193",
+    ):
+        _loaded = sys.modules.get(_rg_mod)
+        if _loaded is None:
+            continue
+        _spec = getattr(_loaded, "__spec__", None)
+        if bool(getattr(_spec, "_initializing", False)):
+            continue
+        sys.modules.pop(_rg_mod, None)
+    importlib.invalidate_caches()
 
 # v0.9.136: never build the app import hook on top of a previous Streamlit-rerun
 # copy of itself. The old app assigned `_original_import_module = importlib.import_module`
@@ -45,7 +65,8 @@ def _plain_import_module(name, package=None):
         if not package:
             raise TypeError("the 'package' argument is required to perform a relative import")
         target = importlib.util.resolve_name(target, package)
-    return __import__(target, fromlist=["*"])
+    with _RG_IMPORT_LOCK:
+        return __import__(target, fromlist=["*"])
 
 
 _original_import_module = _plain_import_module
@@ -303,7 +324,7 @@ _ensure_loader()
 source = LOADER.read_text(encoding="utf-8")
 source = source.replace(
     'st.sidebar.caption("v0.7 · legacy ERP import")',
-    'st.sidebar.caption("v0.9.193 · RG 입고 바코드")',
+    'st.sidebar.caption("v0.9.194 · 모듈 로딩 안정화")',
 )
 loader_exec = 'exec(compile(source, str(BASE_APP), "exec"), globals(), globals())'
 if loader_exec not in source:
