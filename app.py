@@ -201,6 +201,11 @@ production_batch_v095 = _original_import_module("production_batch_v095")
 production_bom_link_v0940 = _original_import_module("production_bom_link_v0940")
 production_bom_link_v0940.apply(core, production_batch_v095)
 
+# v0.9.193: reuse the same RG inbound workbook rows for exact 50x30 mm barcode
+# labels. Barcode API lookup remains manual and values are persisted by option ID.
+rg_barcode_print_v09193 = _original_import_module("rg_barcode_print_v09193")
+rg_barcode_print_v09193.apply(core, production_batch_v095)
+
 # v0.9.106: an explicitly selected dormant-stock fill posts only the current
 # production shortage into 자체창고 at the raw material's registered ERP cost.
 production_dormant_stock_v09106 = _original_import_module("production_dormant_stock_v09106")
@@ -298,7 +303,7 @@ _ensure_loader()
 source = LOADER.read_text(encoding="utf-8")
 source = source.replace(
     'st.sidebar.caption("v0.7 · legacy ERP import")',
-    'st.sidebar.caption("v0.9.186 · 품목별 판매현황")',
+    'st.sidebar.caption("v0.9.193 · RG 입고 바코드")',
 )
 loader_exec = 'exec(compile(source, str(BASE_APP), "exec"), globals(), globals())'
 if loader_exec not in source:
@@ -325,6 +330,7 @@ globals()["purchase_history_v092"] = purchase_history_v092
 globals()["purchase_history_v094"] = purchase_history_v094
 globals()["return_management_v093"] = return_management_v093
 globals()["production_batch_v095"] = production_batch_v095
+globals()["rg_barcode_print_v09193"] = rg_barcode_print_v09193
 globals()["search_ui_v096"] = search_ui_v096
 globals()["pnl_views_v0912"] = pnl_views_v0912
 globals()["sales_analysis_v09186"] = sales_analysis_v09186
