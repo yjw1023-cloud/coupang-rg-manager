@@ -1,7 +1,8 @@
-"""Inventory/item-master presentation for RG Manager v0.9.137.
+"""Inventory/item-master presentation for RG Manager v0.9.195.
 
 - Keep warehouse tabs: all / own / Coupang RG / returns.
 - Hide internal CP- prefix from user-facing product codes.
+- Show most recently registered products first in Item Management and Inventory Management.
 - Item master shows basis cost plus source-specific cost history:
   * own/raw items: latest purchase cost + quantity-weighted average purchase cost
   * Coupang RG/finished items: latest production cost + quantity-weighted average production cost
@@ -181,6 +182,7 @@ def _cost_lookup() -> dict[str, dict[str, Any]]:
             rq = _num(s.get("production_qty"))
             ra = _num(s.get("production_amount"))
             out[code] = {
+                "registration_id": pid,
                 "basis_cost": _num(r["unit_cost"]),
                 "latest_purchase_cost": s.get("latest_purchase_cost"),
                 "average_purchase_cost": (pa / pq) if pq > 0 and pa > 0 else None,
@@ -267,6 +269,16 @@ def _enrich_view(df: pd.DataFrame) -> tuple[pd.DataFrame, bool]:
             + [c for c in out.columns if c not in preferred]
         ]
 
+    if not out.empty:
+        out["_등록순"] = out["품목코드"].map(
+            lambda x: fact(x, "registration_id") if fact(x, "registration_id") is not None else -1
+        )
+        out = (
+            out.sort_values("_등록순", ascending=False, kind="stable")
+            .drop(columns=["_등록순"])
+            .reset_index(drop=True)
+        )
+
     return out, item_master
 
 
@@ -301,7 +313,7 @@ def _tab_frame(df: pd.DataFrame, warehouse: str, item_master: bool) -> pd.DataFr
             * pd.to_numeric(out["기준원가"], errors="coerce").fillna(0)
         ).round().astype("Int64")
     if not out.empty:
-        out = out.sort_values(["상품명", "품목코드"], kind="stable").reset_index(drop=True)
+        out = out.reset_index(drop=True)
     return out
 
 
