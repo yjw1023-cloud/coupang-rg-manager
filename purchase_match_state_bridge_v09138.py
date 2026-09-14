@@ -1,25 +1,26 @@
-"""RG Manager v0.9.201 purchase matching state bridge.
+"""RG Manager v0.9.202 purchase matching state bridge.
 
-Fixes two purchase-confirmation state problems without changing purchase/inventory
+Fixes the purchase-confirmation screen without changing purchase/inventory
 business rules:
-1. The compact review table and the legacy hidden purchase engine must see the
-   same product ID before the legacy selectbox renders. Durable source mappings
-   and manual overrides are therefore pushed into the legacy widget first.
-2. Durable mappings can make the review layer repeatedly add/remove an equivalent
-   transient override. A stable rerun-signature guard suppresses only repeated
-   reruns whose effective override state is unchanged.
-
-The final purchase button remains controlled by the legacy purchase engine; this
-module only makes its hidden matching state agree with the visible review table.
+1. The compact review table and the legacy purchase engine see the same product
+   IDs before the legacy selectors are evaluated.
+2. Durable mappings no longer cause an identical rerun loop.
+3. Legacy per-item matching expanders are rendered into a disposable placeholder
+   and removed immediately, so they no longer leave a huge blank area above the
+   final confirmation section.
+4. If the operator has checked the final confirmation box and every Excel row has
+   an effective matched product, a stale legacy `disabled=True` flag is cleared on
+   the final purchase button. This is guarded by the same row-by-row mapping state;
+   unresolved/new-item sentinel rows can never be force-enabled.
 """
 from __future__ import annotations
 
 import hashlib
 from typing import Any
 
-_APPLIED_ATTR = "_rg_purchase_match_state_bridge_v09201_applied"
-_GUARD_ATTR = "_rg_purchase_review_rerun_guard_v09201_applied"
-_GUARD_STATE = "_rg_purchase_review_rerun_signature_v09201"
+_APPLIED_ATTR = "_rg_purchase_match_state_bridge_v09202_applied"
+_GUARD_ATTR = "_rg_purchase_review_rerun_guard_v09202_applied"
+_GUARD_STATE = "_rg_purchase_review_rerun_signature_v09202"
 
 
 def _closure_value(fn, name: str):
@@ -35,7 +36,6 @@ def _closure_value(fn, name: str):
 
 
 def _durable_pid(core_module, db_path, excel_rows, idx: int) -> int | None:
-    """Read the durable source-name/detail mapping if one exists."""
     try:
         src = next((r for r in excel_rows if int(r.get("index") or 0) == int(idx)), None)
         if not src:
@@ -70,10 +70,24 @@ def _target_pid(st_obj, base_module, core_module, db_path, context, idx: int) ->
             overrides = overrides_all.get(fp, {}) or {}
             value = overrides.get(str(int(idx)))
             if value is not None:
+                # New-item sentinels are intentionally non-numeric and unresolved.
                 return int(value)
         except Exception:
-            pass
+            return None
     return _durable_pid(core_module, db_path, context.get("excel_rows") or [], int(idx))
+
+
+def _effective_pid(st_obj, base_module, core_module, db_path, context, idx: int) -> int | None:
+    """Effective mapped product for final-confirmation validation."""
+    target = _target_pid(st_obj, base_module, core_module, db_path, context, idx)
+    if target is not None:
+        return int(target)
+    mr = (context.get("captured") or {}).get(str(int(idx)), {}) or {}
+    try:
+        current = mr.get("current_pid")
+        return int(current) if current is not None else None
+    except Exception:
+        return None
 
 
 def _preselect_legacy_widget(st_obj, base_module, core_module, db_path, context,
@@ -101,20 +115,18 @@ def _preselect_legacy_widget(st_obj, base_module, core_module, db_path, context,
         display = base_module._safe_format(fmt, opt)
         pid = base_module._extract_product_id(opt) or base_module._pid_from_display(display, products)
         if pid is not None and int(pid) == int(target_pid):
+            # Streamlit widget state must contain an actual option value whenever
+            # possible; primitive options can be copied directly.
             chosen = opt if base_module._primitive(opt) else int(pid)
             break
     if chosen is None:
         return target_pid
 
-    # Must happen BEFORE the original Streamlit selectbox is instantiated so the
-    # legacy business logic reads the same product as the visible compact table.
     try:
         st_obj.session_state[key] = chosen
     except Exception:
         pass
 
-    # Keep the compact cache aligned when the source came only from the durable
-    # source->product table after a restart/re-upload.
     fp = context.get("file_fp")
     if fp:
         try:
@@ -129,7 +141,6 @@ def _preselect_legacy_widget(st_obj, base_module, core_module, db_path, context,
 
 
 def _override_signature(st_obj, base_module, file_fp: str) -> str:
-    """Stable signature of the effective transient matching state after review."""
     try:
         all_overrides = st_obj.session_state.get(base_module._OVERRIDE_KEY, {}) or {}
         overrides = all_overrides.get(file_fp, {}) or {}
@@ -141,7 +152,6 @@ def _override_signature(st_obj, base_module, file_fp: str) -> str:
 
 
 def _install_review_rerun_guard(review_module, base_module):
-    """Suppress only a repeated review rerun with an identical matching signature."""
     if review_module is None or getattr(review_module, _GUARD_ATTR, False):
         return
     original_review = getattr(review_module, "_render_review_table", None)
@@ -158,9 +168,6 @@ def _install_review_rerun_guard(review_module, base_module):
             sig = _override_signature(st_obj, base_module, str(file_fp or ""))
             previous = str(st_obj.session_state.get(_GUARD_STATE, "") or "")
             if previous == sig:
-                # Durable mapping restoration may produce a raw add/remove change
-                # while the effective product choice is identical. Do not restart
-                # the whole page again for that same stable state.
                 return None
             st_obj.session_state[_GUARD_STATE] = sig
             return original_rerun(*args, **kwargs)
@@ -180,7 +187,6 @@ def _install_review_rerun_guard(review_module, base_module):
 
 
 def apply(purchase_module, core_module, base_module, review_module):
-    """Replace v0.9.0 presentation wrapper with pre-save bridge + rerun guard."""
     _install_review_rerun_guard(review_module, base_module)
 
     if purchase_module is None or getattr(purchase_module, _APPLIED_ATTR, False):
@@ -191,9 +197,6 @@ def apply(purchase_module, core_module, base_module, review_module):
         setattr(purchase_module, _APPLIED_ATTR, True)
         return purchase_module
 
-    # v0.9.0's wrapper closes over `original_render`, which is the purchase-batch
-    # wrapper around the actual legacy engine. Reuse exactly that object so no
-    # posting/business rule is duplicated.
     original_render = _closure_value(current_render, "original_render")
     if not callable(original_render):
         setattr(purchase_module, _APPLIED_ATTR, True)
@@ -224,19 +227,23 @@ def apply(purchase_module, core_module, base_module, review_module):
             "excel_rows": [],
             "file_name": "",
             "summary_rendered": False,
+            "final_confirmed": False,
         }
 
         original_file_uploader = st_obj.file_uploader
         original_expander = st_obj.expander
         original_selectbox = st_obj.selectbox
+        original_checkbox = st_obj.checkbox
+        original_button = st_obj.button
         original_section = kwargs.get("section")
 
         class _TrackedExpander:
-            def __init__(self, inner, idx, title, status):
+            def __init__(self, inner, idx, title, status, cleanup=None):
                 self._inner = inner
                 self._idx = idx
                 self._title = title
                 self._status = status
+                self._cleanup = cleanup
 
             def __enter__(self):
                 entered = self._inner.__enter__()
@@ -252,6 +259,11 @@ def apply(purchase_module, core_module, base_module, review_module):
                     return self._inner.__exit__(exc_type, exc, tb)
                 finally:
                     context["current_index"] = None
+                    if callable(self._cleanup):
+                        try:
+                            self._cleanup()
+                        except Exception:
+                            pass
 
             def __getattr__(self, name):
                 return getattr(self._inner, name)
@@ -272,8 +284,16 @@ def apply(purchase_module, core_module, base_module, review_module):
         def expander_wrapper(*e_args, **e_kwargs):
             label = str(e_args[0] if e_args else e_kwargs.get("label", ""))
             idx, title, status = base_module._parse_expander_label(label)
-            inner = original_expander(*e_args, **e_kwargs)
-            return _TrackedExpander(inner, idx, title, status)
+            if idx is None:
+                inner = original_expander(*e_args, **e_kwargs)
+                return _TrackedExpander(inner, idx, title, status)
+
+            # The legacy engine still needs to execute its per-row controls, but
+            # the user now works from the compact table. Render each old row into
+            # a disposable placeholder and delete it immediately after evaluation.
+            holder = st_obj.empty()
+            inner = holder.container()
+            return _TrackedExpander(inner, idx, title, status, cleanup=holder.empty)
 
         def selectbox_wrapper(*s_args, **s_kwargs):
             idx = context.get("current_index")
@@ -321,6 +341,33 @@ def apply(purchase_module, core_module, base_module, review_module):
             })
             return result
 
+        def checkbox_wrapper(*c_args, **c_kwargs):
+            result = original_checkbox(*c_args, **c_kwargs)
+            label = str(c_args[0] if c_args else c_kwargs.get("label", ""))
+            if ("W열" in label and "AB열" in label) or ("자체창고" in label and "확인" in label):
+                context["final_confirmed"] = bool(result)
+            return result
+
+        def button_wrapper(*b_args, **b_kwargs):
+            label = str(b_args[0] if b_args else b_kwargs.get("label", ""))
+            if "매입자료 확정" in label and bool(b_kwargs.get("disabled", False)):
+                excel_rows = context.get("excel_rows") or []
+                all_resolved = bool(excel_rows)
+                if all_resolved:
+                    for row in excel_rows:
+                        idx = int(row.get("index") or 0)
+                        if idx <= 0 or _effective_pid(
+                            st_obj, base_module, core_module, db_path, context, idx
+                        ) is None:
+                            all_resolved = False
+                            break
+                # Never bypass the operator's explicit final confirmation. Only a
+                # stale legacy match-disable flag is cleared.
+                if context.get("final_confirmed") and all_resolved:
+                    b_kwargs = dict(b_kwargs)
+                    b_kwargs["disabled"] = False
+            return original_button(*b_args, **b_kwargs)
+
         def section_wrapper(*sec_args, **sec_kwargs):
             result = original_section(*sec_args, **sec_kwargs)
             title = str(sec_args[0] if sec_args else sec_kwargs.get("title", ""))
@@ -332,12 +379,6 @@ def apply(purchase_module, core_module, base_module, review_module):
             cache = st_obj.session_state.get(base_module._CACHE_KEY, {})
             meta = cache.get(fp) if fp else None
             if fp and excel_rows and meta:
-                st_obj.markdown(
-                    """<style>
-                    div[data-testid=\"stExpander\"] {display:none !important;}
-                    </style>""",
-                    unsafe_allow_html=True,
-                )
                 review_module._render_review_table(
                     st_obj, pd_obj, core_module, db_path, fp, excel_rows, meta
                 )
@@ -348,6 +389,8 @@ def apply(purchase_module, core_module, base_module, review_module):
         st_obj.file_uploader = file_uploader_wrapper
         st_obj.expander = expander_wrapper
         st_obj.selectbox = selectbox_wrapper
+        st_obj.checkbox = checkbox_wrapper
+        st_obj.button = button_wrapper
         if callable(original_section):
             kwargs = dict(kwargs)
             kwargs["section"] = section_wrapper
@@ -358,6 +401,8 @@ def apply(purchase_module, core_module, base_module, review_module):
             st_obj.file_uploader = original_file_uploader
             st_obj.expander = original_expander
             st_obj.selectbox = original_selectbox
+            st_obj.checkbox = original_checkbox
+            st_obj.button = original_button
 
         fp = context.get("file_fp")
         excel_rows = context.get("excel_rows") or []
