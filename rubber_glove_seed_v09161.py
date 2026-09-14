@@ -1,4 +1,4 @@
-"""Compatibility entrypoint for v0.9.196.
+"""Compatibility entrypoint for v0.9.197.
 
 This module remains the compatibility bootstrap used on every Streamlit rerun.
 
@@ -16,6 +16,10 @@ v0.9.184 hotfix:
 v0.9.196:
 - install the provisional sales-data revenue basis and monthly manual unit-cost
   override patch without making ERP startup depend on the optional UI patch.
+
+v0.9.197:
+- bridge those rules into the actual monthly P&L page, which renders saved
+  snapshots through a custom HTML table instead of the legacy dataframe hook.
 """
 from __future__ import annotations
 
@@ -57,6 +61,7 @@ def apply(core, db_path=None):
         "production_bom_qty_ui_v09183",
         "production_batch_v095",
         "provisional_sales_basis_v09196",
+        "pnl_month_sales_basis_v09197",
     ):
         sys.modules.pop(name, None)
     importlib.invalidate_caches()
@@ -80,6 +85,11 @@ def apply(core, db_path=None):
         lambda module: module.apply(core, db_path=db_path),
     )
 
+    provisional_month_bridge_status = _optional_patch(
+        "pnl_month_sales_basis_v09197",
+        lambda module: module.apply(core, db_path=db_path),
+    )
+
     purchase_repair_result = _purchase_repair.apply(core, db_path=db_path)
     base_result = _base.apply(core, db_path=db_path)
     buy_result = _buy.apply(core, db_path=db_path)
@@ -94,4 +104,5 @@ def apply(core, db_path=None):
         "bom_save_upsert": bom_upsert_status,
         "production_bom_qty_preview": production_preview_status,
         "provisional_sales_basis": provisional_sales_basis_status,
+        "provisional_month_bridge": provisional_month_bridge_status,
     }
