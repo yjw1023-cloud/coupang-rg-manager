@@ -1,4 +1,4 @@
-"""Compatibility entrypoint for v0.9.184.
+"""Compatibility entrypoint for v0.9.196.
 
 This module remains the compatibility bootstrap used on every Streamlit rerun.
 
@@ -12,6 +12,10 @@ v0.9.184 hotfix:
   prevent the whole ERP from starting.
 - The v0.9.184 manifest is cumulative for the v0.9.182~v0.9.183 BOM changes, so a
   normal update still installs and enables every patch.
+
+v0.9.196:
+- install the provisional sales-data revenue basis and monthly manual unit-cost
+  override patch without making ERP startup depend on the optional UI patch.
 """
 from __future__ import annotations
 
@@ -37,8 +41,6 @@ def _optional_patch(module_name, apply_func):
         apply_func(module)
         return {"ok": True, "module": module_name}
     except Exception as exc:
-        # Partial updater copies must degrade only the optional feature, never the
-        # entire ERP. The next updater pass can restore the missing/broken module.
         return {
             "ok": False,
             "module": module_name,
@@ -47,8 +49,6 @@ def _optional_patch(module_name, apply_func):
 
 
 def apply(core, db_path=None):
-    # These modules can be replaced by the updater while Streamlit keeps the Python
-    # process alive. Clear their old copies so newly installed files are used.
     for name in (
         "inventory_stocktake_v0969",
         "goal_excel_format_v09100",
@@ -56,6 +56,7 @@ def apply(core, db_path=None):
         "bom_save_upsert_v09182",
         "production_bom_qty_ui_v09183",
         "production_batch_v095",
+        "provisional_sales_basis_v09196",
     ):
         sys.modules.pop(name, None)
     importlib.invalidate_caches()
@@ -74,17 +75,14 @@ def apply(core, db_path=None):
         _apply_production_preview,
     )
 
-    # Important order: repair the actual purchase/product/inventory ownership first.
-    purchase_repair_result = _purchase_repair.apply(core, db_path=db_path)
+    provisional_sales_basis_status = _optional_patch(
+        "provisional_sales_basis_v09196",
+        lambda module: module.apply(core, db_path=db_path),
+    )
 
-    # Existing commercial defaults + latest-first inventory presentation remain in
-    # one place. Once the durable source map is repaired, this base module resolves
-    # glove S/M/L from the correct product IDs rather than guessed codes.
+    purchase_repair_result = _purchase_repair.apply(core, db_path=db_path)
     base_result = _base.apply(core, db_path=db_path)
     buy_result = _buy.apply(core, db_path=db_path)
-
-    # Apply last so both the new-item review proposal and actual creation path use
-    # the same max(existing JDS)+1 policy after all one-time repairs are complete.
     code_generation_result = _code_generation.apply(core)
 
     return {
@@ -95,4 +93,5 @@ def apply(core, db_path=None):
         "jds_code_generation": code_generation_result,
         "bom_save_upsert": bom_upsert_status,
         "production_bom_qty_preview": production_preview_status,
+        "provisional_sales_basis": provisional_sales_basis_status,
     }
