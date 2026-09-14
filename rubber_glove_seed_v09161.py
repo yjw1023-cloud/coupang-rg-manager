@@ -1,4 +1,4 @@
-"""Compatibility entrypoint for v0.9.197.
+"""Compatibility entrypoint for v0.9.198.
 
 This module remains the compatibility bootstrap used on every Streamlit rerun.
 
@@ -20,6 +20,10 @@ v0.9.196:
 v0.9.197:
 - bridge those rules into the actual monthly P&L page, which renders saved
   snapshots through a custom HTML table instead of the legacy dataframe hook.
+
+v0.9.198:
+- replace the separate product-picker cost form with direct editing of the two
+  average unit-cost cells in the monthly P&L table.
 """
 from __future__ import annotations
 
@@ -62,6 +66,7 @@ def apply(core, db_path=None):
         "production_batch_v095",
         "provisional_sales_basis_v09196",
         "pnl_month_sales_basis_v09197",
+        "pnl_inline_editor_v09198",
     ):
         sys.modules.pop(name, None)
     importlib.invalidate_caches()
@@ -90,6 +95,11 @@ def apply(core, db_path=None):
         lambda module: module.apply(core, db_path=db_path),
     )
 
+    provisional_inline_editor_status = _optional_patch(
+        "pnl_inline_editor_v09198",
+        lambda module: module.apply(core, db_path=db_path),
+    )
+
     purchase_repair_result = _purchase_repair.apply(core, db_path=db_path)
     base_result = _base.apply(core, db_path=db_path)
     buy_result = _buy.apply(core, db_path=db_path)
@@ -105,4 +115,5 @@ def apply(core, db_path=None):
         "production_bom_qty_preview": production_preview_status,
         "provisional_sales_basis": provisional_sales_basis_status,
         "provisional_month_bridge": provisional_month_bridge_status,
+        "provisional_inline_editor": provisional_inline_editor_status,
     }
