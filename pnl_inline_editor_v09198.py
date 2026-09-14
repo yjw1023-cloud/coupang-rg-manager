@@ -1,16 +1,18 @@
-"""v0.9.198 inline editor for monthly provisional P&L.
+"""v0.9.199 inline editor formatting for monthly provisional P&L.
 
-The v0.9.197 page used a separate expander/selectbox form for per-product unit
-commission and RG logistics overrides. That works but is slow for many new items.
-This patch replaces that form with direct editing of the two unit-cost columns in
-the main monthly P&L grid.
+Keeps the v0.9.198 direct-edit workflow while restoring readable numeric
+presentation in the main monthly P&L grid.
 
 Rules:
 - only `평균 수수료` and `평균 입출고배송비` are editable;
 - editing a cell saves that product/month override immediately after commit;
 - clearing a cell removes only that field's monthly override and returns to the
   recent confirmed/default value;
-- untouched auto/default values are never accidentally converted to overrides;
+- percentage columns render with one decimal place and a `%` sign;
+- all other numeric columns render as whole numbers with locale thousands
+  separators; no decimal tails are shown;
+- every numeric column (including the two editable columns) is center-aligned;
+- option ID is center-aligned, product name remains left-aligned;
 - confirmed settlement rows are never edited.
 """
 from __future__ import annotations
@@ -20,8 +22,11 @@ from typing import Any
 
 import pandas as pd
 
-RULE_VERSION = "0.9.198-inline-unit-cost-editor"
+RULE_VERSION = "0.9.199-inline-unit-cost-editor-format"
 _EDITABLE = ("평균 수수료", "평균 입출고배송비")
+_PERCENT_COLS = {"반품률", "이익률(%)"}
+_ID_COLS = {"옵션ID"}
+_TEXT_COLS = {"상품명"}
 
 
 def _oid(v: Any) -> str:
@@ -48,7 +53,7 @@ def _nullable(v: Any):
     if isinstance(v, str) and not v.strip():
         return None
     try:
-        x = float(v)
+        x = float(str(v).replace(",", "").replace("%", "").strip())
         return x if math.isfinite(x) else None
     except Exception:
         return None
@@ -59,6 +64,43 @@ def _same(a, b) -> bool:
     if a is None or b is None:
         return a is None and b is None
     return abs(float(a) - float(b)) <= 1e-9
+
+
+def _prepare_numeric_display(show: pd.DataFrame, month_ui) -> pd.DataFrame:
+    """Round display values without changing the calculation dataframe."""
+    out = show.copy()
+    numeric_cols = set(getattr(month_ui, "_NUMERIC_COLS", set())) | set(_EDITABLE) | _PERCENT_COLS
+    for col in out.columns:
+        if col in _ID_COLS or col in _TEXT_COLS:
+            continue
+        if col not in numeric_cols and not pd.api.types.is_numeric_dtype(out[col]):
+            continue
+        vals = pd.to_numeric(out[col], errors="coerce")
+        if col in _PERCENT_COLS:
+            out[col] = vals.round(1)
+        else:
+            # Keep numeric dtype for sorting/editing, but remove every decimal
+            # tail before NumberColumn's localized rendering.
+            out[col] = vals.round(0)
+    return out
+
+
+def _number_column(st_obj, label: str, editable: bool = False, percent: bool = False):
+    kwargs = {
+        "label": label,
+        "alignment": "center",
+    }
+    if percent:
+        kwargs["format"] = "%.1f%%"
+    else:
+        kwargs["format"] = "localized"
+    if editable:
+        kwargs.update({
+            "help": "원/개 · 직접 입력 시 이 달 잠정손익에만 우선 적용",
+            "min_value": 0.0,
+            "step": 10.0,
+        })
+    return st_obj.column_config.NumberColumn(**kwargs)
 
 
 def apply(core, db_path=None):
@@ -97,30 +139,58 @@ def apply(core, db_path=None):
             show = show[[c for c in cols if c in show.columns]]
         except Exception:
             pass
-        show = show.reset_index(drop=True)
+        show = _prepare_numeric_display(show.reset_index(drop=True), month_ui)
         baseline = show.copy()
 
         st_obj.caption(
             "평균 수수료와 평균 입출고배송비 칸을 직접 클릭해 입력하세요. "
             "Enter 또는 다른 셀을 클릭하면 바로 저장·재계산됩니다. "
-            "수동값을 지우고 싶으면 해당 셀 값을 삭제하면 자동값으로 돌아갑니다."
+            "반품률·이익률은 %로, 금액은 소수점 없이 천 단위 콤마로 표시합니다."
         )
 
         disabled = [c for c in show.columns if c not in _EDITABLE]
         column_config = {}
-        try:
-            column_config["평균 수수료"] = st_obj.column_config.NumberColumn(
-                "평균 수수료", help="원/개 · 직접 입력 시 이 달 잠정손익에만 우선 적용",
-                min_value=0.0, step=10.0, format="%.0f",
-            )
-            column_config["평균 입출고배송비"] = st_obj.column_config.NumberColumn(
-                "평균 입출고배송비", help="입출고비+배송비 합계, 원/개 · 직접 입력 시 이 달 잠정손익에만 우선 적용",
-                min_value=0.0, step=10.0, format="%.0f",
-            )
-            if "상품명" in show.columns:
-                column_config["상품명"] = st_obj.column_config.TextColumn("상품명", width="large")
-        except Exception:
-            column_config = {}
+        for col in show.columns:
+            try:
+                if col == "상품명":
+                    column_config[col] = st_obj.column_config.TextColumn(
+                        "상품명", width="large", alignment="left"
+                    )
+                elif col == "옵션ID":
+                    column_config[col] = st_obj.column_config.TextColumn(
+                        "옵션ID", alignment="center"
+                    )
+                elif col in _PERCENT_COLS:
+                    column_config[col] = _number_column(st_obj, col, percent=True)
+                elif col in _EDITABLE:
+                    help_text = (
+                        "입출고비+배송비 합계, 원/개 · 직접 입력 시 이 달 잠정손익에만 우선 적용"
+                        if col == "평균 입출고배송비"
+                        else "원/개 · 직접 입력 시 이 달 잠정손익에만 우선 적용"
+                    )
+                    column_config[col] = st_obj.column_config.NumberColumn(
+                        col,
+                        help=help_text,
+                        min_value=0.0,
+                        step=10.0,
+                        format="localized",
+                        alignment="center",
+                    )
+                elif pd.api.types.is_numeric_dtype(show[col]) or col in getattr(month_ui, "_NUMERIC_COLS", set()):
+                    column_config[col] = _number_column(st_obj, col)
+                else:
+                    column_config[col] = st_obj.column_config.TextColumn(col, alignment="center")
+            except TypeError:
+                # Very old Streamlit fallback: keep the formatting even if that
+                # local build predates the alignment parameter.
+                if col in _PERCENT_COLS:
+                    column_config[col] = st_obj.column_config.NumberColumn(col, format="%.1f%%")
+                elif col in _EDITABLE:
+                    column_config[col] = st_obj.column_config.NumberColumn(
+                        col, min_value=0.0, step=10.0, format="localized"
+                    )
+                elif pd.api.types.is_numeric_dtype(show[col]) or col in getattr(month_ui, "_NUMERIC_COLS", set()):
+                    column_config[col] = st_obj.column_config.NumberColumn(col, format="localized")
 
         nonce_key = f"_rg198_inline_nonce_{month}"
         nonce = int(st_obj.session_state.get(nonce_key, 0) or 0)
@@ -170,9 +240,6 @@ def apply(core, db_path=None):
                 saved_count += 1
 
         if saved_count:
-            # A new widget key is important after save: it drops the old edit
-            # delta, reloads the freshly calculated values, and prevents a rerun
-            # loop while still feeling like an immediate cell save.
             st_obj.session_state[nonce_key] = nonce + 1
             try:
                 st_obj.toast(f"{saved_count:,}개 상품의 잠정비용을 저장했습니다.")
