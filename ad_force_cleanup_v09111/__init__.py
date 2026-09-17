@@ -1,9 +1,8 @@
-"""v0.9.221 runtime wrapper.
+"""v0.9.222 runtime wrapper.
 
 Delegates legacy bootstrap work, then installs the authoritative normal-product
-registry, shared product identity, Organic display and the shared return matcher.
-Normal-product seeding is intentionally separated from the old automatic return
-repair: unresolved return option IDs must be confirmed by the user.
+registry, option-ID-only shared product identity, Organic display and the shared
+manual return matcher. No product_id-based return detector is loaded.
 """
 from __future__ import annotations
 
@@ -34,9 +33,6 @@ def apply(core, db=None):
         rules = importlib.import_module("canonical_product_rules_v09214")
         rules = importlib.reload(rules)
         core.init_db(target)
-        # Safe authoritative master setup only. Do NOT call rules.apply() here,
-        # because its legacy one-time repair can auto-match returns without user
-        # confirmation.
         rules._seed_registry(core, target)
         rules._sync_visibility(core, target)
         rules._patch_return_hide(core)
@@ -49,7 +45,7 @@ def apply(core, db=None):
             "return_repaired": 0,
             "sales_analysis": sales,
             "organic": organic,
-            "matching_policy": "manual_only",
+            "matching_policy": "manual_option_id_only",
         }
     except Exception as exc:
         canonical = {"ok": False, "error": str(exc)}
@@ -79,18 +75,10 @@ def apply(core, db=None):
         shared_matcher = {"ok": False, "error": str(exc)}
         print(f"RG Manager shared return matcher failed: {exc}")
 
-    try:
-        hard_fix = importlib.import_module("return_master_match_fix_v09219")
-        hard_fix = importlib.reload(hard_fix)
-        return_match_fix = hard_fix.apply(core, target)
-    except Exception as exc:
-        return_match_fix = {"ok": False, "error": str(exc)}
-        print(f"RG Manager v0.9.221 return-master fix failed: {exc}")
-
     if isinstance(result, dict):
         result["canonical_product_rules_v09214"] = canonical
         result["shared_product_identity_v09215"] = shared_identity
         result["organic_sales_display_v09216"] = organic_display
         result["shared_return_match_ui_v09217"] = shared_matcher
-        result["return_master_match_fix_v09219"] = return_match_fix
+        result["return_master_match_fix_v09219"] = {"ok": False, "disabled": True, "reason": "product_id_matching_removed_v09222"}
     return result
