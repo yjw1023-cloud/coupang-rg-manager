@@ -1,8 +1,8 @@
-"""v0.9.217 runtime wrapper.
+"""v0.9.219 runtime wrapper.
 
 Delegates legacy bootstrap work, then applies authoritative normal-product rules,
-ERP-wide shared product identity, Organic display hardening, and the shared
-unresolved return-sale matching UI.
+ERP-wide shared product identity, Organic display hardening, the shared unresolved
+return-sale matching UI, and the v0.9.219 product_id-child detection fix.
 """
 from __future__ import annotations
 
@@ -60,9 +60,18 @@ def apply(core, db=None):
         shared_matcher = {"ok": False, "error": str(exc)}
         print(f"RG Manager shared return matcher failed: {exc}")
 
+    try:
+        hard_fix = importlib.import_module("return_master_match_fix_v09219")
+        hard_fix = importlib.reload(hard_fix)
+        return_match_fix = hard_fix.apply(core, db)
+    except Exception as exc:
+        return_match_fix = {"ok": False, "error": str(exc)}
+        print(f"RG Manager v0.9.219 return-master hard fix failed: {exc}")
+
     if isinstance(result, dict):
         result["canonical_product_rules_v09214"] = canonical
         result["shared_product_identity_v09215"] = shared_identity
         result["organic_sales_display_v09216"] = organic_display
         result["shared_return_match_ui_v09217"] = shared_matcher
+        result["return_master_match_fix_v09219"] = return_match_fix
     return result
