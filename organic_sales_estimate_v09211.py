@@ -1,0 +1,282 @@
+"""Sales-analysis organic sales estimate submenu (v0.9.211).
+
+Organic estimate = uploaded total sales quantity - advertising report sales quantity.
+Both sides are compared only on date coverage available in both uploaded sources.
+"""
+from __future__ import annotations
+
+from datetime import date, timedelta
+from typing import Any
+
+import pandas as pd
+
+
+SUBMENU_LABELS = ("상품 판매분석", "오가닉판매 추정")
+
+
+def _period_days(start: date, end: date) -> set[str]:
+    out: set[str] = set()
+    cur = start
+    while cur <= end:
+        out.add(cur.isoformat())
+        cur += timedelta(days=1)
+    return out
+
+
+def _import_days(row: Any) -> set[str]:
+    try:
+        start = date.fromisoformat(str(row["period_start"] or "")[:10])
+        end = date.fromisoformat(str(row["period_end"] or "")[:10])
+    except Exception:
+        return set()
+    if end < start:
+        start, end = end, start
+    return _period_days(start, end)
+
+
+def _contained_imports(con, sales_module, data_type: str, start: date, end: date) -> list[Any]:
+    if not sales_module._exists(con, "imports"):
+        return []
+    cols = sales_module._cols(con, "imports")
+    if not {"id", "data_type", "period_start", "period_end"}.issubset(cols):
+        return []
+    return list(con.execute(
+        """SELECT id,period_start,period_end FROM imports
+           WHERE data_type=? AND period_start>=? AND period_end<=?
+           ORDER BY period_start,period_end,id""",
+        (str(data_type), start.isoformat(), end.isoformat()),
+    ).fetchall())
+
+
+def _coverage(imports: list[Any]) -> set[str]:
+    out: set[str] = set()
+    for row in imports:
+        out |= _import_days(row)
+    return out
+
+
+def _aligned_imports(sales_imports: list[Any], ad_imports: list[Any]) -> tuple[list[Any], list[Any], set[str]]:
+    """Keep only complete aggregate-report ranges supported by both sources."""
+    sales = list(sales_imports)
+    ads = list(ad_imports)
+    for _ in range(8):
+        common = _coverage(sales) & _coverage(ads)
+        new_sales = [r for r in sales if _import_days(r) and _import_days(r).issubset(common)]
+        new_ads = [r for r in ads if _import_days(r) and _import_days(r).issubset(common)]
+        if [int(r["id"]) for r in new_sales] == [int(r["id"]) for r in sales] and [int(r["id"]) for r in new_ads] == [int(r["id"]) for r in ads]:
+            sales, ads = new_sales, new_ads
+            break
+        sales, ads = new_sales, new_ads
+    return sales, ads, _coverage(sales) & _coverage(ads)
+
+
+def _identity(sales_module, master: dict[int, dict[str, Any]], option_to_pid: dict[str, int], pid_value: Any, oid_value: Any):
+    pid = int(sales_module._num(pid_value))
+    oid = sales_module._oid(oid_value)
+    if (pid <= 0 or pid not in master) and oid in option_to_pid:
+        pid = int(option_to_pid[oid])
+    if pid > 0:
+        return f"p:{pid}", pid, oid
+    if oid:
+        return f"o:{oid}", 0, oid
+    return "", 0, ""
+
+
+def _sales_qty(sales_module, row: Any, cols: set[str]) -> float:
+    if "sales_qty" in cols and row["sales_qty"] is not None:
+        return max(0.0, sales_module._num(row["sales_qty"]))
+    if "gross_qty" in cols and row["gross_qty"] is not None:
+        return max(0.0, sales_module._num(row["gross_qty"]))
+    net = sales_module._num(row["net_qty"]) if "net_qty" in cols else 0.0
+    cancel = abs(sales_module._num(row["cancel_qty"])) if "cancel_qty" in cols else 0.0
+    return max(0.0, net + cancel)
+
+
+def _organic_estimate_data(core, sales_module, db, start: date, end: date):
+    with core._conn(db) as con:
+        master = sales_module._product_master(con)
+        option_to_pid = {
+            sales_module._oid(p.get("옵션ID")): int(pid)
+            for pid, p in master.items()
+            if sales_module._oid(p.get("옵션ID"))
+        }
+
+        sales_imports = _contained_imports(con, sales_module, "sales_stats", start, end)
+        ad_imports = _contained_imports(con, sales_module, "ad_performance", start, end)
+        sales_imports, ad_imports, covered = _aligned_imports(sales_imports, ad_imports)
+
+        totals: dict[str, dict[str, Any]] = {}
+
+        def get_item(key: str, pid: int, oid: str):
+            p = master.get(pid, {}) if pid > 0 else {}
+            name = str(p.get("상품명") or "").strip()
+            if not name:
+                name = f"옵션ID {oid}" if oid else "미매칭 상품"
+            return totals.setdefault(key, {
+                "product_id": pid,
+                "option_id": oid,
+                "아이템": name,
+                "판매량": 0.0,
+                "광고 판매량": 0.0,
+            })
+
+        if sales_imports and sales_module._exists(con, "sales_stats"):
+            cols = sales_module._cols(con, "sales_stats")
+            if {"import_id", "product_id"}.issubset(cols):
+                ids = [int(r["id"]) for r in sales_imports]
+                marks = ",".join("?" for _ in ids)
+                fields = ["product_id"]
+                fields.append("option_id" if "option_id" in cols else "'' AS option_id")
+                for col in ("sales_qty", "gross_qty", "net_qty", "cancel_qty"):
+                    fields.append(col if col in cols else f"NULL AS {col}")
+                rows = con.execute(
+                    f"SELECT {','.join(fields)} FROM sales_stats WHERE import_id IN ({marks})",
+                    ids,
+                ).fetchall()
+                for row in rows:
+                    key, pid, oid = _identity(sales_module, master, option_to_pid, row["product_id"], row["option_id"])
+                    if not key:
+                        continue
+                    get_item(key, pid, oid)["판매량"] += _sales_qty(sales_module, row, cols)
+
+        ad_qty_available = False
+        if ad_imports and sales_module._exists(con, "ad_performance"):
+            cols = sales_module._cols(con, "ad_performance")
+            ad_qty_available = "sales_qty_14" in cols
+            if ad_qty_available and "import_id" in cols:
+                ids = [int(r["id"]) for r in ad_imports]
+                marks = ",".join("?" for _ in ids)
+                product_expr = "product_id" if "product_id" in cols else "0 AS product_id"
+                option_expr = "option_id" if "option_id" in cols else "'' AS option_id"
+                rows = con.execute(
+                    f"""SELECT {product_expr},{option_expr},sales_qty_14
+                        FROM ad_performance WHERE import_id IN ({marks})""",
+                    ids,
+                ).fetchall()
+                for row in rows:
+                    key, pid, oid = _identity(sales_module, master, option_to_pid, row["product_id"], row["option_id"])
+                    if not key:
+                        continue
+                    get_item(key, pid, oid)["광고 판매량"] += max(0.0, sales_module._num(row["sales_qty_14"]))
+
+    rows_out = []
+    for item in totals.values():
+        total_qty = float(item["판매량"])
+        ad_qty = float(item["광고 판매량"])
+        if total_qty <= 0 and ad_qty <= 0:
+            continue
+        rows_out.append({
+            "아이템": item["아이템"],
+            "판매량": total_qty,
+            "광고 판매량": ad_qty,
+            "Organic 판매량": total_qty - ad_qty,
+        })
+
+    if not rows_out:
+        frame = pd.DataFrame(columns=["아이템", "판매량", "광고 판매량", "Organic 판매량"])
+    else:
+        frame = pd.DataFrame(rows_out).sort_values(
+            ["판매량", "아이템"], ascending=[False, True], kind="stable"
+        ).reset_index(drop=True)
+    return frame, covered, ad_qty_available
+
+
+def _fmt_count(value: Any):
+    try:
+        n = float(value or 0)
+    except Exception:
+        n = 0.0
+    if abs(n - round(n)) < 1e-9:
+        return int(round(n))
+    return round(n, 2)
+
+
+def _render_organic(st_obj, core, sales_module, db):
+    st_obj.caption("입력한 판매자료의 판매량에서 같은 기간 광고성과보고서의 광고 판매량을 빼 Organic 판매량을 추정합니다.")
+    days = st_obj.radio(
+        "기간",
+        (30, 60, 90),
+        index=0,
+        horizontal=True,
+        format_func=lambda n: f"최근 {n}일",
+        key="organic_sales_period_v09211",
+    )
+    end = date.today()
+    start = end - timedelta(days=int(days) - 1)
+    st_obj.caption(f"조회기간: {start.isoformat()} ~ {end.isoformat()}")
+
+    frame, covered, ad_qty_available = _organic_estimate_data(core, sales_module, db, start, end)
+    wanted = _period_days(start, end)
+
+    if not ad_qty_available:
+        st_obj.warning("선택 기간의 광고성과보고서에서 광고 판매량(sales_qty_14)을 확인할 수 없습니다.")
+    if len(covered) < len(wanted):
+        st_obj.warning(
+            f"선택한 최근 {int(days)}일 중 판매자료와 광고자료가 모두 있는 날짜는 {len(covered)}일입니다. "
+            "표는 두 자료의 날짜가 함께 확인되는 입력 구간만 합산합니다."
+        )
+    else:
+        st_obj.caption(f"판매자료와 광고자료가 최근 {int(days)}일 전체에 대해 확인됩니다.")
+
+    if frame.empty:
+        st_obj.info("선택 기간에 판매자료와 광고자료가 함께 확인되는 상품이 없습니다.")
+        return
+
+    if (pd.to_numeric(frame["Organic 판매량"], errors="coerce").fillna(0) < 0).any():
+        st_obj.warning("Organic 판매량이 음수인 상품이 있습니다. 판매자료와 광고보고서의 상품 매칭 또는 입력기간을 확인해 주세요.")
+
+    show = frame[["아이템", "판매량", "광고 판매량", "Organic 판매량"]].copy()
+    for col in ("판매량", "광고 판매량", "Organic 판매량"):
+        show[col] = show[col].map(_fmt_count)
+    st_obj.dataframe(
+        show,
+        use_container_width=True,
+        hide_index=True,
+        height=min(760, max(220, 38 * (len(show) + 1))),
+    )
+
+
+class _NoSalesHeading:
+    def __init__(self, base):
+        object.__setattr__(self, "_base", base)
+        object.__setattr__(self, "_suppressed", False)
+
+    def __getattr__(self, name):
+        return getattr(object.__getattribute__(self, "_base"), name)
+
+    def markdown(self, body, *args, **kwargs):
+        if not object.__getattribute__(self, "_suppressed") and str(body).strip() == "## 📊 판매분석":
+            object.__setattr__(self, "_suppressed", True)
+            return None
+        return object.__getattribute__(self, "_base").markdown(body, *args, **kwargs)
+
+
+def apply(sales_module, core):
+    if sales_module is None:
+        return {"ok": False, "reason": "sales module missing"}
+    if getattr(sales_module, "_rg_organic_sales_v09211_applied", False):
+        return {"ok": True, "already_applied": True}
+
+    original = sales_module.render_page
+
+    def render_page(st_obj, pd_obj, core_obj, db_path=None):
+        db = db_path or core_obj.DEFAULT_DB
+        core_obj.init_db(db)
+        st_obj.markdown("## 📊 판매분석")
+        mode = st_obj.radio(
+            "판매분석 메뉴",
+            SUBMENU_LABELS,
+            index=0,
+            horizontal=True,
+            label_visibility="collapsed",
+            key="sales_analysis_submenu_v09211",
+        )
+        if mode == "오가닉판매 추정":
+            st_obj.session_state["_rg_sales_stats_period_active"] = False
+            _render_organic(st_obj, core_obj, sales_module, db)
+            return
+        return original(_NoSalesHeading(st_obj), pd_obj, core_obj, db_path)
+
+    sales_module.render_page = render_page
+    sales_module._rg_organic_sales_v09211_applied = True
+    return {"ok": True, "already_applied": False}
