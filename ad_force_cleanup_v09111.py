@@ -1,11 +1,10 @@
-"""RG Manager v0.9.154 runtime bootstrap.
+"""RG Manager runtime bootstrap (through v0.9.211).
 
 This module is invoked directly from app.py on every Streamlit rerun and is
 explicitly purged from Python's module cache before import. Besides the existing
 advertising cleanup/recent-input bootstrap, it also runs the idempotent requested-
-product/BOM seed, the v0.9.149 inventory/API separation patch, the v0.9.150
-sales-stat gross/cancellation quantity preservation patch, the v0.9.151 SQLite
-rowid hotfix, and the v0.9.154 provisional P&L expense-sign guard.
+product/BOM seed, inventory/API separation, sales-stat return preservation,
+provisional P&L expense guards, and the v0.9.211 organic-sales analysis submenu.
 """
 from __future__ import annotations
 
@@ -109,6 +108,19 @@ def _apply_provisional_expense_guard():
         return {"ok": False, "error": str(exc)}
 
 
+def _apply_organic_sales_estimate(core):
+    try:
+        import importlib
+        import sales_analysis_v09186
+        import organic_sales_estimate_v09211
+
+        organic_sales_estimate_v09211 = importlib.reload(organic_sales_estimate_v09211)
+        return organic_sales_estimate_v09211.apply(sales_analysis_v09186, core)
+    except Exception as exc:
+        print(f"RG Manager v0.9.211 organic-sales estimate patch failed: {exc}")
+        return {"ok": False, "error": str(exc)}
+
+
 def apply(core, db=None):
     db = db or core.DEFAULT_DB
     core.init_db(db)
@@ -120,6 +132,7 @@ def apply(core, db=None):
     inventory_api_result = _apply_inventory_api_separation(core, db)
     sales_stats_return_result = _apply_sales_stats_returns(core, db)
     provisional_expense_result = _apply_provisional_expense_guard()
+    organic_sales_result = _apply_organic_sales_estimate(core)
 
     result = {
         "already_applied": False,
@@ -132,6 +145,7 @@ def apply(core, db=None):
         "inventory_api_separation_v09149": inventory_api_result,
         "sales_stats_returns_v09150": sales_stats_return_result,
         "provisional_pnl_expense_guard_v09154": provisional_expense_result,
+        "organic_sales_estimate_v09211": organic_sales_result,
     }
 
     with core._conn(db) as c:
