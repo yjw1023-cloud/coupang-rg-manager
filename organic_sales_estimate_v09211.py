@@ -1,4 +1,4 @@
-"""Organic sales estimate page for Sales Analysis (v0.9.212).
+"""Organic sales estimate page for Sales Analysis (v0.9.213).
 
 Organic estimate = uploaded total sales quantity - advertising report sales quantity.
 Both sides are compared only on date coverage available in both uploaded sources.
@@ -168,30 +168,76 @@ def _organic_estimate_data(core, sales_module, db, start: date, end: date):
         ad_qty = float(item["광고 판매량"])
         if total_qty <= 0 and ad_qty <= 0:
             continue
+        organic_qty = total_qty - ad_qty
         rows_out.append({
             "아이템": item["아이템"],
             "판매량": total_qty,
             "광고 판매량": ad_qty,
-            "Organic 판매량": total_qty - ad_qty,
+            "Organic 판매량": organic_qty,
+            "Organic 판매 비율": (organic_qty / total_qty * 100.0) if total_qty > 0 else 0.0,
         })
 
+    columns = ["아이템", "판매량", "광고 판매량", "Organic 판매량", "Organic 판매 비율"]
     if not rows_out:
-        frame = pd.DataFrame(columns=["아이템", "판매량", "광고 판매량", "Organic 판매량"])
+        frame = pd.DataFrame(columns=columns)
     else:
-        frame = pd.DataFrame(rows_out).sort_values(
+        frame = pd.DataFrame(rows_out, columns=columns).sort_values(
             ["판매량", "아이템"], ascending=[False, True], kind="stable"
         ).reset_index(drop=True)
     return frame, covered, ad_qty_available
 
 
-def _fmt_count(value: Any):
+def _fmt_count(value: Any) -> str:
     try:
         n = float(value or 0)
     except Exception:
         n = 0.0
     if abs(n - round(n)) < 1e-9:
-        return int(round(n))
-    return round(n, 2)
+        return f"{int(round(n)):,}"
+    return f"{n:,.2f}"
+
+
+def _style_table(frame: pd.DataFrame):
+    numeric_cols = ["판매량", "광고 판매량", "Organic 판매량", "Organic 판매 비율"]
+    styler = frame.style.format({
+        "판매량": _fmt_count,
+        "광고 판매량": _fmt_count,
+        "Organic 판매량": _fmt_count,
+        "Organic 판매 비율": lambda v: f"{float(v):.1f}%",
+    })
+    styler = styler.set_properties(
+        subset=numeric_cols,
+        **{"text-align": "center", "vertical-align": "middle"},
+    )
+    styler = styler.set_properties(
+        subset=["아이템"],
+        **{"text-align": "left", "vertical-align": "middle"},
+    )
+    styler = styler.set_properties(
+        subset=["Organic 판매량", "Organic 판매 비율"],
+        **{"background-color": "#f2fbf5", "font-weight": "650"},
+    )
+    styler = styler.set_table_styles([
+        {
+            "selector": "th",
+            "props": [
+                ("text-align", "center"),
+                ("vertical-align", "middle"),
+                ("font-weight", "700"),
+                ("background-color", "#eef3f8"),
+                ("color", "#17324d"),
+                ("border-bottom", "1px solid #cfd8e3"),
+            ],
+        },
+        {
+            "selector": "td",
+            "props": [
+                ("padding", "8px 10px"),
+                ("border-bottom", "1px solid #e7ecf2"),
+            ],
+        },
+    ])
+    return styler
 
 
 def render_page(st_obj, core, db_path=None):
@@ -234,15 +280,28 @@ def render_page(st_obj, core, db_path=None):
     if (pd.to_numeric(frame["Organic 판매량"], errors="coerce").fillna(0) < 0).any():
         st_obj.warning("Organic 판매량이 음수인 상품이 있습니다. 판매자료와 광고보고서의 상품 매칭 또는 입력기간을 확인해 주세요.")
 
-    show = frame[["아이템", "판매량", "광고 판매량", "Organic 판매량"]].copy()
-    for col in ("판매량", "광고 판매량", "Organic 판매량"):
-        show[col] = show[col].map(_fmt_count)
-    st_obj.dataframe(
-        show,
-        use_container_width=True,
-        hide_index=True,
-        height=min(760, max(220, 38 * (len(show) + 1))),
-    )
+    show = frame[["아이템", "판매량", "광고 판매량", "Organic 판매량", "Organic 판매 비율"]].copy()
+    styled = _style_table(show)
+    column_config = None
+    try:
+        column_config = {
+            "아이템": st_obj.column_config.TextColumn("아이템", width="large"),
+            "판매량": st_obj.column_config.NumberColumn("판매량", width="small"),
+            "광고 판매량": st_obj.column_config.NumberColumn("광고 판매량", width="small"),
+            "Organic 판매량": st_obj.column_config.NumberColumn("Organic 판매량", width="small"),
+            "Organic 판매 비율": st_obj.column_config.NumberColumn("Organic 판매 비율", width="small"),
+        }
+    except Exception:
+        column_config = None
+
+    kwargs = {
+        "use_container_width": True,
+        "hide_index": True,
+        "height": min(760, max(220, 38 * (len(show) + 1))),
+    }
+    if column_config is not None:
+        kwargs["column_config"] = column_config
+    st_obj.dataframe(styled, **kwargs)
 
 
 def apply(sales_module, core):
