@@ -1,16 +1,14 @@
-"""Organic sales estimate page for Sales Analysis (v0.9.224).
+"""Organic sales estimate page for Sales Analysis (v0.9.226).
 
-The normal-product registry is authoritative:
-- option ID in coupang_normal_option_registry = normal sale
-- confirmed return option ID = aggregate to its original product
-- every other sold option ID must be confirmed by the user before aggregation
-
-This check lives in the actual organic-data function so display wrappers cannot bypass it.
+Authoritative normal-product source: the user's uploaded product master copied to
+canonical_product_rules_v09214.CURRENT_IDS (132 option IDs). The DB registry is
+not used to decide normal vs return.
 """
 from __future__ import annotations
 
 from datetime import date, timedelta
 from difflib import SequenceMatcher
+import importlib
 import sys
 from typing import Any
 
@@ -95,14 +93,12 @@ def _table_exists(con, name: str) -> bool:
 
 
 def _normal_ids(con, sales_module) -> set[str]:
-    if not _table_exists(con, "coupang_normal_option_registry"):
-        return set()
+    """Normal products come directly from the uploaded-master constants, never DB registry."""
+    rules = importlib.import_module("canonical_product_rules_v09214")
     return {
-        _oid(sales_module, r["vendor_item_id"])
-        for r in con.execute(
-            "SELECT vendor_item_id FROM coupang_normal_option_registry"
-        ).fetchall()
-        if _oid(sales_module, r["vendor_item_id"])
+        _oid(sales_module, oid)
+        for oid in set(getattr(rules, "CURRENT_IDS", set()))
+        if _oid(sales_module, oid)
     }
 
 
@@ -324,7 +320,7 @@ def _save_user_alias(core, sales_module, db, item: dict[str, Any], parent_pid: i
                        VALUES(?,?,?)
                        ON CONFLICT(product_id) DO UPDATE SET
                          reason=excluded.reason,hidden_at=excluded.hidden_at""",
-                    (child_pid, "return_alias_manual_organic_v09224", now),
+                    (child_pid, "return_alias_manual_organic_v09226", now),
                 )
                 con.execute("UPDATE products SET active=0 WHERE id=?", (child_pid,))
 
@@ -376,12 +372,12 @@ def _require_return_confirmation(core, sales_module, db, sales_imports):
                     else ""
                 )
             ),
-            key=f"_organic_return_confirm_v09224_{item['option_id']}",
+            key=f"_organic_return_confirm_v09226_{item['option_id']}",
         )
         if st.button(
             "이 원상품으로 확정",
             type="primary",
-            key=f"_organic_return_save_v09224_{item['option_id']}",
+            key=f"_organic_return_save_v09226_{item['option_id']}",
         ):
             _save_user_alias(
                 core, sales_module, db, item, int(selected)
@@ -852,5 +848,5 @@ def apply(sales_module, core):
         "ok": True,
         "already_applied": False,
         "sidebar_page": PAGE_TEXT,
-        "core_return_gate": "v0.9.224",
+        "core_return_gate": "v0.9.226",
     }
