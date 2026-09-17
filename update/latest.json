@@ -1,8 +1,10 @@
 {
-  "version": "0.9.225",
-  "message": "정상상품 판별 기준을 DB 레지스트리에서 분리했습니다. 사용자가 업로드한 상품원장에서 확정한 132개 옵션ID(canonical_product_rules_v09214.CURRENT_IDS)를 오가닉판매 추정, 판매분석, 잠정손익, 공통 상품식별에서 직접 사용합니다. 따라서 상장 액자처럼 원장에 있는 단종 정상상품이 레지스트리 누락 때문에 반품으로 잡히지 않습니다. DB의 coupang_normal_option_registry는 더 이상 정상/반품 판별 기준으로 사용하지 않습니다.",
+  "version": "0.9.226",
+  "message": "오가닉판매 추정의 실제 판별 함수가 DB 레지스트리를 보지 않고 사용자가 업로드한 상품원장 132개 옵션ID(canonical_product_rules_v09214.CURRENT_IDS)를 직접 사용하도록 수정했습니다. 상장 액자 94727013681 같은 단종 정상상품도 정상상품으로 판정됩니다. 공통 부트스트랩도 다른 부가 패치가 실패해도 이 132개 기준을 버리지 않도록 수정했습니다.",
   "files": [
     "VERSION.txt",
+    "canonical_product_rules_v09214.py",
+    "organic_sales_estimate_v09211.py",
     "ad_force_cleanup_v09111/__init__.py"
   ]
 }
