@@ -7,6 +7,7 @@ The page is exposed as a real sidebar submenu under the Sales Analysis group.
 from __future__ import annotations
 
 from datetime import date, timedelta
+import sys
 from typing import Any
 
 import pandas as pd
@@ -245,5 +246,70 @@ def render_page(st_obj, core, db_path=None):
 
 
 def apply(sales_module, core):
-    """Backward-compatible bootstrap hook. Routing is handled by grouped sidebar."""
-    return {"ok": True, "sidebar_page": PAGE_TEXT}
+    """Install sidebar routing without changing the existing sales-analysis page body."""
+    if sales_module is None:
+        return {"ok": False, "reason": "sales module missing"}
+    if getattr(sales_module, "_rg_organic_sidebar_route_v09212_installed", False):
+        return {"ok": True, "already_applied": True, "sidebar_page": PAGE_TEXT}
+
+    base_installer = getattr(sales_module, "_install_sidebar_route", None)
+    sales_label = str(getattr(sales_module, "PAGE_TEXT", "📊  판매분석"))
+    organic_label = PAGE_TEXT
+    sales_title = "📊 판매분석"
+
+    def install_sidebar_route():
+        sidebar = sys.modules.get("sidebar_groups_v0917")
+        if sidebar is not None:
+            current_render = getattr(sidebar, "render_sidebar", None)
+            if callable(current_render) and getattr(current_render, "_rg_organic_sidebar_route_v09212", False):
+                return
+
+        if callable(base_installer):
+            base_installer()
+
+        sidebar = sys.modules.get("sidebar_groups_v0917")
+        if sidebar is None:
+            return
+
+        groups = getattr(sidebar, "_GROUPS", None)
+        if isinstance(groups, list):
+            for title, items in groups:
+                if organic_label in items and str(title) != sales_title:
+                    items[:] = [x for x in items if x != organic_label]
+            target = None
+            for title, items in groups:
+                if str(title) == sales_title:
+                    target = items
+                    break
+            if target is None:
+                target = [sales_label, organic_label]
+                groups.insert(1 if groups else 0, (sales_title, target))
+            else:
+                if sales_label not in target:
+                    target.append(sales_label)
+                if organic_label not in target:
+                    target.append(organic_label)
+
+        original = getattr(sidebar, "render_sidebar", None)
+        if not callable(original) or getattr(original, "_rg_organic_sidebar_route_v09212", False):
+            return
+
+        def wrapped(st_obj, options, default_page=None):
+            runtime_options = [str(x) for x in list(options or [])]
+            if organic_label not in runtime_options:
+                runtime_options.append(organic_label)
+            current = original(st_obj, runtime_options, default_page)
+            if current == organic_label:
+                try:
+                    render_page(st_obj, core)
+                except Exception as exc:
+                    st_obj.error(f"오가닉판매 추정 화면을 여는 중 오류가 발생했습니다: {exc}")
+                return "__RG_ORGANIC_SALES_RENDERED__"
+            return current
+
+        wrapped._rg_organic_sidebar_route_v09212 = True
+        sidebar.render_sidebar = wrapped
+
+    sales_module._install_sidebar_route = install_sidebar_route
+    sales_module._rg_organic_sidebar_route_v09212_installed = True
+    return {"ok": True, "already_applied": False, "sidebar_page": PAGE_TEXT}
