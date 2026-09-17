@@ -1,4 +1,4 @@
-"""v0.9.207 quick Coupang product margin view."""
+"""v0.9.208 quick Coupang product margin view."""
 from __future__ import annotations
 from datetime import date, timedelta
 import html, math
@@ -178,12 +178,22 @@ def _commission_logistics(core,db,p,current,prev):
             x=basis._prior_logi(core,db,current,p["option_id"],p["product_id"])
             if x and str(x.get("month") or "")==prev: pl=x
         except Exception: pass
-    if pc: comm={"value":max(0,_n(pc.get("unit"))),"note":f"{prev} 정산기록의 평균 수수료"}
+
+    manual_comm=_nullable(manual.get("commission_unit_override"))
+    if manual_comm is not None:
+        comm={"value":max(0,_n(manual_comm)),"note":f"{current} 잠정실적에서 직접 입력한 평균 수수료"}
+    elif pc:
+        comm={"value":max(0,_n(pc.get("unit"))),"note":f"{prev} 정산기록의 평균 수수료"}
     else:
-        v=_nullable(manual.get("commission_unit_override")); comm={"value":max(0,_n(v)) if v is not None else 0,"note":f"{current} 잠정실적에서 입력한 평균 수수료" if v is not None else f"{prev} 정산·잠정 수수료 입력값 없음"}
-    if pl: logi={"value":max(0,_n(pl.get("unit"))),"note":f"{prev} 정산기록의 평균 입출고배송비"}
+        comm={"value":0,"note":f"{current} 잠정실적 입력값·{prev} 정산기록 없음"}
+
+    manual_logi=_nullable(manual.get("logistics_unit_override"))
+    if manual_logi is not None:
+        logi={"value":max(0,_n(manual_logi)),"note":f"{current} 잠정실적에서 직접 입력한 평균 입출고배송비"}
+    elif pl:
+        logi={"value":max(0,_n(pl.get("unit"))),"note":f"{prev} 정산기록의 평균 입출고배송비"}
     else:
-        v=_nullable(manual.get("logistics_unit_override")); logi={"value":max(0,_n(v)) if v is not None else 0,"note":f"{current} 잠정실적에서 입력한 평균 입출고배송비" if v is not None else f"{prev} 정산·잠정 입출고배송비 입력값 없음"}
+        logi={"value":0,"note":f"{current} 잠정실적 입력값·{prev} 정산기록 없음"}
     return comm,logi
 
 
@@ -268,4 +278,4 @@ def render_page(st,core,db_path=None):
         rows=[{"항목":"판매단가","단가":_money(r["sale"]["value"]),"비고":r["sale"]["note"]},{"항목":"상품원가","단가":_money(r["cost"]["value"]),"비고":r["cost"]["note"]},{"항목":"수수료","단가":_money(r["commission"]["value"]),"비고":r["commission"]["note"]},{"항목":"입출고배송비","단가":_money(r["logistics"]["value"]),"비고":r["logistics"]["note"]},{"항목":"기타 쿠팡비용","단가":_money(r["other"]["value"]),"비고":r["other"]["note"]},{"항목":"광고비","단가":_money(r["ad"]["value"]),"비고":r["ad"]["note"]},{"항목":f"부가세({VAT_RATE*100:.0f}%)","단가":_money(r["vat"]["value"]),"비고":r["vat"]["note"]},{"항목":"마진","단가":_money(r["margin"]["value"]),"비고":""},{"항목":"마진률","단가":_pct(r["margin_rate"]["value"]),"비고":r["margin_rate"]["note"]}]
         st.markdown(_table(rows),unsafe_allow_html=True)
         if sale<=0: st.warning("가장 최근 판매자료에 이 상품의 신상품 판매가 없어 판매단가를 계산할 수 없습니다.")
-        st.caption(f"수수료·입출고배송비 기준: {r['prev_month']} 정산 우선 · 없으면 {r['current_month']} 잠정실적 수동입력값")
+        st.caption(f"수수료·입출고배송비 기준: {r['current_month']} 잠정실적 직접입력값 우선 · 없으면 {r['prev_month']} 정산 평균")
