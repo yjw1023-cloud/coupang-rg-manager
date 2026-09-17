@@ -1,10 +1,8 @@
 {
-  "version": "0.9.226",
-  "message": "오가닉판매 추정의 실제 판별 함수가 DB 레지스트리를 보지 않고 사용자가 업로드한 상품원장 132개 옵션ID(canonical_product_rules_v09214.CURRENT_IDS)를 직접 사용하도록 수정했습니다. 상장 액자 94727013681 같은 단종 정상상품도 정상상품으로 판정됩니다. 공통 부트스트랩도 다른 부가 패치가 실패해도 이 132개 기준을 버리지 않도록 수정했습니다.",
+  "version": "0.9.227",
+  "message": "잠정손익의 광고성과보고서 업로드 영역에서 '현재 이 달에 반영되는 광고자료' 목록과 삭제 버튼 표시를 제거했습니다. 기존 업로드 자료는 삭제되지 않으며 잠정손익 광고비 계산에는 그대로 반영됩니다.",
   "files": [
     "VERSION.txt",
-    "canonical_product_rules_v09214.py",
-    "organic_sales_estimate_v09211.py",
-    "ad_force_cleanup_v09111/__init__.py"
+    "provisional_ad_report_v0956.py"
   ]
 }
