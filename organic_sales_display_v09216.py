@@ -1,7 +1,7 @@
-"""v0.9.216 Organic sales display hardening.
+"""v0.9.217 Organic sales display hardening.
 
-Guarantees the rightmost Organic sales ratio column and a clean centered table
-regardless of which older organic-sales module a local updater previously kept.
+Guarantees the rightmost Organic sales ratio column and forces numeric/header
+center alignment even when global ERP CSS overrides ordinary table alignment.
 """
 from __future__ import annotations
 
@@ -40,23 +40,24 @@ def _table_html(frame: pd.DataFrame) -> str:
         except Exception:
             ratio = 0.0
         rows.append(
-            f"<tr><td class='item'>{name}</td><td>{total}</td><td>{ad}</td>"
-            f"<td class='organic'>{organic}</td><td class='ratio'>{ratio:.1f}%</td></tr>"
+            f"<tr><td class='item'>{name}</td><td class='num'>{total}</td><td class='num'>{ad}</td>"
+            f"<td class='num organic'>{organic}</td><td class='num ratio'>{ratio:.1f}%</td></tr>"
         )
     body = "".join(rows)
     return f"""
 <style>
 .rg-organic-wrap{{border:1px solid #dfe6ee;border-radius:12px;overflow:auto;max-height:760px;background:#fff}}
 .rg-organic-table{{width:100%;border-collapse:separate;border-spacing:0;font-size:14px;color:#172033;table-layout:fixed}}
-.rg-organic-table th{{position:sticky;top:0;z-index:2;background:#edf3f8;color:#334155;font-weight:750;text-align:center;padding:11px 10px;border-bottom:1px solid #cbd5e1;border-right:1px solid #dde5ed;white-space:nowrap}}
-.rg-organic-table td{{text-align:center;vertical-align:middle;padding:10px 10px;border-bottom:1px solid #e7edf3;border-right:1px solid #edf1f5;font-variant-numeric:tabular-nums}}
-.rg-organic-table th:first-child,.rg-organic-table td.item{{width:44%;text-align:left}}
-.rg-organic-table th:nth-child(2),.rg-organic-table th:nth-child(3),.rg-organic-table th:nth-child(4){{width:13%}}
-.rg-organic-table th:nth-child(5){{width:17%}}
-.rg-organic-table td.organic,.rg-organic-table td.ratio{{background:#f2fbf5;font-weight:700;color:#176b3a}}
-.rg-organic-table tr:hover td{{background:#f8fafc}}
-.rg-organic-table tr:hover td.organic,.rg-organic-table tr:hover td.ratio{{background:#eaf8ef}}
-.rg-organic-table th:last-child,.rg-organic-table td:last-child{{border-right:none}}
+.rg-organic-table thead th{{position:sticky;top:0;z-index:2;background:#edf3f8!important;color:#334155;font-weight:750;text-align:center!important;vertical-align:middle!important;padding:11px 10px;border-bottom:1px solid #cbd5e1;border-right:1px solid #dde5ed;white-space:nowrap}}
+.rg-organic-table tbody td{{text-align:center!important;vertical-align:middle!important;padding:10px 10px;border-bottom:1px solid #e7edf3;border-right:1px solid #edf1f5;font-variant-numeric:tabular-nums}}
+.rg-organic-table tbody td.num{{text-align:center!important}}
+.rg-organic-table thead th:first-child,.rg-organic-table tbody td.item{{width:44%;text-align:left!important}}
+.rg-organic-table thead th:nth-child(2),.rg-organic-table thead th:nth-child(3),.rg-organic-table thead th:nth-child(4){{width:13%;text-align:center!important}}
+.rg-organic-table thead th:nth-child(5){{width:17%;text-align:center!important}}
+.rg-organic-table tbody td.organic,.rg-organic-table tbody td.ratio{{background:#f2fbf5!important;font-weight:700;color:#176b3a;text-align:center!important}}
+.rg-organic-table tbody tr:hover td{{background:#f8fafc!important}}
+.rg-organic-table tbody tr:hover td.organic,.rg-organic-table tbody tr:hover td.ratio{{background:#eaf8ef!important}}
+.rg-organic-table thead th:last-child,.rg-organic-table tbody td:last-child{{border-right:none}}
 </style>
 <div class="rg-organic-wrap"><table class="rg-organic-table">
 <thead><tr><th>아이템</th><th>판매량</th><th>광고 판매량</th><th>Organic 판매량</th><th>Organic 판매 비율</th></tr></thead>
@@ -66,8 +67,6 @@ def _table_html(frame: pd.DataFrame) -> str:
 
 def apply(core, db=None):
     module = importlib.import_module("organic_sales_estimate_v09211")
-    if getattr(module, "_rg_display_v09216_applied", False):
-        return {"ok": True, "already_applied": True}
 
     def render_page(st_obj, core_obj, db_path=None):
         target = db_path or db or core_obj.DEFAULT_DB
@@ -109,7 +108,6 @@ def apply(core, db=None):
             if col not in frame.columns:
                 frame[col] = 0.0
             frame[col] = pd.to_numeric(frame[col], errors="coerce").fillna(0.0)
-        # Older local organic modules did not have this column. Always calculate it here.
         frame["Organic 판매 비율"] = frame.apply(
             lambda r: (float(r["Organic 판매량"]) / float(r["판매량"]) * 100.0)
             if float(r["판매량"]) > 0 else 0.0,
@@ -121,6 +119,9 @@ def apply(core, db=None):
         frame = frame.sort_values(["판매량", "아이템"], ascending=[False, True], kind="stable").reset_index(drop=True)
         st_obj.markdown(_table_html(frame), unsafe_allow_html=True)
 
+    # Re-assign on every bootstrap. Do not skip just because an older display patch
+    # set a marker; Streamlit reruns/updater refreshes can otherwise keep stale UI.
     module.render_page = render_page
     module._rg_display_v09216_applied = True
-    return {"ok": True, "already_applied": False, "columns": 5, "numeric_alignment": "center"}
+    module._rg_display_v09217_alignment = True
+    return {"ok": True, "columns": 5, "numeric_alignment": "forced-center"}
