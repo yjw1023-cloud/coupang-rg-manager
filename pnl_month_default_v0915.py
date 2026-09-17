@@ -1,7 +1,7 @@
-"""v0.9.188 safe monthly-default routing + live hot-update patches.
+"""v0.9.205 safe monthly-default routing + live hot-update patches.
 
-Existing P&L/BOM/dashboard-status routing remains unchanged. v0.9.188 also
-registers the dedicated sales-analysis page as its own visible sidebar group.
+Existing P&L/BOM/dashboard-status routing remains unchanged. v0.9.205 also
+registers the dedicated sales-analysis page and the quick margin page.
 """
 from __future__ import annotations
 
@@ -160,9 +160,9 @@ def render_grouped_sidebar(st_obj, options, default_page=None):
     lock = importlib.import_module("sidebar_lock_v0921")
     lock.apply(st_obj)
 
-    # v0.9.188: sidebar_groups may already be cached in a running Streamlit
-    # process when the in-app updater replaces this file. Reload it so the new
-    # sales-analysis group appears immediately without restarting the ERP.
+    # sidebar_groups may already be cached in a running Streamlit process when
+    # the in-app updater replaces this file. Reload it so navigation changes are
+    # visible immediately without restarting the ERP.
     sys.modules.pop("sidebar_groups_v0917", None)
     importlib.invalidate_caches()
     m = importlib.import_module("sidebar_groups_v0917")
@@ -172,11 +172,14 @@ def render_grouped_sidebar(st_obj, options, default_page=None):
     goals = importlib.import_module("goal_management_v0979")
     goals.apply_sidebar(m)
     sales_analysis = importlib.import_module("sales_analysis_v09186")
+    simple_margin = importlib.import_module("simple_margin_v09205")
 
     # The grouped sidebar otherwise classifies unknown pages as Data/Admin.
-    # Register sales analysis explicitly as its own visible workflow group.
+    # Keep sales analysis in its dedicated group and place quick margin inside
+    # the existing P&L/settlement workflow group.
     sales_title = "📊 판매분석"
     sales_label = str(sales_analysis.PAGE_LABEL)
+    margin_label = str(simple_margin.PAGE_LABEL)
     groups = getattr(m, "_GROUPS", None)
     if isinstance(groups, list):
         for title, items in groups:
@@ -190,12 +193,34 @@ def render_grouped_sidebar(st_obj, options, default_page=None):
                 if str(title) == sales_title and sales_label not in items:
                     items.append(sales_label)
 
+        for title, items in groups:
+            if margin_label in items and str(title) != "💰 손익·정산":
+                items[:] = [x for x in items if x != margin_label]
+        for title, items in groups:
+            if str(title) == "💰 손익·정산":
+                if margin_label not in items:
+                    # Put it directly after 잠정손익 when that page exists.
+                    insert_at = 1
+                    for idx, label in enumerate(items):
+                        if "잠정손익" in str(label) and "자료별" not in str(label):
+                            insert_at = idx + 1
+                            break
+                    items.insert(insert_at, margin_label)
+                break
+
     runtime_options = [str(x) for x in list(options or [])]
-    for label in (overview.PAGE_LABEL, goals.PAGE_LABEL, sales_label):
+    for label in (overview.PAGE_LABEL, goals.PAGE_LABEL, sales_label, margin_label):
         if label not in runtime_options:
             runtime_options.append(label)
 
-    return m.render_sidebar(st_obj, runtime_options, default_page)
+    current = m.render_sidebar(st_obj, runtime_options, default_page)
+    if current == margin_label:
+        try:
+            simple_margin.render_page(st_obj, importlib.import_module("core"))
+        except Exception as exc:
+            st_obj.error(f"간략이익률 화면을 여는 중 오류가 발생했습니다: {exc}")
+        return "__RG_SIMPLE_MARGIN_RENDERED__"
+    return current
 
 
 def patch_source(source: str) -> str:
