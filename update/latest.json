@@ -1,10 +1,8 @@
 {
-  "version": "0.9.216",
-  "message": "오가닉판매 추정 표의 맨 오른쪽에 Organic 판매 비율을 항상 표시하도록 수정했습니다. 기존 로컬 파일이 이전 버전이어도 판매량 대비 Organic 판매량 비율을 다시 계산해 표시합니다. 숫자열은 가운데 정렬하고 Organic 판매량·Organic 판매 비율 열은 가독성 있게 강조했으며, 표 헤더·구분선·행 간격도 정리했습니다. 이전 업데이트에서 누락됐던 organic_sales_estimate_v09211.py도 이번 업데이트에 강제로 포함합니다.",
+  "version": "0.9.217",
+  "message": "오가닉판매 추정 표의 숫자 가운데 정렬이 전역 CSS에 의해 다시 오른쪽 정렬되던 문제를 수정했습니다. 판매량·광고 판매량·Organic 판매량·Organic 판매 비율의 헤더와 숫자 셀에 가운데 정렬을 강제 적용하고, Streamlit 재실행 시 이전 표시 패치가 남아도 최신 렌더링 함수를 다시 적용하도록 보강했습니다. 아이템명만 가독성을 위해 왼쪽 정렬을 유지합니다.",
   "files": [
     "VERSION.txt",
-    "organic_sales_estimate_v09211.py",
-    "organic_sales_display_v09216.py",
-    "ad_force_cleanup_v09111/__init__.py"
+    "organic_sales_display_v09216.py"
   ]
 }
