@@ -1,8 +1,11 @@
 {
-  "version": "0.9.217",
-  "message": "오가닉판매 추정 표의 숫자 가운데 정렬이 전역 CSS에 의해 다시 오른쪽 정렬되던 문제를 수정했습니다. 판매량·광고 판매량·Organic 판매량·Organic 판매 비율의 헤더와 숫자 셀에 가운데 정렬을 강제 적용하고, Streamlit 재실행 시 이전 표시 패치가 남아도 최신 렌더링 함수를 다시 적용하도록 보강했습니다. 아이템명만 가독성을 위해 왼쪽 정렬을 유지합니다.",
+  "version": "0.9.218",
+  "message": "반품/미등록 판매 옵션 매칭을 ERP 공통 프로세스로 통일했습니다. 오가닉판매 추정·판매분석·잠정손익에서 원상품이 확정되지 않은 옵션을 발견하면 그 화면에서 사용자에게 원상품 선택을 요청하고, 확정 결과는 공통 return_discount_aliases에 저장되어 모든 메뉴가 즉시 공유합니다. 정상 원상품도 같은 옵션ID로 중복 product_id가 있으면 대표 상품 하나로 정규화해 반짇고리·석쇠집게·드릴비트 같은 중복 행이 다시 생기지 않도록 했습니다. 원본 판매/정산 데이터는 삭제하지 않고 화면 집계 단계에서 대표 상품으로 통합합니다.",
   "files": [
     "VERSION.txt",
-    "organic_sales_display_v09216.py"
+    "shared_product_identity_v09215.py",
+    "shared_return_match_ui_v09217.py",
+    "organic_sales_display_v09216.py",
+    "ad_force_cleanup_v09111/__init__.py"
   ]
 }
