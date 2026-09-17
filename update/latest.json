@@ -1,12 +1,10 @@
 {
-  "version": "0.9.221",
-  "message": "현재 DB를 직접 확인한 결과 정상상품 원장 레지스트리가 과거 68개 옵션만 남아 있었습니다. v0.9.221은 2026-09-17 기준 정상 원장 132개(현재 72 + 단종 60)를 실행 시 다시 주입하고, 정상/반품 판별을 옵션ID 기준으로만 처리합니다. 원장 옵션ID와 일치하면 정상상품, 기존 return_discount_aliases에 있으면 확인된 반품, 둘 다 아니면 사용자에게 원상품 매칭을 요청합니다. v0.9.220의 '같은 옵션ID + 다른 product_id' 판별은 제거했습니다. 기존 반품 매핑은 원상품으로 통합 집계되며 실제 판매금액은 원본 판매자료를 유지합니다.",
+  "version": "0.9.222",
+  "message": "반품 판별을 옵션ID 기준으로만 처리하도록 다시 고정했습니다. 정상 원장 옵션ID는 정상상품이며, 원장에 없는 옵션ID는 기존 자동매칭이 있어도 사용자 확인 전에는 확정 반품으로 인정하지 않습니다. 과거 auto_name_unique 등 자동매칭은 화면에서 기존 추천값으로만 제시되고 사용자가 직접 확정해야 합니다. 확정된 반품 옵션은 원상품 옵션ID로 통합되어 오가닉판매 추정·판매분석·잠정손익에서 같은 상품으로 집계됩니다. v0.9.220의 product_id 기반 반품 판별 모듈은 실행 경로에서 완전히 제거했습니다.",
   "files": [
     "VERSION.txt",
-    "canonical_product_rules_v09214.py",
-    "shared_return_match_ui_v09217.py",
     "shared_product_identity_v09215.py",
-    "return_master_match_fix_v09219.py",
+    "shared_return_match_ui_v09217.py",
     "organic_sales_display_v09216.py",
     "ad_force_cleanup_v09111/__init__.py"
   ]
