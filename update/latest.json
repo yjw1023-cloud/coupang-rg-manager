@@ -1,10 +1,9 @@
 {
-  "version": "0.9.218",
-  "message": "반품/미등록 판매 옵션 매칭을 ERP 공통 프로세스로 통일했습니다. 오가닉판매 추정·판매분석·잠정손익에서 원상품이 확정되지 않은 옵션을 발견하면 그 화면에서 사용자에게 원상품 선택을 요청하고, 확정 결과는 공통 return_discount_aliases에 저장되어 모든 메뉴가 즉시 공유합니다. 정상 원상품도 같은 옵션ID로 중복 product_id가 있으면 대표 상품 하나로 정규화해 반짇고리·석쇠집게·드릴비트 같은 중복 행이 다시 생기지 않도록 했습니다. 원본 판매/정산 데이터는 삭제하지 않고 화면 집계 단계에서 대표 상품으로 통합합니다.",
+  "version": "0.9.219",
+  "message": "반품 판매가 별도 상품으로 혼재해 보이면서도 원상품 매칭을 묻지 않던 문제를 수정했습니다. 과거 판매행에서 옵션ID가 이미 정상 원상품 옵션ID로 바뀌어 있어도 product_id가 반품 자식상품을 가리키면 반품으로 감지합니다. 오가닉판매 추정 화면은 집계 전에 이 검사를 강제로 실행하고, 미확정 반품이 있으면 즉시 원상품 선택을 요구한 뒤 return_discount_aliases에 저장합니다. 저장 후에는 같은 반품상품이 원상품 기준으로 통합 집계됩니다.",
   "files": [
     "VERSION.txt",
-    "shared_product_identity_v09215.py",
-    "shared_return_match_ui_v09217.py",
+    "return_master_match_fix_v09219.py",
     "organic_sales_display_v09216.py",
     "ad_force_cleanup_v09111/__init__.py"
   ]
