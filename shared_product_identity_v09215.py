@@ -1,10 +1,8 @@
-"""v0.9.215 single shared product identity for all ERP menus.
+"""v0.9.217 ERP-wide shared product identity.
 
-The authoritative source for returned-item resale -> original product mapping is
-`return_discount_aliases`. Manual mappings confirmed by the user in the
-unmatched-sales dialog are already written to that table with match_method
-`manual_user`; every ERP view must read the same table instead of maintaining a
-menu-local mapping.
+Returned-item mappings live in return_discount_aliases. Verified normal option IDs
+live in coupang_normal_option_registry. Every ERP view resolves both return aliases
+and duplicate product rows to one representative original product before grouping.
 """
 from __future__ import annotations
 
@@ -37,28 +35,23 @@ def _verified_normal_ids(con) -> set[str]:
     if not _exists(con, "coupang_normal_option_registry"):
         return set()
     try:
-        rows = con.execute(
-            "SELECT vendor_item_id FROM coupang_normal_option_registry"
-        ).fetchall()
+        rows = con.execute("SELECT vendor_item_id FROM coupang_normal_option_registry").fetchall()
     except Exception:
         return set()
     return {_oid(r["vendor_item_id"]) for r in rows if _oid(r["vendor_item_id"])}
 
 
 def alias_maps(core, db):
-    """Return the ERP-wide child-option/child-product -> original-product maps."""
+    """Return only confirmed returned-item alias maps."""
     core.init_db(db)
     with core._conn(db) as con:
         if not _exists(con, "return_discount_aliases"):
             return {}, {}
         normal_ids = _verified_normal_ids(con)
         rows = con.execute(
-            """SELECT a.discount_option_id,a.parent_product_id,
-                      p.option_id AS parent_option_id
-               FROM return_discount_aliases a
-               LEFT JOIN products p ON p.id=a.parent_product_id"""
+            """SELECT a.discount_option_id,a.parent_product_id,p.option_id AS parent_option_id
+               FROM return_discount_aliases a LEFT JOIN products p ON p.id=a.parent_product_id"""
         ).fetchall()
-
         by_oid = {}
         for r in rows:
             child_oid = _oid(r["discount_option_id"])
@@ -69,7 +62,6 @@ def alias_maps(core, db):
             except Exception:
                 continue
             by_oid[child_oid] = (parent_pid, _oid(r["parent_option_id"]))
-
         by_pid = {}
         if by_oid and _exists(con, "products"):
             marks = ",".join("?" for _ in by_oid)
@@ -84,21 +76,77 @@ def alias_maps(core, db):
     return by_oid, by_pid
 
 
+def normal_maps(core, db):
+    """Map every duplicate DB row for a verified normal option to one representative."""
+    core.init_db(db)
+    with core._conn(db) as con:
+        normal_ids = _verified_normal_ids(con)
+        if not normal_ids or not _exists(con, "products"):
+            return {}, {}
+        marks = ",".join("?" for _ in normal_ids)
+        rows = con.execute(
+            f"""SELECT id,item_code,option_id,name,item_type,unit_cost,active
+                FROM products WHERE CAST(option_id AS TEXT) IN ({marks})""",
+            tuple(sorted(normal_ids)),
+        ).fetchall()
+
+    grouped = {}
+    for r in rows:
+        oid = _oid(r["option_id"])
+        if oid:
+            grouped.setdefault(oid, []).append(dict(r))
+
+    def score(p):
+        oid = _oid(p.get("option_id"))
+        code = _oid(p.get("item_code"))
+        return (
+            1 if str(p.get("item_type") or "") == "finished" else 0,
+            1 if code != oid else 0,
+            1 if float(p.get("unit_cost") or 0) > 0 else 0,
+            1 if int(p.get("active") or 0) else 0,
+            -int(p.get("id") or 0),
+        )
+
+    by_oid, by_pid = {}, {}
+    for oid, ps in grouped.items():
+        rep = max(ps, key=score)
+        target = (int(rep["id"]), oid)
+        by_oid[oid] = target
+        for p in ps:
+            by_pid[int(p["id"])] = target
+    return by_oid, by_pid
+
+
+def canonical_maps(core, db):
+    """One resolver map used by all analytical views before aggregation."""
+    ret_oid, ret_pid = alias_maps(core, db)
+    normal_oid, normal_pid = normal_maps(core, db)
+    by_oid = dict(normal_oid)
+    by_oid.update(ret_oid)
+    by_pid = dict(normal_pid)
+    by_pid.update(ret_pid)
+    return by_oid, by_pid
+
+
 def resolve(core, db, product_id=None, option_id=None):
-    """Resolve any sale/ad/order row to its one canonical original product."""
-    by_oid, by_pid = alias_maps(core, db)
+    ret_oid, ret_pid = alias_maps(core, db)
+    norm_oid, norm_pid = normal_maps(core, db)
     oid = _oid(option_id)
     try:
         pid = int(float(product_id or 0))
     except Exception:
         pid = 0
-    target = by_oid.get(oid) or by_pid.get(pid)
+
+    target = ret_oid.get(oid) or ret_pid.get(pid)
+    is_return = bool(target)
+    if not target:
+        target = norm_oid.get(oid) or norm_pid.get(pid)
     if target:
         parent_pid, parent_oid = target
         return {
             "product_id": int(parent_pid),
             "option_id": _oid(parent_oid),
-            "is_return_alias": True,
+            "is_return_alias": is_return,
             "source_option_id": oid,
         }
     return {
@@ -109,46 +157,39 @@ def resolve(core, db, product_id=None, option_id=None):
     }
 
 
-def _hide_alias_products(core, db) -> int:
-    """Keep technical return child rows for history but never expose as normal SKUs."""
-    by_oid, _ = alias_maps(core, db)
-    if not by_oid:
-        return 0
+def _hide_noncanonical_products(core, db) -> int:
+    ret_oid, _ = alias_maps(core, db)
+    norm_oid, norm_pid = normal_maps(core, db)
     now = core.now_iso()
     hidden = 0
     with core._conn(db) as con:
-        con.execute(
-            """CREATE TABLE IF NOT EXISTS system_hidden_products(
-                   product_id INTEGER PRIMARY KEY,
-                   reason TEXT NOT NULL,
-                   hidden_at TEXT NOT NULL
-               )"""
-        )
-        marks = ",".join("?" for _ in by_oid)
-        rows = con.execute(
-            f"SELECT id,option_id FROM products WHERE CAST(option_id AS TEXT) IN ({marks})",
-            tuple(sorted(by_oid)),
-        ).fetchall()
+        con.execute("""CREATE TABLE IF NOT EXISTS system_hidden_products(
+          product_id INTEGER PRIMARY KEY,reason TEXT NOT NULL,hidden_at TEXT NOT NULL)""")
+        rows = con.execute("SELECT id,option_id FROM products").fetchall() if _exists(con, "products") else []
         for r in rows:
             pid = int(r["id"])
-            con.execute(
-                """INSERT INTO system_hidden_products(product_id,reason,hidden_at)
-                   VALUES(?,?,?)
-                   ON CONFLICT(product_id) DO UPDATE SET
-                     reason=excluded.reason,hidden_at=excluded.hidden_at""",
-                (pid, "return_alias_shared_v09215", now),
-            )
-            con.execute("UPDATE products SET active=0 WHERE id=?", (pid,))
-            hidden += 1
+            oid = _oid(r["option_id"])
+            reason = None
+            if oid in ret_oid:
+                reason = "return_alias_shared_v09217"
+            elif oid in norm_oid and norm_pid.get(pid, (pid, oid))[0] != pid:
+                reason = "duplicate_normal_product_v09217"
+            if reason:
+                con.execute(
+                    """INSERT INTO system_hidden_products(product_id,reason,hidden_at)
+                       VALUES(?,?,?) ON CONFLICT(product_id) DO UPDATE SET
+                       reason=excluded.reason,hidden_at=excluded.hidden_at""",
+                    (pid, reason, now),
+                )
+                con.execute("UPDATE products SET active=0 WHERE id=?", (pid,))
+                hidden += 1
     return hidden
 
 
 def _patch_v214(core, db):
-    """Make every v0.9.214 analytical patch read this one live alias map."""
     try:
         rules = importlib.import_module("canonical_product_rules_v09214")
-        rules._alias_maps = alias_maps
-        # Re-run lightweight view patch installers. Existing wrappers are idempotent.
+        rules._alias_maps = canonical_maps
         try:
             rules._patch_return_hide(core)
         except Exception:
@@ -169,16 +210,11 @@ def _patch_v214(core, db):
 def apply(core, db=None):
     db = db or core.DEFAULT_DB
     core.init_db(db)
-
-    hidden = _hide_alias_products(core, db)
+    hidden = _hide_noncanonical_products(core, db)
     patched = _patch_v214(core, db)
 
-    # These are the only public product-identity entry points other modules
-    # should need. They always query the shared DB table, so a manual decision
-    # made in 잠정실적 is immediately visible to every menu on the next query.
-    core.rg_return_alias_maps = lambda db_path=None: alias_maps(
-        core, db_path or core.DEFAULT_DB
-    )
+    core.rg_return_alias_maps = lambda db_path=None: alias_maps(core, db_path or core.DEFAULT_DB)
+    core.rg_canonical_product_maps = lambda db_path=None: canonical_maps(core, db_path or core.DEFAULT_DB)
     core.rg_resolve_product_identity = lambda product_id=None, option_id=None, db_path=None: resolve(
         core, db_path or core.DEFAULT_DB, product_id, option_id
     )
@@ -188,7 +224,7 @@ def apply(core, db=None):
 
     return {
         "ok": True,
-        "source": "return_discount_aliases",
-        "hidden_return_children": hidden,
+        "source": "normal_registry+return_discount_aliases",
+        "hidden_noncanonical_products": hidden,
         "v09214_patched": patched,
     }
