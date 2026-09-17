@@ -1,10 +1,8 @@
-"""v0.9.217 shared unresolved return-sale matcher.
+"""v0.9.222 shared unresolved return-sale matcher.
 
-Any ERP screen that encounters a Coupang option outside the verified normal-option
-registry and outside the shared return alias table must ask the user which original
-product it belongs to. The answer is written once to return_discount_aliases and is
-therefore immediately shared by Organic Sales, provisional P&L, Sales Analysis and
-future sales imports.
+Verified master option IDs are normal products. Every non-master option must be
+explicitly confirmed by the user before it is treated as a return alias. Legacy
+automatic aliases are suggestions only and are not considered confirmed.
 """
 from __future__ import annotations
 
@@ -49,12 +47,34 @@ def _normal_ids(core, db) -> set[str]:
     return {_oid(r["vendor_item_id"]) for r in rows if _oid(r["vendor_item_id"])}
 
 
-def _alias_ids(core, db) -> set[str]:
+def _alias_state(core, db):
+    """Return (manually confirmed option IDs, legacy suggested parent IDs)."""
+    confirmed, suggested = set(), {}
     with core._conn(db) as c:
         if not _exists(c, "return_discount_aliases"):
-            return set()
-        rows = c.execute("SELECT discount_option_id FROM return_discount_aliases").fetchall()
-    return {_oid(r["discount_option_id"]) for r in rows if _oid(r["discount_option_id"])}
+            return confirmed, suggested
+        cols = _cols(c, "return_discount_aliases")
+        method_expr = "match_method" if "match_method" in cols else "'' AS match_method"
+        rows = c.execute(
+            f"SELECT discount_option_id,parent_product_id,{method_expr} FROM return_discount_aliases"
+        ).fetchall()
+    for r in rows:
+        oid = _oid(r["discount_option_id"])
+        if not oid:
+            continue
+        method = str(r["match_method"] or "")
+        if method.startswith("manual"):
+            confirmed.add(oid)
+        else:
+            try:
+                suggested[oid] = int(r["parent_product_id"])
+            except Exception:
+                pass
+    return confirmed, suggested
+
+
+def _alias_ids(core, db) -> set[str]:
+    return _alias_state(core, db)[0]
 
 
 def _normal_products(core, db) -> list[dict]:
@@ -65,7 +85,7 @@ def _normal_products(core, db) -> list[dict]:
         rows = c.execute(
             "SELECT id,item_code,option_id,name,item_type,unit_cost,active FROM products"
         ).fetchall()
-    grouped: dict[str, list[dict]] = {}
+    grouped = {}
     for r in rows:
         p = dict(r)
         oid = _oid(p.get("option_id"))
@@ -73,7 +93,7 @@ def _normal_products(core, db) -> list[dict]:
             p["option_id"] = oid
             grouped.setdefault(oid, []).append(p)
 
-    def score(p: dict):
+    def score(p):
         code = _oid(p.get("item_code"))
         oid = _oid(p.get("option_id"))
         return (
@@ -86,8 +106,7 @@ def _normal_products(core, db) -> list[dict]:
 
     out = []
     for oid, ps in grouped.items():
-        rep = max(ps, key=score)
-        out.append(rep)
+        out.append(max(ps, key=score))
     out.sort(key=lambda p: (str(p.get("name") or ""), str(p.get("option_id") or "")))
     return out
 
@@ -98,11 +117,6 @@ def _product_label(p: dict) -> str:
 
 
 def _save_alias(core, db, child_oid: str, child_name: str, parent_pid: int):
-    try:
-        import return_discount_v099 as rd
-        rd._ensure_schema(core, db)
-    except Exception:
-        pass
     now = core.now_iso()
     with core._conn(db) as c:
         c.execute("""CREATE TABLE IF NOT EXISTS return_discount_aliases(
@@ -137,7 +151,7 @@ def _save_alias(core, db, child_oid: str, child_name: str, parent_pid: int):
                     """INSERT INTO system_hidden_products(product_id,reason,hidden_at)
                        VALUES(?,?,?) ON CONFLICT(product_id) DO UPDATE SET
                        reason=excluded.reason,hidden_at=excluded.hidden_at""",
-                    (pid, "return_alias_manual_shared_v09217", now),
+                    (pid, "return_alias_manual_shared_v09222", now),
                 )
                 c.execute("UPDATE products SET active=0 WHERE id=?", (pid,))
 
@@ -161,31 +175,35 @@ def _ask(core, db, items: list[dict], source: str) -> bool:
     name = str(item.get("name") or f"옵션ID {oid}")
     qty = item.get("qty")
     ordered = sorted(products, key=lambda p: _candidate_score(item, p), reverse=True)
+    suggested = int(item.get("suggested_parent_id") or 0)
+    if suggested:
+        ordered.sort(key=lambda p: 0 if int(p["id"]) == suggested else 1)
     ids = [int(p["id"]) for p in ordered]
     by_id = {int(p["id"]): p for p in ordered}
 
     st.warning(
-        f"{source}에서 원상품이 확정되지 않은 반품/미등록 판매 옵션을 발견했습니다. "
-        "원상품을 한 번 선택하면 ERP 전체에서 같은 매핑을 공유합니다."
+        f"{source}에서 사용자 확인이 필요한 반품 옵션을 발견했습니다. "
+        "기존 자동매칭은 확정으로 인정하지 않으며, 한 번 직접 확인하면 ERP 전체에서 공유합니다."
     )
     with st.container(border=True):
-        st.markdown(f"**매칭 필요: {name}**")
+        st.markdown(f"**매칭 확인: {name}**")
         extra = f" · 판매수량 {qty:g}" if isinstance(qty, (int, float)) else ""
-        st.caption(f"옵션ID {oid}{extra} · 미확정 {len(items)}건 중 1건")
+        old = " · 기존 자동추천 있음" if suggested else ""
+        st.caption(f"옵션ID {oid}{extra}{old} · 미확정 {len(items)}건 중 1건")
         selected = st.selectbox(
             "이 반품상품의 원상품",
             ids,
             format_func=lambda pid: _product_label(by_id[int(pid)]),
-            key=f"_rg_shared_match_v09217_{source}_{oid}",
+            key=f"_rg_shared_match_v09222_{source}_{oid}",
         )
         if st.button(
             "이 원상품으로 확정",
             type="primary",
-            key=f"_rg_shared_match_save_v09217_{source}_{oid}",
+            key=f"_rg_shared_match_save_v09222_{source}_{oid}",
         ):
             _save_alias(core, db, oid, name, int(selected))
             try:
-                st.toast("매핑을 공통 상품원장에 저장했습니다.", icon="✅")
+                st.toast("사용자 확정 매핑을 저장했습니다.", icon="✅")
             except Exception:
                 pass
             st.rerun()
@@ -195,20 +213,14 @@ def _ask(core, db, items: list[dict], source: str) -> bool:
 
 def _row_identity(core, db, product_id, option_id):
     oid = _oid(option_id)
-    if not oid and product_id:
-        try:
-            with core._conn(db) as c:
-                r = c.execute("SELECT option_id,name FROM products WHERE id=?", (int(product_id),)).fetchone()
-            if r:
-                return _oid(r["option_id"]), str(r["name"] or "")
-        except Exception:
-            pass
     name = ""
     if product_id:
         try:
             with core._conn(db) as c:
-                r = c.execute("SELECT name FROM products WHERE id=?", (int(product_id),)).fetchone()
+                r = c.execute("SELECT option_id,name FROM products WHERE id=?", (int(product_id),)).fetchone()
             if r:
+                if not oid:
+                    oid = _oid(r["option_id"])
                 name = str(r["name"] or "")
         except Exception:
             pass
@@ -217,7 +229,7 @@ def _row_identity(core, db, product_id, option_id):
 
 def period_unmatched(core, db, start, end) -> list[dict]:
     normals = _normal_ids(core, db)
-    aliases = _alias_ids(core, db)
+    confirmed, suggested = _alias_state(core, db)
     with core._conn(db) as c:
         if not (_exists(c, "imports") and _exists(c, "sales_stats")):
             return []
@@ -248,13 +260,14 @@ def period_unmatched(core, db, start, end) -> list[dict]:
     for r in rows:
         pid = int(r["product_id"] or 0) if "product_id" in r.keys() else 0
         oid, pname = _row_identity(core, db, pid, r["option_id"] if "option_id" in r.keys() else "")
-        if not oid or oid in normals or oid in aliases:
+        if not oid or oid in normals or oid in confirmed:
             continue
         out[oid] = {
             "option_id": oid,
             "product_id": pid,
             "name": pname or f"옵션ID {oid}",
             "qty": float(r["qty"] or 0),
+            "suggested_parent_id": suggested.get(oid),
         }
     return list(out.values())
 
@@ -263,7 +276,7 @@ def frame_unmatched(core, db, frame) -> list[dict]:
     if frame is None or getattr(frame, "empty", True):
         return []
     normals = _normal_ids(core, db)
-    aliases = _alias_ids(core, db)
+    confirmed, suggested = _alias_state(core, db)
     oidcol = next((c for c in ("옵션ID", "쿠팡 옵션ID", "option_id") if c in frame.columns), None)
     pidcol = "product_id" if "product_id" in frame.columns else None
     if oidcol is None and pidcol is None:
@@ -277,7 +290,7 @@ def frame_unmatched(core, db, frame) -> list[dict]:
             except Exception:
                 pid = 0
         oid, pname = _row_identity(core, db, pid, row.get(oidcol) if oidcol else "")
-        if not oid or oid in normals or oid in aliases:
+        if not oid or oid in normals or oid in confirmed:
             continue
         name = str(row.get("상품명") or row.get("아이템") or pname or f"옵션ID {oid}")
         qty = row.get("판매수량") if "판매수량" in frame.columns else None
@@ -285,7 +298,13 @@ def frame_unmatched(core, db, frame) -> list[dict]:
             qty = float(qty) if qty is not None else None
         except Exception:
             qty = None
-        out[oid] = {"option_id": oid, "product_id": pid, "name": name, "qty": qty}
+        out[oid] = {
+            "option_id": oid,
+            "product_id": pid,
+            "name": name,
+            "qty": qty,
+            "suggested_parent_id": suggested.get(oid),
+        }
     return list(out.values())
 
 
@@ -301,41 +320,38 @@ def apply(core, db=None):
     db = db or core.DEFAULT_DB
     core.init_db(db)
 
-    # Organic sales: ask before raw rows are aggregated and lose option identity.
     try:
         import organic_sales_estimate_v09211 as organic
         old = getattr(organic, "_organic_estimate_data", None)
-        if callable(old) and not getattr(old, "_rg_shared_match_v09217", False):
+        if callable(old) and not getattr(old, "_rg_shared_match_v09222", False):
             def wrapped(core_obj, sales_module, db_path, start, end, _old=old):
                 ensure_period_mappings(core_obj, db_path, start, end, "오가닉판매 추정")
                 return _old(core_obj, sales_module, db_path, start, end)
-            wrapped._rg_shared_match_v09217 = True
+            wrapped._rg_shared_match_v09222 = True
             organic._organic_estimate_data = wrapped
     except Exception:
         pass
 
-    # Sales analysis uses the same shared matcher and table.
     try:
         import sales_analysis_v09186 as sales
         old = getattr(sales, "_sales_stats", None)
-        if callable(old) and not getattr(old, "_rg_shared_match_v09217", False):
+        if callable(old) and not getattr(old, "_rg_shared_match_v09222", False):
             def wrapped_sales(core_obj, db_path, start, end, _old=old):
                 ensure_period_mappings(core_obj, db_path, start, end, "판매분석")
                 return _old(core_obj, db_path, start, end)
-            wrapped_sales._rg_shared_match_v09217 = True
+            wrapped_sales._rg_shared_match_v09222 = True
             sales._sales_stats = wrapped_sales
     except Exception:
         pass
 
-    # Provisional P&L: ask from the actual rows about to be calculated.
     try:
         import provisional_pnl_ui_v0913 as pnl
         old = getattr(pnl, "_apply_existing_rules", None)
-        if callable(old) and not getattr(old, "_rg_shared_match_v09217", False):
+        if callable(old) and not getattr(old, "_rg_shared_match_v09222", False):
             def wrapped_pnl(core_obj, db_path, data, _old=old):
                 ensure_frame_mappings(core_obj, db_path, data, "잠정손익")
                 return _old(core_obj, db_path, data)
-            wrapped_pnl._rg_shared_match_v09217 = True
+            wrapped_pnl._rg_shared_match_v09222 = True
             pnl._apply_existing_rules = wrapped_pnl
     except Exception:
         pass
@@ -346,4 +362,4 @@ def apply(core, db=None):
     core.rg_ensure_return_mappings_for_frame = lambda frame, source="ERP", db_path=None: ensure_frame_mappings(
         core, db_path or core.DEFAULT_DB, frame, source
     )
-    return {"ok": True, "shared_table": "return_discount_aliases"}
+    return {"ok": True, "shared_table": "return_discount_aliases", "confirmation": "manual_only"}
