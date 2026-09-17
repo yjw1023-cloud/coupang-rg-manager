@@ -1,8 +1,8 @@
-"""v0.9.214 runtime wrapper.
+"""v0.9.215 runtime wrapper.
 
 The package intentionally shadows ad_force_cleanup_v09111.py. It delegates all
 legacy bootstrap work to that file, then applies the authoritative normal-product
-registry / return-sale rollup rules.
+registry / return-sale rollup rules and the ERP-wide shared product identity.
 """
 from __future__ import annotations
 
@@ -27,6 +27,7 @@ def _load_legacy():
 def apply(core, db=None):
     legacy = _load_legacy()
     result = legacy.apply(core, db)
+
     try:
         rules = importlib.import_module("canonical_product_rules_v09214")
         rules = importlib.reload(rules)
@@ -34,6 +35,16 @@ def apply(core, db=None):
     except Exception as exc:
         canonical = {"ok": False, "error": str(exc)}
         print(f"RG Manager v0.9.214 canonical product rules failed: {exc}")
+
+    try:
+        shared = importlib.import_module("shared_product_identity_v09215")
+        shared = importlib.reload(shared)
+        shared_identity = shared.apply(core, db)
+    except Exception as exc:
+        shared_identity = {"ok": False, "error": str(exc)}
+        print(f"RG Manager v0.9.215 shared product identity failed: {exc}")
+
     if isinstance(result, dict):
         result["canonical_product_rules_v09214"] = canonical
+        result["shared_product_identity_v09215"] = shared_identity
     return result
