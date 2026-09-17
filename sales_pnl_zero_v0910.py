@@ -17,6 +17,11 @@ from being mistaken for auto-created return-discount placeholders.
 v0.9.91 also bootstraps the advertising-period repair from a module that app.py
 always imports directly.  This avoids relying on Python's optional sitecustomize
 startup hook, which is not guaranteed in the packaged Streamlit launch path.
+
+v0.9.195 adds operator confirmation for ambiguous returned-item resale matching.
+Uncertain options are never guessed: they are staged and shown as a confirmation
+card on the sales-stat upload / product P&L screens until the operator either links
+them to an original product or confirms that they are a normal new product.
 """
 from __future__ import annotations
 
@@ -91,9 +96,16 @@ def apply() -> None:
     # v0.9.41: return_discount_v099 is already imported/applied before this module
     # in app.py.  Its import wrapper resolves _resolve at runtime, so replacing the
     # module resolver here immediately affects subsequent 판매통계 uploads.
+    import core
     import return_discount_v099
     import sales_import_guard_v0941
     sales_import_guard_v0941.apply(return_discount_v099)
+
+    # v0.9.195: the strict matcher still decides what is safe to auto-link.  This
+    # layer only handles the unresolved remainder by asking the operator instead
+    # of leaving a separate return-sale product row behind.
+    import return_sale_confirm_v09195
+    return_sale_confirm_v09195.apply(return_discount_v099, core)
 
     if _APPLIED or getattr(st, "_rg_sales_pnl_zero_v0910", False):
         return
@@ -102,6 +114,12 @@ def apply() -> None:
 
     def dataframe(data=None, *args, **kwargs):
         if _is_product_sales_pnl(data):
+            try:
+                return_sale_confirm_v09195.render_pending(
+                    st, core, core.DEFAULT_DB, location="pnl"
+                )
+            except Exception as exc:
+                st.caption(f"반품 재판매 확인 목록을 불러오지 못했습니다: {exc}")
             data = _filter_zero_qty(data)
             if "height" in kwargs:
                 try:
