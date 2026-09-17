@@ -1,8 +1,9 @@
-"""v0.9.219 runtime wrapper.
+"""v0.9.221 runtime wrapper.
 
-Delegates legacy bootstrap work, then applies authoritative normal-product rules,
-ERP-wide shared product identity, Organic display hardening, the shared unresolved
-return-sale matching UI, and the v0.9.219 product_id-child detection fix.
+Delegates legacy bootstrap work, then installs the authoritative normal-product
+registry, shared product identity, Organic display and the shared return matcher.
+Normal-product seeding is intentionally separated from the old automatic return
+repair: unresolved return option IDs must be confirmed by the user.
 """
 from __future__ import annotations
 
@@ -27,11 +28,29 @@ def _load_legacy():
 def apply(core, db=None):
     legacy = _load_legacy()
     result = legacy.apply(core, db)
+    target = db or core.DEFAULT_DB
 
     try:
         rules = importlib.import_module("canonical_product_rules_v09214")
         rules = importlib.reload(rules)
-        canonical = rules.apply(core, db)
+        core.init_db(target)
+        # Safe authoritative master setup only. Do NOT call rules.apply() here,
+        # because its legacy one-time repair can auto-match returns without user
+        # confirmation.
+        rules._seed_registry(core, target)
+        rules._sync_visibility(core, target)
+        rules._patch_return_hide(core)
+        sales = rules._patch_sales_analysis()
+        organic = rules._patch_organic()
+        canonical = {
+            "ok": True,
+            "active": len(rules.ACTIVE_IDS),
+            "discontinued": len(rules.DISCONTINUED_IDS),
+            "return_repaired": 0,
+            "sales_analysis": sales,
+            "organic": organic,
+            "matching_policy": "manual_only",
+        }
     except Exception as exc:
         canonical = {"ok": False, "error": str(exc)}
         print(f"RG Manager canonical product rules failed: {exc}")
@@ -39,7 +58,7 @@ def apply(core, db=None):
     try:
         shared = importlib.import_module("shared_product_identity_v09215")
         shared = importlib.reload(shared)
-        shared_identity = shared.apply(core, db)
+        shared_identity = shared.apply(core, target)
     except Exception as exc:
         shared_identity = {"ok": False, "error": str(exc)}
         print(f"RG Manager shared product identity failed: {exc}")
@@ -47,7 +66,7 @@ def apply(core, db=None):
     try:
         display = importlib.import_module("organic_sales_display_v09216")
         display = importlib.reload(display)
-        organic_display = display.apply(core, db)
+        organic_display = display.apply(core, target)
     except Exception as exc:
         organic_display = {"ok": False, "error": str(exc)}
         print(f"RG Manager organic display patch failed: {exc}")
@@ -55,7 +74,7 @@ def apply(core, db=None):
     try:
         matcher = importlib.import_module("shared_return_match_ui_v09217")
         matcher = importlib.reload(matcher)
-        shared_matcher = matcher.apply(core, db)
+        shared_matcher = matcher.apply(core, target)
     except Exception as exc:
         shared_matcher = {"ok": False, "error": str(exc)}
         print(f"RG Manager shared return matcher failed: {exc}")
@@ -63,10 +82,10 @@ def apply(core, db=None):
     try:
         hard_fix = importlib.import_module("return_master_match_fix_v09219")
         hard_fix = importlib.reload(hard_fix)
-        return_match_fix = hard_fix.apply(core, db)
+        return_match_fix = hard_fix.apply(core, target)
     except Exception as exc:
         return_match_fix = {"ok": False, "error": str(exc)}
-        print(f"RG Manager v0.9.219 return-master hard fix failed: {exc}")
+        print(f"RG Manager v0.9.221 return-master fix failed: {exc}")
 
     if isinstance(result, dict):
         result["canonical_product_rules_v09214"] = canonical
