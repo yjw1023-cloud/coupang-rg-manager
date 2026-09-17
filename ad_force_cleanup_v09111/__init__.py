@@ -1,7 +1,8 @@
-"""v0.9.216 runtime wrapper.
+"""v0.9.217 runtime wrapper.
 
 Delegates legacy bootstrap work, then applies authoritative normal-product rules,
-ERP-wide shared product identity, and the hardened Organic sales display.
+ERP-wide shared product identity, Organic display hardening, and the shared
+unresolved return-sale matching UI.
 """
 from __future__ import annotations
 
@@ -33,7 +34,7 @@ def apply(core, db=None):
         canonical = rules.apply(core, db)
     except Exception as exc:
         canonical = {"ok": False, "error": str(exc)}
-        print(f"RG Manager v0.9.214 canonical product rules failed: {exc}")
+        print(f"RG Manager canonical product rules failed: {exc}")
 
     try:
         shared = importlib.import_module("shared_product_identity_v09215")
@@ -41,7 +42,7 @@ def apply(core, db=None):
         shared_identity = shared.apply(core, db)
     except Exception as exc:
         shared_identity = {"ok": False, "error": str(exc)}
-        print(f"RG Manager v0.9.215 shared product identity failed: {exc}")
+        print(f"RG Manager shared product identity failed: {exc}")
 
     try:
         display = importlib.import_module("organic_sales_display_v09216")
@@ -49,10 +50,19 @@ def apply(core, db=None):
         organic_display = display.apply(core, db)
     except Exception as exc:
         organic_display = {"ok": False, "error": str(exc)}
-        print(f"RG Manager v0.9.216 organic display patch failed: {exc}")
+        print(f"RG Manager organic display patch failed: {exc}")
+
+    try:
+        matcher = importlib.import_module("shared_return_match_ui_v09217")
+        matcher = importlib.reload(matcher)
+        shared_matcher = matcher.apply(core, db)
+    except Exception as exc:
+        shared_matcher = {"ok": False, "error": str(exc)}
+        print(f"RG Manager shared return matcher failed: {exc}")
 
     if isinstance(result, dict):
         result["canonical_product_rules_v09214"] = canonical
         result["shared_product_identity_v09215"] = shared_identity
         result["organic_sales_display_v09216"] = organic_display
+        result["shared_return_match_ui_v09217"] = shared_matcher
     return result
