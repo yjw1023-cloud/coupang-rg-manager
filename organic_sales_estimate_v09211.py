@@ -1,7 +1,8 @@
-"""Sales-analysis organic sales estimate submenu (v0.9.211).
+"""Organic sales estimate page for Sales Analysis (v0.9.212).
 
 Organic estimate = uploaded total sales quantity - advertising report sales quantity.
 Both sides are compared only on date coverage available in both uploaded sources.
+The page is exposed as a real sidebar submenu under the Sales Analysis group.
 """
 from __future__ import annotations
 
@@ -11,7 +12,8 @@ from typing import Any
 import pandas as pd
 
 
-SUBMENU_LABELS = ("상품 판매분석", "오가닉판매 추정")
+PAGE_TEXT = "🌱  오가닉판매 추정"
+PAGE_LABEL = PAGE_TEXT
 
 
 def _period_days(start: date, end: date) -> set[str]:
@@ -191,7 +193,12 @@ def _fmt_count(value: Any):
     return round(n, 2)
 
 
-def _render_organic(st_obj, core, sales_module, db):
+def render_page(st_obj, core, db_path=None):
+    db = db_path or core.DEFAULT_DB
+    core.init_db(db)
+    st_obj.session_state["_rg_sales_stats_period_active"] = False
+
+    st_obj.markdown("## 🌱 오가닉판매 추정")
     st_obj.caption("입력한 판매자료의 판매량에서 같은 기간 광고성과보고서의 광고 판매량을 빼 Organic 판매량을 추정합니다.")
     days = st_obj.radio(
         "기간",
@@ -199,17 +206,18 @@ def _render_organic(st_obj, core, sales_module, db):
         index=0,
         horizontal=True,
         format_func=lambda n: f"최근 {n}일",
-        key="organic_sales_period_v09211",
+        key="organic_sales_period_v09212",
     )
     end = date.today()
     start = end - timedelta(days=int(days) - 1)
     st_obj.caption(f"조회기간: {start.isoformat()} ~ {end.isoformat()}")
 
+    import sales_analysis_v09186 as sales_module
     frame, covered, ad_qty_available = _organic_estimate_data(core, sales_module, db, start, end)
     wanted = _period_days(start, end)
 
     if not ad_qty_available:
-        st_obj.warning("선택 기간의 광고성과보고서에서 광고 판매량(sales_qty_14)을 확인할 수 없습니다.")
+        st_obj.warning("선택 기간의 광고성과보고서에서 광고 판매량을 확인할 수 없습니다.")
     if len(covered) < len(wanted):
         st_obj.warning(
             f"선택한 최근 {int(days)}일 중 판매자료와 광고자료가 모두 있는 날짜는 {len(covered)}일입니다. "
@@ -236,47 +244,6 @@ def _render_organic(st_obj, core, sales_module, db):
     )
 
 
-class _NoSalesHeading:
-    def __init__(self, base):
-        object.__setattr__(self, "_base", base)
-        object.__setattr__(self, "_suppressed", False)
-
-    def __getattr__(self, name):
-        return getattr(object.__getattribute__(self, "_base"), name)
-
-    def markdown(self, body, *args, **kwargs):
-        if not object.__getattribute__(self, "_suppressed") and str(body).strip() == "## 📊 판매분석":
-            object.__setattr__(self, "_suppressed", True)
-            return None
-        return object.__getattribute__(self, "_base").markdown(body, *args, **kwargs)
-
-
 def apply(sales_module, core):
-    if sales_module is None:
-        return {"ok": False, "reason": "sales module missing"}
-    if getattr(sales_module, "_rg_organic_sales_v09211_applied", False):
-        return {"ok": True, "already_applied": True}
-
-    original = sales_module.render_page
-
-    def render_page(st_obj, pd_obj, core_obj, db_path=None):
-        db = db_path or core_obj.DEFAULT_DB
-        core_obj.init_db(db)
-        st_obj.markdown("## 📊 판매분석")
-        mode = st_obj.radio(
-            "판매분석 메뉴",
-            SUBMENU_LABELS,
-            index=0,
-            horizontal=True,
-            label_visibility="collapsed",
-            key="sales_analysis_submenu_v09211",
-        )
-        if mode == "오가닉판매 추정":
-            st_obj.session_state["_rg_sales_stats_period_active"] = False
-            _render_organic(st_obj, core_obj, sales_module, db)
-            return
-        return original(_NoSalesHeading(st_obj), pd_obj, core_obj, db_path)
-
-    sales_module.render_page = render_page
-    sales_module._rg_organic_sales_v09211_applied = True
-    return {"ok": True, "already_applied": False}
+    """Backward-compatible bootstrap hook. Routing is handled by grouped sidebar."""
+    return {"ok": True, "sidebar_page": PAGE_TEXT}
