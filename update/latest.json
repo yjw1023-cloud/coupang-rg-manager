@@ -1,8 +1,9 @@
 {
-  "version": "0.9.219",
-  "message": "반품 판매가 별도 상품으로 혼재해 보이면서도 원상품 매칭을 묻지 않던 문제를 수정했습니다. 과거 판매행에서 옵션ID가 이미 정상 원상품 옵션ID로 바뀌어 있어도 product_id가 반품 자식상품을 가리키면 반품으로 감지합니다. 오가닉판매 추정 화면은 집계 전에 이 검사를 강제로 실행하고, 미확정 반품이 있으면 즉시 원상품 선택을 요구한 뒤 return_discount_aliases에 저장합니다. 저장 후에는 같은 반품상품이 원상품 기준으로 통합 집계됩니다.",
+  "version": "0.9.220",
+  "message": "원장상품과 반품상품이 같은 정상 옵션ID를 공유하는 경우에도 별도 product_id를 직접 감지하도록 수정했습니다. 이제 원장 대표 product_id가 아닌 판매행을 발견하면 오가닉판매 추정·판매분석·잠정손익에서 사용자에게 원장상품 선택을 요구하고, 결과를 새 공통 return_product_aliases에 product_id 기준으로 저장합니다. 별도 반품 옵션ID가 있는 경우에는 기존 return_discount_aliases도 함께 유지합니다. 확정 후에는 같은 반품상품이 원장상품으로 통합 집계됩니다.",
   "files": [
     "VERSION.txt",
+    "shared_product_identity_v09215.py",
     "return_master_match_fix_v09219.py",
     "organic_sales_display_v09216.py",
     "ad_force_cleanup_v09111/__init__.py"
