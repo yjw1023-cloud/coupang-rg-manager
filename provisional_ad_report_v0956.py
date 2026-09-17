@@ -1,9 +1,7 @@
-"""RG Manager v0.9.227 provisional advertising report upload.
+"""RG Manager v0.9.228 provisional advertising report data support.
 
-Replaces manual monthly ad-spend allocation with Coupang advertising performance
-reports. Advertising spend is attributed by `광고집행 옵션ID`, never by sales ratio.
-The current-month imported-file list is intentionally hidden from the UI while
-stored reports continue to be used for provisional P&L calculations.
+Stored Coupang advertising performance reports remain available for provisional P&L
+calculation, but the upload/list management UI is hidden from the provisional P&L page.
 """
 from __future__ import annotations
 
@@ -226,80 +224,8 @@ def _delete_import(core, db, import_id: int):
 
 
 def render_input(st, core, month: str, db_path=None):
+    """Keep existing stored ad-report data available, but render no upload UI."""
     db = db_path or core.DEFAULT_DB
-    _ensure_schema(core, db)
-
-    box = st.container(border=True)
-    with box:
-        st.markdown("### 광고성과보고서 업로드")
-        st.caption(
-            "쿠팡 광고성과보고서의 `광고집행 옵션ID`별 광고비를 합산해 해당 상품 잠정손익에 직접 반영합니다. "
-            "매출액 비율 배분은 사용하지 않습니다."
-        )
-        uploaded = st.file_uploader(
-            "광고성과보고서 Excel",
-            type=["xlsx", "xls"],
-            key=f"provisional_ad_report_upload_{month}",
-        )
-        if uploaded is not None:
-            raw = uploaded.getvalue()
-            try:
-                grouped, total = _parse_excel(raw)
-                parsed = _period_from_filename(uploaded.name)
-                if parsed:
-                    start, end = parsed
-                    st.info(
-                        f"파일 기간: {start.isoformat()} ~ {end.isoformat()} · "
-                        f"옵션 {len(grouped):,}개 · 광고비 {int(round(total)):,}원"
-                    )
-                else:
-                    y, m = [int(x) for x in month.split("-")]
-                    default_start = date(y, m, 1)
-                    default_end = date.today() if date.today().strftime("%Y-%m") == month else default_start
-                    c1, c2 = st.columns(2)
-                    start = c1.date_input("광고자료 시작일", value=default_start, key=f"ad_report_start_{month}")
-                    end = c2.date_input("광고자료 종료일", value=default_end, key=f"ad_report_end_{month}")
-                    st.info(f"옵션 {len(grouped):,}개 · 광고비 {int(round(total)):,}원")
-
-                if start.strftime("%Y-%m") != month or end.strftime("%Y-%m") != month:
-                    st.error(f"선택한 조회 월({month})과 파일 기간이 다릅니다. 해당 월을 선택한 뒤 업로드해 주세요.")
-                    overlaps = []
-                    period_ok = False
-                else:
-                    overlaps = _overlaps(core, db, start, end)
-                    period_ok = True
-                replace = False
-                if overlaps:
-                    names = ", ".join(
-                        f"{r['period_start']}~{r['period_end']} {r['file_name']}" for r in overlaps[:3]
-                    )
-                    st.warning("기존 광고자료와 기간이 겹칩니다: " + names)
-                    replace = st.checkbox(
-                        "겹치는 기존 광고자료를 삭제하고 이 파일로 교체",
-                        key=f"ad_report_replace_{month}",
-                    )
-
-                if st.button(
-                    "광고성과보고서 저장",
-                    type="primary",
-                    key=f"ad_report_save_{month}",
-                    disabled=not period_ok,
-                ):
-                    try:
-                        result = _save(core, db, uploaded.name, raw, start, end, grouped, replace)
-                        st.success(
-                            f"광고자료를 저장했습니다. 옵션 {result['options']:,}개 · "
-                            f"광고비 {int(round(result['total'])):,}원"
-                        )
-                        st.rerun()
-                    except Exception as exc:
-                        st.error(str(exc))
-            except Exception as exc:
-                st.error(str(exc))
-
-        # Stored ad reports remain loaded and applied to provisional P&L, but the
-        # current-month file list/delete controls are intentionally not rendered.
-
     return load_month(core, month, db)
 
 
