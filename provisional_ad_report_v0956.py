@@ -1,7 +1,9 @@
-"""RG Manager v0.9.56 provisional advertising report upload.
+"""RG Manager v0.9.227 provisional advertising report upload.
 
 Replaces manual monthly ad-spend allocation with Coupang advertising performance
 reports. Advertising spend is attributed by `광고집행 옵션ID`, never by sales ratio.
+The current-month imported-file list is intentionally hidden from the UI while
+stored reports continue to be used for provisional P&L calculations.
 """
 from __future__ import annotations
 
@@ -295,21 +297,8 @@ def render_input(st, core, month: str, db_path=None):
             except Exception as exc:
                 st.error(str(exc))
 
-        current = load_month(core, month, db)
-        if current["imports"]:
-            st.markdown("**현재 이 달에 반영되는 광고자료**")
-            for r in current["imports"]:
-                c1, c2 = st.columns([5, 1])
-                c1.caption(
-                    f"{r['period_start']} ~ {r['period_end']} · {r['file_name']} · "
-                    f"{int(round(float(r['total_ad_spend']))):,}원"
-                )
-                if c2.button("삭제", key=f"delete_ad_report_{r['id']}"):
-                    _delete_import(core, db, int(r["id"]))
-                    st.success("광고자료를 삭제했습니다.")
-                    st.rerun()
-        else:
-            st.caption("현재 선택 월에 업로드된 광고성과보고서가 없습니다.")
+        # Stored ad reports remain loaded and applied to provisional P&L, but the
+        # current-month file list/delete controls are intentionally not rendered.
 
     return load_month(core, month, db)
 
