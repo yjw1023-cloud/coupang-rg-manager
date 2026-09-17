@@ -1,9 +1,10 @@
 {
-  "version": "0.9.215",
-  "message": "잠정실적에서 사용자가 직접 확정한 반품판매→원상품 매칭을 ERP 전체가 하나의 공통 매핑표(return_discount_aliases)에서 공유하도록 통일했습니다. 판매분석·오가닉판매·잠정손익 등 모든 관련 화면은 같은 매핑을 사용하며, 한 번 확정한 반품 옵션은 다른 메뉴에서 다시 별도 정상상품처럼 노출되지 않습니다. 반품 별칭 상품은 기술 이력은 유지하되 일반 상품목록에서는 숨김 처리합니다.",
+  "version": "0.9.216",
+  "message": "오가닉판매 추정 표의 맨 오른쪽에 Organic 판매 비율을 항상 표시하도록 수정했습니다. 기존 로컬 파일이 이전 버전이어도 판매량 대비 Organic 판매량 비율을 다시 계산해 표시합니다. 숫자열은 가운데 정렬하고 Organic 판매량·Organic 판매 비율 열은 가독성 있게 강조했으며, 표 헤더·구분선·행 간격도 정리했습니다. 이전 업데이트에서 누락됐던 organic_sales_estimate_v09211.py도 이번 업데이트에 강제로 포함합니다.",
   "files": [
     "VERSION.txt",
-    "shared_product_identity_v09215.py",
+    "organic_sales_estimate_v09211.py",
+    "organic_sales_display_v09216.py",
     "ad_force_cleanup_v09111/__init__.py"
   ]
 }
