@@ -1,8 +1,10 @@
 {
-  "version": "0.9.220",
-  "message": "원장상품과 반품상품이 같은 정상 옵션ID를 공유하는 경우에도 별도 product_id를 직접 감지하도록 수정했습니다. 이제 원장 대표 product_id가 아닌 판매행을 발견하면 오가닉판매 추정·판매분석·잠정손익에서 사용자에게 원장상품 선택을 요구하고, 결과를 새 공통 return_product_aliases에 product_id 기준으로 저장합니다. 별도 반품 옵션ID가 있는 경우에는 기존 return_discount_aliases도 함께 유지합니다. 확정 후에는 같은 반품상품이 원장상품으로 통합 집계됩니다.",
+  "version": "0.9.221",
+  "message": "현재 DB를 직접 확인한 결과 정상상품 원장 레지스트리가 과거 68개 옵션만 남아 있었습니다. v0.9.221은 2026-09-17 기준 정상 원장 132개(현재 72 + 단종 60)를 실행 시 다시 주입하고, 정상/반품 판별을 옵션ID 기준으로만 처리합니다. 원장 옵션ID와 일치하면 정상상품, 기존 return_discount_aliases에 있으면 확인된 반품, 둘 다 아니면 사용자에게 원상품 매칭을 요청합니다. v0.9.220의 '같은 옵션ID + 다른 product_id' 판별은 제거했습니다. 기존 반품 매핑은 원상품으로 통합 집계되며 실제 판매금액은 원본 판매자료를 유지합니다.",
   "files": [
     "VERSION.txt",
+    "canonical_product_rules_v09214.py",
+    "shared_return_match_ui_v09217.py",
     "shared_product_identity_v09215.py",
     "return_master_match_fix_v09219.py",
     "organic_sales_display_v09216.py",
