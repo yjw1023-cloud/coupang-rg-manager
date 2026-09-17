@@ -1,4 +1,4 @@
-"""v0.9.208 quick Coupang product margin view."""
+"""v0.9.209 quick Coupang product margin view."""
 from __future__ import annotations
 from datetime import date, timedelta
 import html, math
@@ -117,34 +117,41 @@ def _production_cost(core,db,p):
     return {"value":fallback,"note":"최근 생산원가가 없어 품목관리의 현재 원가 사용" if fallback>0 else "생산원가 자료 없음"}
 
 
-def _latest_import(core,db):
+def _sales_imports_desc(core,db):
     try:
         with core._conn(db) as c:
-            if not _exists(c,"imports"): return None
+            if not _exists(c,"imports"): return []
             ic=_cols(c,"imports"); fn="file_name" if "file_name" in ic else "''"; ps="period_start" if "period_start" in ic else "''"; pe="period_end" if "period_end" in ic else "''"
-            r=c.execute(f"SELECT id,{fn} file_name,{ps} period_start,{pe} period_end FROM imports WHERE data_type='sales_stats' ORDER BY id DESC LIMIT 1").fetchone()
-        if not r: return None
-        a=str(r["period_start"] or "")[:10]; b=str(r["period_end"] or "")[:10]; month=(b[:7] or a[:7] or date.today().strftime("%Y-%m"))
-        return {"id":int(r["id"]),"file_name":str(r["file_name"] or ""),"start":a,"end":b,"month":month}
-    except Exception: return None
+            rows=c.execute(f"SELECT id,{fn} file_name,{ps} period_start,{pe} period_end FROM imports WHERE data_type='sales_stats' ORDER BY id DESC").fetchall()
+        out=[]
+        for r in rows:
+            a=str(r["period_start"] or "")[:10]; b=str(r["period_end"] or "")[:10]; month=(b[:7] or a[:7] or date.today().strftime("%Y-%m"))
+            out.append({"id":int(r["id"]),"file_name":str(r["file_name"] or ""),"start":a,"end":b,"month":month})
+        return out
+    except Exception: return []
 
 
 def _sale_price(core,db,p):
-    imp=_latest_import(core,db)
-    if not imp: return {"value":0,"qty":0,"month":date.today().strftime("%Y-%m"),"note":"입력된 판매자료 없음"}
+    imports=_sales_imports_desc(core,db)
+    if not imports: return {"value":0,"qty":0,"month":date.today().strftime("%Y-%m"),"note":"입력된 판매자료 없음"}
     try:
         with core._conn(db) as c:
             sc=_cols(c,"sales_stats") if _exists(c,"sales_stats") else set()
             if not {"import_id","net_qty","displayed_net_sales"}.issubset(sc): raise LookupError
-            if "option_id" in sc:
-                r=c.execute("SELECT SUM(COALESCE(net_qty,0)) qty,SUM(COALESCE(displayed_net_sales,0)) amount FROM sales_stats WHERE import_id=? AND CAST(option_id AS TEXT)=?",(imp["id"],p["option_id"])).fetchone()
-            else:
-                r=c.execute("SELECT SUM(COALESCE(net_qty,0)) qty,SUM(COALESCE(displayed_net_sales,0)) amount FROM sales_stats WHERE import_id=? AND product_id=?",(imp["id"],p["product_id"])).fetchone()
-        q=max(0,_n(r["qty"] if r else 0)); a=max(0,_n(r["amount"] if r else 0))
-    except Exception: q=a=0
-    period=f"{imp['start']}~{imp['end']}" if imp["start"] or imp["end"] else "최근 입력 판매자료"
-    if q>0 and a>0: return {"value":a/q,"qty":q,"month":imp["month"],"note":f"{period} 판매자료 · 신상품 {_qty(q)}개 기준"}
-    return {"value":0,"qty":q,"month":imp["month"],"note":f"{period} 판매자료에 신상품 판매 없음"}
+            for imp in imports:
+                if "option_id" in sc:
+                    r=c.execute("SELECT SUM(COALESCE(net_qty,0)) qty,SUM(COALESCE(displayed_net_sales,0)) amount FROM sales_stats WHERE import_id=? AND CAST(option_id AS TEXT)=?",(imp["id"],p["option_id"])).fetchone()
+                else:
+                    r=c.execute("SELECT SUM(COALESCE(net_qty,0)) qty,SUM(COALESCE(displayed_net_sales,0)) amount FROM sales_stats WHERE import_id=? AND product_id=?",(imp["id"],p["product_id"])).fetchone()
+                q=max(0,_n(r["qty"] if r else 0)); a=max(0,_n(r["amount"] if r else 0))
+                if q<=0 or a<=0:
+                    continue
+                period=f"{imp['start']}~{imp['end']}" if imp["start"] or imp["end"] else "최근 입력 판매자료"
+                return {"value":a/q,"qty":q,"month":imp["month"],"note":f"{period} 판매자료 · 신상품 {_qty(q)}개 기준"}
+    except Exception:
+        pass
+    newest=imports[0]
+    return {"value":0,"qty":0,"month":newest["month"],"note":"입력된 판매자료 전체에서 이 상품의 신상품 판매 없음"}
 
 
 def _prior_qty(core,db,month,p,oids):
@@ -254,7 +261,7 @@ def _table(rows):
 
 
 def render_page(st,core,db_path=None):
-    db=db_path or core.DEFAULT_DB; st.markdown("## 간략이익률"); st.caption("왼쪽 상품목록은 최근 30일 판매량순입니다. 판매단가는 가장 최근에 입력한 판매자료의 신상품 판매단가를 사용합니다.")
+    db=db_path or core.DEFAULT_DB; st.markdown("## 간략이익률"); st.caption("왼쪽 상품목록은 최근 30일 판매량순입니다. 판매단가는 입력한 판매자료 중 이 상품의 신상품 판매가 있는 가장 최근 자료를 사용합니다.")
     try: products=_products(core,db); rank=_rank_qty(core,db,products)
     except Exception as e: st.error(f"쿠팡 판매상품 목록을 불러오지 못했습니다: {e}"); return
     if not products: st.info("선택할 쿠팡 판매상품이 없습니다."); return
@@ -277,5 +284,5 @@ def render_page(st,core,db_path=None):
         st.markdown(f"### {p['name']}"); st.caption(f"옵션ID {p['option_id']}"); a,b,c=st.columns(3); a.metric("판매단가",_money(sale)); b.metric("마진",_money(margin)); c.metric("마진률",_pct(rate))
         rows=[{"항목":"판매단가","단가":_money(r["sale"]["value"]),"비고":r["sale"]["note"]},{"항목":"상품원가","단가":_money(r["cost"]["value"]),"비고":r["cost"]["note"]},{"항목":"수수료","단가":_money(r["commission"]["value"]),"비고":r["commission"]["note"]},{"항목":"입출고배송비","단가":_money(r["logistics"]["value"]),"비고":r["logistics"]["note"]},{"항목":"기타 쿠팡비용","단가":_money(r["other"]["value"]),"비고":r["other"]["note"]},{"항목":"광고비","단가":_money(r["ad"]["value"]),"비고":r["ad"]["note"]},{"항목":f"부가세({VAT_RATE*100:.0f}%)","단가":_money(r["vat"]["value"]),"비고":r["vat"]["note"]},{"항목":"마진","단가":_money(r["margin"]["value"]),"비고":""},{"항목":"마진률","단가":_pct(r["margin_rate"]["value"]),"비고":r["margin_rate"]["note"]}]
         st.markdown(_table(rows),unsafe_allow_html=True)
-        if sale<=0: st.warning("가장 최근 판매자료에 이 상품의 신상품 판매가 없어 판매단가를 계산할 수 없습니다.")
+        if sale<=0: st.warning("입력한 판매자료 전체를 확인했지만 이 상품의 신상품 판매자료를 찾지 못했습니다.")
         st.caption(f"수수료·입출고배송비 기준: {r['current_month']} 잠정실적 직접입력값 우선 · 없으면 {r['prev_month']} 정산 평균")
