@@ -1,7 +1,9 @@
-"""v0.9.217 Organic sales display hardening.
+"""v0.9.219 Organic sales display hardening + forced return-master check.
 
 Guarantees the rightmost Organic sales ratio column and forces numeric/header
-center alignment even when global ERP CSS overrides ordinary table alignment.
+center alignment. Before Organic rows are aggregated, the page now explicitly
+runs the shared return-product matcher so an unresolved returned-item child can
+never silently appear as a separate product row.
 """
 from __future__ import annotations
 
@@ -83,6 +85,26 @@ def apply(core, db=None):
         start = end - timedelta(days=int(days) - 1)
         st_obj.caption(f"조회기간: {start.isoformat()} ~ {end.isoformat()}")
 
+        # v0.9.219: do not rely on import-wrapper order. Force the shared matcher
+        # on this exact page before aggregation. Historical rows can have a normal
+        # row option_id but a product_id that still points at a return child; the
+        # hard-fix module detects that child identity and asks the user once.
+        try:
+            return_match_fix = importlib.import_module("return_master_match_fix_v09219")
+            return_match_fix.apply(core_obj, target)
+            matcher = importlib.import_module("shared_return_match_ui_v09217")
+            matcher.ensure_period_mappings(core_obj, target, start, end, "오가닉판매 추정")
+        except (SystemExit, KeyboardInterrupt):
+            raise
+        except Exception as exc:
+            # Streamlit's st.stop/rerun exceptions must propagate; their class is
+            # intentionally not imported here. Re-raise any BaseException-like
+            # control flow, while ordinary matcher errors remain visible.
+            if exc.__class__.__module__.startswith("streamlit"):
+                raise
+            st_obj.error(f"반품상품 원장 매칭 확인 중 오류가 발생했습니다: {exc}")
+            st_obj.stop()
+
         sales_module = importlib.import_module("sales_analysis_v09186")
         frame, covered, ad_qty_available = module._organic_estimate_data(
             core_obj, sales_module, target, start, end
@@ -123,5 +145,5 @@ def apply(core, db=None):
     # set a marker; Streamlit reruns/updater refreshes can otherwise keep stale UI.
     module.render_page = render_page
     module._rg_display_v09216_applied = True
-    module._rg_display_v09217_alignment = True
-    return {"ok": True, "columns": 5, "numeric_alignment": "forced-center"}
+    module._rg_display_v09219_forced_match = True
+    return {"ok": True, "columns": 5, "numeric_alignment": "forced-center", "forced_return_match": True}
