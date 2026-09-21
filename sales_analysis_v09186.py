@@ -1,4 +1,4 @@
-"""Item sales analysis + return-status sidebar submenu + safe routing bridge (v0.9.232).
+"""Item sales analysis + Excel-only return-status submenu + safe routing bridge (v0.9.233).
 
 Key behavior:
 - product search always searches the ERP product master first;
@@ -569,97 +569,41 @@ def _canonical_product_key(
 
 
 def _return_status_rows(core, db, start: date, end: date):
+    """Build return-status rows from uploaded sales-stat Excel only.
+
+    Both 판매량 and 반품량 come from the same uploaded sales-stat imports.
+    Coupang order/return API data is deliberately excluded from this screen.
+    """
     stats_df, stat_covered = _sales_stats(core, db, start, end)
-    api_covered = _api_coverage_db(core, db, start, end)
-    api_supplement_days = api_covered - stat_covered
-    api_df = _api_sales(core, db, start, end, api_supplement_days)
-    sales_df = _combine_sources(stats_df, api_df)
+    if stats_df is None or stats_df.empty:
+        return pd.DataFrame(
+            columns=["상품명", "판매량", "반품량", "_반품비율"]
+        ), stat_covered
 
     with core._conn(db) as con:
         master, alias_by_oid, by_oid = _canonical_product_context(con)
-        return_covered = _sync_coverage(con, "returns", start, end)
-        totals: dict[str, dict[str, Any]] = {}
 
-        def ensure(key: str, name: str):
-            return totals.setdefault(
-                key,
-                {"상품명": name, "판매량": 0.0, "반품량": 0.0},
-            )
+    totals: dict[str, dict[str, Any]] = {}
 
-        if sales_df is not None and not sales_df.empty:
-            for _, row in sales_df.iterrows():
-                key, name = _canonical_product_key(
-                    row.get("product_id"),
-                    row.get("옵션ID"),
-                    master,
-                    alias_by_oid,
-                    by_oid,
-                )
-                if key:
-                    ensure(key, name)["판매량"] += max(0.0, _num(row.get("판매수량")))
+    def ensure(key: str, name: str):
+        return totals.setdefault(
+            key,
+            {"상품명": name, "판매량": 0.0, "반품량": 0.0},
+        )
 
-        return_rows = []
-        return_match_context = None
-        if _exists(con, "coupang_return_items"):
-            cols = _cols(con, "coupang_return_items")
-            required = {
-                "receipt_id", "order_id", "receipt_type", "created_date",
-                "vendor_item_id", "product_id", "cancel_count",
-            }
-            if required.issubset(cols):
-                withdrawn_clause = ""
-                if _exists(con, "coupang_return_withdrawals"):
-                    withdrawn_clause = """
-                      AND NOT EXISTS (
-                          SELECT 1 FROM coupang_return_withdrawals w
-                          WHERE w.cancel_id=r.receipt_id
-                            AND w.vendor_item_id=r.vendor_item_id
-                      )"""
-                return_rows = con.execute(
-                    f"""SELECT r.product_id,r.order_id,r.vendor_item_id,r.cancel_count
-                        FROM coupang_return_items r
-                        WHERE r.created_date>=? AND r.created_date<=?
-                          AND UPPER(COALESCE(r.receipt_type,'')) NOT LIKE '%CANCEL%'
-                          AND COALESCE(r.cancel_count,0)>0
-                          {withdrawn_clause}""",
-                    (start.isoformat(), end.isoformat()),
-                ).fetchall()
-                try:
-                    import coupang_api_sync_v09140 as api_sync
-                    return_match_context = api_sync._return_match_context(con)
-                except Exception:
-                    return_match_context = None
-
-        for row in return_rows:
-            matched_pid = None
-            if return_match_context is not None:
-                try:
-                    import coupang_api_sync_v09140 as api_sync
-                    matched_pid, _price, _method = api_sync._match_return_item(
-                        return_match_context,
-                        row["order_id"],
-                        row["vendor_item_id"],
-                    )
-                except Exception:
-                    matched_pid = None
-            if matched_pid is None:
-                try:
-                    raw_pid = int(row["product_id"] or 0)
-                except Exception:
-                    raw_pid = 0
-                matched_pid = raw_pid if raw_pid > 0 else None
-            if matched_pid is None:
-                continue
-
-            key, name = _canonical_product_key(
-                matched_pid,
-                row["vendor_item_id"],
-                master,
-                alias_by_oid,
-                by_oid,
-            )
-            if key:
-                ensure(key, name)["반품량"] += abs(_num(row["cancel_count"]))
+    for _, row in stats_df.iterrows():
+        key, name = _canonical_product_key(
+            row.get("product_id"),
+            row.get("옵션ID"),
+            master,
+            alias_by_oid,
+            by_oid,
+        )
+        if not key:
+            continue
+        item = ensure(key, name)
+        item["판매량"] += max(0.0, _num(row.get("판매수량")))
+        item["반품량"] += abs(_num(row.get("취소·반품수량")))
 
     rows = []
     for item in totals.values():
@@ -673,15 +617,18 @@ def _return_status_rows(core, db, start: date, end: date):
             "반품량": returned,
             "_반품비율": (returned / sold * 100.0) if sold > 0 else None,
         })
-    frame = pd.DataFrame(rows, columns=["상품명", "판매량", "반품량", "_반품비율"])
+
+    frame = pd.DataFrame(
+        rows,
+        columns=["상품명", "판매량", "반품량", "_반품비율"],
+    )
     if not frame.empty:
         frame = frame.sort_values(
             ["반품량", "판매량", "상품명"],
             ascending=[False, False, True],
             kind="stable",
         ).reset_index(drop=True)
-    return frame, (stat_covered | api_supplement_days), return_covered
-
+    return frame, stat_covered
 
 def render_return_status_page(st_obj, pd_obj, core, db_path=None):
     db = db_path or core.DEFAULT_DB
@@ -700,25 +647,20 @@ def render_return_status_page(st_obj, pd_obj, core, db_path=None):
     start = _calendar_period_start(end, int(period))
     st_obj.caption(f"조회기간: {start.isoformat()} ~ {end.isoformat()}")
 
-    frame, sales_covered, return_covered = _return_status_rows(
+    frame, sales_covered = _return_status_rows(
         core, db, start, end
     )
     wanted = _days(start, end)
 
     st_obj.caption(
-        "판매량은 선택 기간의 결제 판매량, 반품량은 같은 기간 반품 접수량 기준입니다. "
-        "출고 전 취소와 반품 철회 건은 반품량에서 제외합니다."
+        "판매량과 반품량은 모두 사용자가 업로드한 판매통계 자료만 기준으로 집계합니다. "
+        "주문 API와 반품 API 자료는 이 화면의 계산에 사용하지 않습니다."
     )
 
     if len(sales_covered) < len(wanted):
         st_obj.warning(
-            f"판매자료는 조회기간 {len(wanted)}일 중 {len(sales_covered)}일이 확인됩니다. "
-            "미확인 날짜가 있으면 판매량과 반품비율이 실제와 다를 수 있습니다."
-        )
-    if len(return_covered) < len(wanted):
-        st_obj.warning(
-            f"반품 API 자료는 조회기간 {len(wanted)}일 중 {len(return_covered)}일이 동기화되어 있습니다. "
-            "쿠팡 API 연동에서 반품 동기화를 하지 않은 날짜의 반품은 이 표에 포함되지 않습니다."
+            f"업로드 판매자료는 조회기간 {len(wanted)}일 중 {len(sales_covered)}일이 확인됩니다. "
+            "미확인 날짜가 있으면 판매량·반품량·반품비율이 실제와 다를 수 있습니다."
         )
 
     if frame.empty:
