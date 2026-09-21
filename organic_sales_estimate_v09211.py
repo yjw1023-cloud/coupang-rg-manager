@@ -1,4 +1,4 @@
-"""Organic sales estimate page for Sales Analysis (v0.9.226).
+"""Organic sales estimate page for Sales Analysis (v0.9.229).
 
 Authoritative normal-product source: the user's uploaded product master copied to
 canonical_product_rules_v09214.CURRENT_IDS (132 option IDs). The DB registry is
@@ -644,8 +644,8 @@ def render_page(st_obj, core, db_path=None):
     )
     days = st_obj.radio(
         "기간",
-        (30, 60, 90),
-        index=0,
+        (7, 15, 30, 60, 90),
+        index=2,
         horizontal=True,
         format_func=lambda n: f"최근 {n}일",
         key="organic_sales_period_v09212",
