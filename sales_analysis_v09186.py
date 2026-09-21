@@ -1,4 +1,4 @@
-"""Item sales analysis + safe routing bridge (v0.9.192).
+"""Item sales analysis + return-status menu + safe routing bridge (v0.9.230).
 
 Key behavior:
 - product search always searches the ERP product master first;
@@ -9,6 +9,7 @@ Key behavior:
 from __future__ import annotations
 
 from datetime import date, timedelta
+import calendar
 import math
 import re
 import sys
@@ -435,12 +436,278 @@ def _merge_master_matches(matches: pd.DataFrame, sales: pd.DataFrame) -> pd.Data
     return merged
 
 
+
+def _calendar_period_start(end: date, months: int) -> date:
+    """Inclusive start date for a trailing calendar-month window ending on end."""
+    total = end.year * 12 + (end.month - 1) - int(months)
+    year, month0 = divmod(total, 12)
+    month = month0 + 1
+    day = min(end.day, calendar.monthrange(year, month)[1])
+    return date(year, month, day) + timedelta(days=1)
+
+
+def _sync_coverage(con, sync_type: str, start: date, end: date) -> set[str]:
+    if not _exists(con, "coupang_api_sync_runs"):
+        return set()
+    cols = _cols(con, "coupang_api_sync_runs")
+    needed = {"sync_type", "period_start", "period_end", "status"}
+    if not needed.issubset(cols):
+        return set()
+    rows = con.execute(
+        """SELECT period_start,period_end FROM coupang_api_sync_runs
+           WHERE sync_type=? AND status='success'
+             AND period_end>=? AND period_start<=?""",
+        (str(sync_type), start.isoformat(), end.isoformat()),
+    ).fetchall()
+    covered: set[str] = set()
+    for r in rows:
+        try:
+            a = max(start, date.fromisoformat(str(r["period_start"])[:10]))
+            b = min(end, date.fromisoformat(str(r["period_end"])[:10]))
+            if a <= b:
+                covered |= _days(a, b)
+        except Exception:
+            pass
+    return covered
+
+
+def _canonical_product_context(con):
+    master = _product_master(con)
+    alias_by_oid: dict[str, int] = {}
+    if _exists(con, "return_discount_aliases"):
+        cols = _cols(con, "return_discount_aliases")
+        if {"discount_option_id", "parent_product_id"}.issubset(cols):
+            for r in con.execute(
+                "SELECT discount_option_id,parent_product_id FROM return_discount_aliases"
+            ).fetchall():
+                oid = _oid(r["discount_option_id"])
+                try:
+                    pid = int(r["parent_product_id"] or 0)
+                except Exception:
+                    pid = 0
+                if oid and pid > 0:
+                    alias_by_oid[oid] = pid
+
+    by_oid: dict[str, int] = {}
+    for pid, p in master.items():
+        oid = _oid(p.get("옵션ID"))
+        code = _oid(p.get("상품코드"))
+        if oid and oid not in by_oid:
+            by_oid[oid] = int(pid)
+        if code and code not in by_oid:
+            by_oid[code] = int(pid)
+    return master, alias_by_oid, by_oid
+
+
+def _canonical_product_key(
+    pid_value: Any,
+    oid_value: Any,
+    master: dict[int, dict[str, Any]],
+    alias_by_oid: dict[str, int],
+    by_oid: dict[str, int],
+) -> tuple[str, str]:
+    oid = _oid(oid_value)
+    if oid in alias_by_oid:
+        parent = int(alias_by_oid[oid])
+        p = master.get(parent, {})
+        return f"p:{parent}", str(p.get("상품명") or f"옵션ID {oid}")
+
+    try:
+        pid = int(_num(pid_value))
+    except Exception:
+        pid = 0
+    if pid > 0 and pid in master:
+        p = master[pid]
+        p_oid = _oid(p.get("옵션ID"))
+        if p_oid in alias_by_oid:
+            parent = int(alias_by_oid[p_oid])
+            parent_row = master.get(parent, {})
+            return f"p:{parent}", str(parent_row.get("상품명") or p.get("상품명") or f"옵션ID {oid}")
+        return f"p:{pid}", str(p.get("상품명") or f"옵션ID {oid}")
+
+    mapped = by_oid.get(oid) if oid else None
+    if mapped:
+        p = master.get(int(mapped), {})
+        return f"p:{int(mapped)}", str(p.get("상품명") or f"옵션ID {oid}")
+    if oid:
+        return f"o:{oid}", f"원상품 매칭 필요 (옵션ID {oid})"
+    return "", "원상품 매칭 필요"
+
+
+def _return_status_rows(core, db, start: date, end: date):
+    stats_df, stat_covered = _sales_stats(core, db, start, end)
+    api_covered = _api_coverage_db(core, db, start, end)
+    api_supplement_days = api_covered - stat_covered
+    api_df = _api_sales(core, db, start, end, api_supplement_days)
+    sales_df = _combine_sources(stats_df, api_df)
+
+    with core._conn(db) as con:
+        master, alias_by_oid, by_oid = _canonical_product_context(con)
+        return_covered = _sync_coverage(con, "returns", start, end)
+        totals: dict[str, dict[str, Any]] = {}
+
+        def ensure(key: str, name: str):
+            return totals.setdefault(
+                key,
+                {"상품명": name, "판매량": 0.0, "반품량": 0.0},
+            )
+
+        if sales_df is not None and not sales_df.empty:
+            for _, row in sales_df.iterrows():
+                key, name = _canonical_product_key(
+                    row.get("product_id"),
+                    row.get("옵션ID"),
+                    master,
+                    alias_by_oid,
+                    by_oid,
+                )
+                if key:
+                    ensure(key, name)["판매량"] += max(0.0, _num(row.get("판매수량")))
+
+        return_rows = []
+        if _exists(con, "coupang_return_items") and _exists(con, "coupang_rg_order_items"):
+            cols = _cols(con, "coupang_return_items")
+            required = {
+                "receipt_id", "order_id", "receipt_type", "created_date",
+                "vendor_item_id", "product_id", "cancel_count",
+            }
+            if required.issubset(cols):
+                withdrawn_clause = ""
+                if _exists(con, "coupang_return_withdrawals"):
+                    withdrawn_clause = """
+                      AND NOT EXISTS (
+                          SELECT 1 FROM coupang_return_withdrawals w
+                          WHERE w.cancel_id=r.receipt_id
+                            AND w.vendor_item_id=r.vendor_item_id
+                      )"""
+                return_rows = con.execute(
+                    f"""SELECT r.product_id,r.vendor_item_id,r.cancel_count
+                        FROM coupang_return_items r
+                        WHERE r.created_date>=? AND r.created_date<=?
+                          AND UPPER(COALESCE(r.receipt_type,'')) NOT LIKE '%CANCEL%'
+                          AND COALESCE(r.cancel_count,0)>0
+                          AND EXISTS (
+                              SELECT 1 FROM coupang_rg_order_items o
+                              WHERE o.order_id=r.order_id
+                                AND o.vendor_item_id=r.vendor_item_id
+                          )
+                          {withdrawn_clause}""",
+                    (start.isoformat(), end.isoformat()),
+                ).fetchall()
+
+        for row in return_rows:
+            key, name = _canonical_product_key(
+                row["product_id"],
+                row["vendor_item_id"],
+                master,
+                alias_by_oid,
+                by_oid,
+            )
+            if key:
+                ensure(key, name)["반품량"] += abs(_num(row["cancel_count"]))
+
+    rows = []
+    for item in totals.values():
+        sold = float(item["판매량"])
+        returned = float(item["반품량"])
+        if sold <= 0 and returned <= 0:
+            continue
+        rows.append({
+            "상품명": item["상품명"],
+            "판매량": sold,
+            "반품량": returned,
+            "_반품비율": (returned / sold * 100.0) if sold > 0 else None,
+        })
+    frame = pd.DataFrame(rows, columns=["상품명", "판매량", "반품량", "_반품비율"])
+    if not frame.empty:
+        frame = frame.sort_values(
+            ["반품량", "판매량", "상품명"],
+            ascending=[False, False, True],
+            kind="stable",
+        ).reset_index(drop=True)
+    return frame, (stat_covered | api_supplement_days), return_covered
+
+
+def render_return_status_page(st_obj, pd_obj, core, db_path=None):
+    db = db_path or core.DEFAULT_DB
+    core.init_db(db)
+
+    st_obj.markdown("### 반품 현황")
+    period = st_obj.radio(
+        "조회기간",
+        (1, 2, 3, 6, 12),
+        index=0,
+        horizontal=True,
+        format_func=lambda n: "최근 1년" if int(n) == 12 else f"최근 {int(n)}개월",
+        key="sales_return_period_v09230",
+    )
+    end = date.today()
+    start = _calendar_period_start(end, int(period))
+    st_obj.caption(f"조회기간: {start.isoformat()} ~ {end.isoformat()}")
+
+    frame, sales_covered, return_covered = _return_status_rows(
+        core, db, start, end
+    )
+    wanted = _days(start, end)
+
+    st_obj.caption(
+        "판매량은 선택 기간의 결제 판매량, 반품량은 같은 기간 반품 접수량 기준입니다. "
+        "출고 전 취소와 반품 철회 건은 반품량에서 제외합니다."
+    )
+
+    if len(sales_covered) < len(wanted):
+        st_obj.warning(
+            f"판매자료는 조회기간 {len(wanted)}일 중 {len(sales_covered)}일이 확인됩니다. "
+            "미확인 날짜가 있으면 판매량과 반품비율이 실제와 다를 수 있습니다."
+        )
+    if len(return_covered) < len(wanted):
+        st_obj.warning(
+            f"반품 API 자료는 조회기간 {len(wanted)}일 중 {len(return_covered)}일이 동기화되어 있습니다. "
+            "쿠팡 API 연동에서 반품 동기화를 하지 않은 날짜의 반품은 이 표에 포함되지 않습니다."
+        )
+
+    if frame.empty:
+        st_obj.info("선택 기간에 확인되는 판매 또는 반품 자료가 없습니다.")
+        return
+
+    total_sales = float(pd_obj.to_numeric(frame["판매량"], errors="coerce").fillna(0).sum())
+    total_returns = float(pd_obj.to_numeric(frame["반품량"], errors="coerce").fillna(0).sum())
+    total_rate = (total_returns / total_sales * 100.0) if total_sales > 0 else 0.0
+    a, b, c = st_obj.columns(3)
+    a.metric("판매량", _fmt_qty(total_sales))
+    b.metric("반품량", _fmt_qty(total_returns))
+    c.metric("반품비율", f"{total_rate:.1f}%")
+
+    show = frame.copy()
+    show["판매량"] = show["판매량"].map(lambda v: f"{int(round(_num(v))):,}")
+    show["반품량"] = show["반품량"].map(lambda v: f"{int(round(_num(v))):,}")
+    show["반품비율"] = show["_반품비율"].map(
+        lambda v: "-" if v is None or pd_obj.isna(v) else f"{float(v):.1f}%"
+    )
+    st_obj.dataframe(
+        show[["상품명", "판매량", "반품량", "반품비율"]],
+        use_container_width=True,
+        hide_index=True,
+        height=min(720, max(240, 38 * (len(show) + 1))),
+    )
+
 def render_page(st_obj, pd_obj, core, db_path=None):
     db = db_path or core.DEFAULT_DB
     core.init_db(db)
     st_obj.session_state["_rg_sales_stats_period_active"] = False
 
     st_obj.markdown("## 📊 판매분석")
+    menu = st_obj.radio(
+        "메뉴",
+        ("판매 현황", "반품 현황"),
+        index=0,
+        horizontal=True,
+        key="sales_analysis_menu_v09230",
+    )
+    if menu == "반품 현황":
+        render_return_status_page(st_obj, pd_obj, core, db)
+        return
+
     st_obj.caption("상품을 ERP 전체 상품목록에서 찾은 뒤, 선택 기간의 판매수량을 판매통계와 주문 API로 확인합니다.")
 
     today = date.today()
