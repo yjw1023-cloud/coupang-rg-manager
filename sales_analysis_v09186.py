@@ -1,4 +1,4 @@
-"""Item sales analysis + return-status sidebar submenu + safe routing bridge (v0.9.231).
+"""Item sales analysis + return-status sidebar submenu + safe routing bridge (v0.9.232).
 
 Key behavior:
 - product search always searches the ERP product master first;
@@ -599,7 +599,8 @@ def _return_status_rows(core, db, start: date, end: date):
                     ensure(key, name)["판매량"] += max(0.0, _num(row.get("판매수량")))
 
         return_rows = []
-        if _exists(con, "coupang_return_items") and _exists(con, "coupang_rg_order_items"):
+        return_match_context = None
+        if _exists(con, "coupang_return_items"):
             cols = _cols(con, "coupang_return_items")
             required = {
                 "receipt_id", "order_id", "receipt_type", "created_date",
@@ -615,23 +616,43 @@ def _return_status_rows(core, db, start: date, end: date):
                             AND w.vendor_item_id=r.vendor_item_id
                       )"""
                 return_rows = con.execute(
-                    f"""SELECT r.product_id,r.vendor_item_id,r.cancel_count
+                    f"""SELECT r.product_id,r.order_id,r.vendor_item_id,r.cancel_count
                         FROM coupang_return_items r
                         WHERE r.created_date>=? AND r.created_date<=?
                           AND UPPER(COALESCE(r.receipt_type,'')) NOT LIKE '%CANCEL%'
                           AND COALESCE(r.cancel_count,0)>0
-                          AND EXISTS (
-                              SELECT 1 FROM coupang_rg_order_items o
-                              WHERE o.order_id=r.order_id
-                                AND o.vendor_item_id=r.vendor_item_id
-                          )
                           {withdrawn_clause}""",
                     (start.isoformat(), end.isoformat()),
                 ).fetchall()
+                try:
+                    import coupang_api_sync_v09140 as api_sync
+                    return_match_context = api_sync._return_match_context(con)
+                except Exception:
+                    return_match_context = None
 
         for row in return_rows:
+            matched_pid = None
+            if return_match_context is not None:
+                try:
+                    import coupang_api_sync_v09140 as api_sync
+                    matched_pid, _price, _method = api_sync._match_return_item(
+                        return_match_context,
+                        row["order_id"],
+                        row["vendor_item_id"],
+                    )
+                except Exception:
+                    matched_pid = None
+            if matched_pid is None:
+                try:
+                    raw_pid = int(row["product_id"] or 0)
+                except Exception:
+                    raw_pid = 0
+                matched_pid = raw_pid if raw_pid > 0 else None
+            if matched_pid is None:
+                continue
+
             key, name = _canonical_product_key(
-                row["product_id"],
+                matched_pid,
                 row["vendor_item_id"],
                 master,
                 alias_by_oid,
