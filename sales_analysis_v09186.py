@@ -1,4 +1,4 @@
-"""Item sales analysis + return-status menu + safe routing bridge (v0.9.230).
+"""Item sales analysis + return-status sidebar submenu + safe routing bridge (v0.9.231).
 
 Key behavior:
 - product search always searches the ERP product master first;
@@ -19,19 +19,52 @@ import pandas as pd
 import streamlit as st
 
 PAGE_TEXT = "📊  판매분석"
+RETURN_PAGE_TEXT = "↩️  반품현황"
 
 
 def _install_sidebar_route() -> None:
-    """Render this page from grouped navigation even when an older app.py lacks its branch."""
+    """Expose 판매분석 children in the grouped sidebar and route them safely."""
     sidebar = sys.modules.get("sidebar_groups_v0917")
     if sidebar is None:
         return
     original = getattr(sidebar, "render_sidebar", None)
-    if not callable(original) or getattr(original, "_rg_sales_route_v09192", False):
+    if not callable(original) or getattr(original, "_rg_sales_route_v09231", False):
         return
 
+    sales_title = "📊 판매분석"
+    groups = getattr(sidebar, "_GROUPS", None)
+    if isinstance(groups, list):
+        for title, items in groups:
+            if RETURN_PAGE_TEXT in items and str(title) != sales_title:
+                items[:] = [x for x in items if x != RETURN_PAGE_TEXT]
+        target = None
+        for title, items in groups:
+            if str(title) == sales_title:
+                target = items
+                break
+        if target is None:
+            target = [PAGE_TEXT, RETURN_PAGE_TEXT]
+            groups.insert(1 if groups else 0, (sales_title, target))
+        else:
+            desired = [PAGE_TEXT, RETURN_PAGE_TEXT]
+            others = [x for x in target if x not in desired]
+            target[:] = desired + others
+
     def wrapped(st_obj, options, default_page=None):
-        current = original(st_obj, options, default_page)
+        runtime_options = [str(x) for x in list(options or [])]
+        if RETURN_PAGE_TEXT not in runtime_options:
+            runtime_options.append(RETURN_PAGE_TEXT)
+        current = original(st_obj, runtime_options, default_page)
+
+        if current == RETURN_PAGE_TEXT:
+            try:
+                import core as core_module
+                render_return_status_page(st_obj, pd, core_module)
+            except Exception as exc:
+                st_obj.error(f"반품현황 화면을 여는 중 오류가 발생했습니다: {exc}")
+                st_obj.info("다른 ERP 메뉴는 계속 사용할 수 있습니다. 프로그램 업데이트에서 최신 버전을 적용해 주세요.")
+            return "__RG_RETURN_STATUS_RENDERED__"
+
         if "판매분석" not in str(current):
             return current
         try:
@@ -42,6 +75,7 @@ def _install_sidebar_route() -> None:
             st_obj.info("다른 ERP 메뉴는 계속 사용할 수 있습니다. 프로그램 업데이트에서 최신 버전을 적용해 주세요.")
         return "__RG_SALES_ANALYSIS_RENDERED__"
 
+    wrapped._rg_sales_route_v09231 = True
     wrapped._rg_sales_route_v09192 = True
     wrapped._rg_sales_route_v09191 = True
     sidebar.render_sidebar = wrapped
@@ -697,17 +731,6 @@ def render_page(st_obj, pd_obj, core, db_path=None):
     st_obj.session_state["_rg_sales_stats_period_active"] = False
 
     st_obj.markdown("## 📊 판매분석")
-    menu = st_obj.radio(
-        "메뉴",
-        ("판매 현황", "반품 현황"),
-        index=0,
-        horizontal=True,
-        key="sales_analysis_menu_v09230",
-    )
-    if menu == "반품 현황":
-        render_return_status_page(st_obj, pd_obj, core, db)
-        return
-
     st_obj.caption("상품을 ERP 전체 상품목록에서 찾은 뒤, 선택 기간의 판매수량을 판매통계와 주문 API로 확인합니다.")
 
     today = date.today()
@@ -808,16 +831,35 @@ def patch_source(source: str) -> str:
         anchor = '"📈  잠정손익",'
         if anchor in source:
             source = source.replace(anchor, f'"{PAGE_TEXT}",\n        ' + anchor, 1)
+    if f'"{RETURN_PAGE_TEXT}",' not in source:
+        anchor = f'"{PAGE_TEXT}",'
+        if anchor in source:
+            source = source.replace(
+                anchor,
+                anchor + f'\n        "{RETURN_PAGE_TEXT}",',
+                1,
+            )
 
     source = source.replace(f'elif page == "{PAGE_TEXT}":', 'elif "판매분석" in str(page):')
     marker = '# ------------------------------\n# Inventory\n# ------------------------------\nelif page == "📦  재고관리":\n'
-    if marker in source and 'elif "판매분석" in str(page):' not in source:
-        block = (
-            '# ------------------------------\n'
-            '# Sales analysis\n'
-            '# ------------------------------\n'
-            'elif "판매분석" in str(page):\n'
-            '    sales_analysis_v09186.render_page(st, pd, core)\n\n\n'
-        )
-        source = source.replace(marker, block + marker, 1)
+    if marker in source:
+        block = ""
+        if f'elif page == "{RETURN_PAGE_TEXT}":' not in source:
+            block += (
+                '# ------------------------------\n'
+                '# Return status\n'
+                '# ------------------------------\n'
+                f'elif page == "{RETURN_PAGE_TEXT}":\n'
+                '    sales_analysis_v09186.render_return_status_page(st, pd, core)\n\n\n'
+            )
+        if 'elif "판매분석" in str(page):' not in source:
+            block += (
+                '# ------------------------------\n'
+                '# Sales analysis\n'
+                '# ------------------------------\n'
+                'elif "판매분석" in str(page):\n'
+                '    sales_analysis_v09186.render_page(st, pd, core)\n\n\n'
+            )
+        if block:
+            source = source.replace(marker, block + marker, 1)
     return source
