@@ -1,4 +1,4 @@
-"""Organic sales estimate page for Sales Analysis (v0.9.229).
+"""Organic sales estimate page for Sales Analysis (v0.9.231).
 
 Authoritative normal-product source: the user's uploaded product master copied to
 canonical_product_rules_v09214.CURRENT_IDS (132 option IDs). The DB registry is
@@ -741,7 +741,7 @@ def apply(sales_module, core):
         return {"ok": False, "reason": "sales module missing"}
     if getattr(
         sales_module,
-        "_rg_organic_sidebar_route_v09212_installed",
+        "_rg_organic_sidebar_route_v09231_installed",
         False,
     ):
         return {
@@ -769,7 +769,7 @@ def apply(sales_module, core):
                 callable(current_render)
                 and getattr(
                     current_render,
-                    "_rg_organic_sidebar_route_v09212",
+                    "_rg_organic_sidebar_route_v09231",
                     False,
                 )
             ):
@@ -814,7 +814,7 @@ def apply(sales_module, core):
             not callable(original)
             or getattr(
                 original,
-                "_rg_organic_sidebar_route_v09212",
+                "_rg_organic_sidebar_route_v09231",
                 False,
             )
         ):
@@ -839,11 +839,11 @@ def apply(sales_module, core):
                 return "__RG_ORGANIC_SALES_RENDERED__"
             return current
 
-        wrapped._rg_organic_sidebar_route_v09212 = True
+        wrapped._rg_organic_sidebar_route_v09231 = True
         sidebar.render_sidebar = wrapped
 
     sales_module._install_sidebar_route = install_sidebar_route
-    sales_module._rg_organic_sidebar_route_v09212_installed = True
+    sales_module._rg_organic_sidebar_route_v09231_installed = True
     return {
         "ok": True,
         "already_applied": False,
