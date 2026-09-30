@@ -36,6 +36,73 @@ def _oid(v: Any) -> str:
     return s
 
 
+def _parse_excel(uploaded):
+    openpyxl = importlib.import_module("openpyxl")
+    data = uploaded.getvalue() if hasattr(uploaded, "getvalue") else uploaded.read()
+    wb = openpyxl.load_workbook(io.BytesIO(data), data_only=True, read_only=True)
+    try:
+        ws = wb.active
+        rows = []
+        seen = set()
+        for r in range(1, ws.max_row + 1):
+            b = _text(ws.cell(r, 2).value)
+            c = _text(ws.cell(r, 3).value)
+            option_id = _oid(ws.cell(r, 7).value)
+            barcode = _text(ws.cell(r, 28).value)
+            if not option_id or not option_id.isdigit():
+                continue
+            if option_id in seen:
+                continue
+            seen.add(option_id)
+            name = f"{b} / {c}" if b and c else (b or c)
+            rows.append(
+                {
+                    "등록": True,
+                    "상품명": name or f"옵션ID {option_id}",
+                    "옵션ID": option_id,
+                    "바코드": barcode,
+                    "BOM 구성품": "",
+                    "소요수량": 1,
+                    "원본행": r,
+                }
+            )
+    finally:
+        try:
+            wb.close()
+        except Exception:
+            pass
+    if not rows:
+        raise ValueError("G열에서 숫자형 옵션ID를 찾지 못했습니다. 로켓그로스 상품 Excel인지 확인해 주세요.")
+    return rows
+
+
+def _load_raw_products(core):
+    core.init_db(core.DEFAULT_DB)
+    with core._conn(core.DEFAULT_DB) as con:
+        rows = con.execute(
+            """SELECT id,item_code,name,unit_cost
+               FROM products
+               WHERE COALESCE(active,1)=1 AND item_type='raw'
+               ORDER BY name,item_code"""
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def _existing_options(core, option_ids):
+    ids = [_oid(x) for x in option_ids if _oid(x)]
+    if not ids:
+        return {}
+    placeholders = ",".join("?" for _ in ids)
+    with core._conn(core.DEFAULT_DB) as con:
+        rows = con.execute(
+            f"""SELECT id,option_id,item_code,name
+                FROM products
+                WHERE CAST(option_id AS TEXT) IN ({placeholders})""",
+            ids,
+        ).fetchall()
+    return {_oid(r["option_id"]): dict(r) for r in rows}
+
+
 def _norm_name(v: Any) -> str:
     s = re.sub(r"[^0-9A-Za-z가-힣]+", " ", _text(v).lower())
     return " ".join(s.split())
