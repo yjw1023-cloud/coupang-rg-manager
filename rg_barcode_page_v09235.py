@@ -119,6 +119,20 @@ def _records(value):
     return [dict(x) for x in (value or [])]
 
 
+def _auto_select_by_quantity(rows):
+    changed = False
+    for row in rows:
+        try:
+            qty = int(row.get("출력수량") or 0)
+        except Exception:
+            qty = 0
+        should_select = qty > 0
+        if bool(row.get("선택")) != should_select:
+            row["선택"] = should_select
+            changed = True
+    return rows, changed
+
+
 def _save_barcodes(core, rows):
     barcode = importlib.import_module("rg_barcode_print_v09193")
     payload = [
@@ -139,6 +153,12 @@ def _plan_from_editor(core, edited):
     selected = []
     errors = []
     for row in _records(edited):
+        try:
+            qty_value = int(row.get("출력수량") or 0)
+        except Exception:
+            qty_value = 0
+        if qty_value > 0:
+            row["선택"] = True
         if not bool(row.get("선택")):
             continue
         option_id = _oid(row.get("옵션ID"))
@@ -266,7 +286,13 @@ def render_page(st, core):
             st.session_state[_CONFIRMED_KEY] = False
             st.rerun()
 
-    selected_now = [r for r in _records(edited) if bool(r.get("선택"))]
+    edited_rows = _records(edited)
+    synced_rows, auto_changed = _auto_select_by_quantity(edited_rows)
+    if auto_changed:
+        st.session_state["rg_barcode_v09237_editor"] = pd.DataFrame(synced_rows)
+        st.rerun()
+
+    selected_now = [r for r in synced_rows if bool(r.get("선택"))]
     c2.caption(
         f"현재 선택 {len(selected_now):,}개 상품 · "
         f"입력 수량 합계 {sum(max(0, int(r.get('출력수량') or 0)) for r in selected_now):,}장"
