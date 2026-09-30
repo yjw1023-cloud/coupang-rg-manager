@@ -21,6 +21,7 @@ from typing import Any
 PAGE_LABEL = "RG상품/BOM 등록"
 _REVIEW_KEY = "rg_product_bom_v09238_review"
 _REVIEW_FILE_KEY = "rg_product_bom_v09242_review_file"
+_EXTRA_BOM_KEY = "rg_product_bom_v09247_extra_bom"
 
 
 def _text(v: Any) -> str:
@@ -263,21 +264,19 @@ def _records(value):
     return [dict(x) for x in (value or [])]
 
 
-def _validate_review(edited, raw_rows):
+def _validate_review(edited, raw_rows, extra_bom_rows=None):
     cmap = _component_map(raw_rows)
+    extra_bom_rows = extra_bom_rows or {}
     selected = []
     errors = []
+
     for row in _records(edited):
         if not bool(row.get("등록")):
             continue
+
         name = _text(row.get("상품명"))
         oid = _oid(row.get("옵션ID"))
         barcode = _text(row.get("바코드"))
-        component_label = _text(row.get("BOM 구성품"))
-        try:
-            qty = int(row.get("소요수량") or 0)
-        except Exception:
-            qty = 0
 
         if not name:
             errors.append(f"옵션ID {oid}: 상품명이 없습니다.")
@@ -285,20 +284,72 @@ def _validate_review(edited, raw_rows):
             errors.append(f"{name or oid}: 옵션ID가 올바르지 않습니다.")
         if not barcode:
             errors.append(f"{name or oid}: 바코드가 없습니다.")
-        if not component_label or component_label not in cmap:
-            errors.append(f"{name or oid}: BOM 구성품을 선택해 주세요.")
-        if qty < 1:
-            errors.append(f"{name or oid}: BOM 소요수량은 1 이상이어야 합니다.")
-        if name and oid and oid.isdigit() and barcode and component_label in cmap and qty >= 1:
-            component = cmap[component_label]
+
+        bom_lines = []
+
+        primary_label = _text(row.get("BOM 구성품"))
+        try:
+            primary_qty = int(row.get("소요수량") or 0)
+        except Exception:
+            primary_qty = 0
+
+        if primary_label:
+            if primary_label not in cmap:
+                errors.append(f"{name or oid}: 기본 BOM 구성품을 다시 선택해 주세요.")
+            elif primary_qty < 1:
+                errors.append(f"{name or oid}: 기본 BOM 소요수량은 1 이상이어야 합니다.")
+            else:
+                component = cmap[primary_label]
+                bom_lines.append(
+                    {
+                        "BOM 구성품": primary_label,
+                        "component_id": int(component["id"]),
+                        "소요수량": primary_qty,
+                    }
+                )
+
+        for idx, extra in enumerate(extra_bom_rows.get(oid, []) or [], 1):
+            label = _text(extra.get("BOM 구성품"))
+            try:
+                qty = int(extra.get("소요수량") or 0)
+            except Exception:
+                qty = 0
+
+            if not label:
+                errors.append(f"{name or oid}: 추가 BOM {idx}의 구성품을 선택해 주세요.")
+                continue
+            if label not in cmap:
+                errors.append(f"{name or oid}: 추가 BOM {idx}의 구성품을 다시 선택해 주세요.")
+                continue
+            if qty < 1:
+                errors.append(f"{name or oid}: 추가 BOM {idx}의 소요수량은 1 이상이어야 합니다.")
+                continue
+
+            component = cmap[label]
+            bom_lines.append(
+                {
+                    "BOM 구성품": label,
+                    "component_id": int(component["id"]),
+                    "소요수량": qty,
+                }
+            )
+
+        if not bom_lines:
+            errors.append(f"{name or oid}: BOM 구성품을 하나 이상 선택해 주세요.")
+            continue
+
+        component_ids = [x["component_id"] for x in bom_lines]
+        if len(component_ids) != len(set(component_ids)):
+            errors.append(f"{name or oid}: 같은 BOM 구성품이 중복 입력되어 있습니다.")
+            continue
+
+        if name and oid and oid.isdigit() and barcode:
             selected.append(
                 {
                     "상품명": name,
                     "옵션ID": oid,
                     "바코드": barcode,
-                    "BOM 구성품": component_label,
-                    "component_id": int(component["id"]),
-                    "소요수량": qty,
+                    "BOM": bom_lines,
                 }
             )
 
@@ -375,11 +426,12 @@ def _register(core, rows):
                 )
                 parent_id = int(cur.lastrowid)
 
-                con.execute(
-                    """INSERT INTO bom_items(parent_product_id,component_product_id,qty_per)
-                       VALUES(?,?,?)""",
-                    (parent_id, int(row["component_id"]), int(row["소요수량"])),
-                )
+                for bom in row.get("BOM") or []:
+                    con.execute(
+                        """INSERT INTO bom_items(parent_product_id,component_product_id,qty_per)
+                           VALUES(?,?,?)""",
+                        (parent_id, int(bom["component_id"]), int(bom["소요수량"])),
+                    )
 
                 con.execute(
                     """INSERT INTO rg_barcode_master
@@ -429,6 +481,7 @@ def render_page(st, core):
         st.session_state["rg_product_bom_v09242_file_fp"] = file_fp
         st.session_state.pop(_REVIEW_KEY, None)
         st.session_state.pop(_REVIEW_FILE_KEY, None)
+        st.session_state[_EXTRA_BOM_KEY] = {}
 
     try:
         parsed = _parse_excel(uploaded)
@@ -512,8 +565,96 @@ def render_page(st, core):
         st.error("ERP에 등록된 자체창고 기초상품(raw)이 없습니다. BOM 구성품을 먼저 등록해 주세요.")
         return
 
+    # A finished RG product may require multiple raw components.
+    # The main grid is BOM line 1; additional lines are maintained here.
+    current_records = _records(edited)
+    selectable_products = [
+        r for r in current_records
+        if bool(r.get("등록")) and _oid(r.get("옵션ID"))
+    ]
+    extra_store = st.session_state.setdefault(_EXTRA_BOM_KEY, {})
+    file_extra_store = extra_store.setdefault(file_fp, {})
+
+    if selectable_products:
+        st.markdown("### 추가 BOM 구성품")
+        st.caption(
+            "한 상품에 구성품이 2개 이상이면 상품을 선택한 뒤 '+ BOM 줄 추가'를 누르세요. "
+            "필요한 만큼 여러 줄을 추가할 수 있습니다."
+        )
+        product_labels = {
+            _oid(r.get("옵션ID")): f"{_text(r.get('상품명'))} · {_oid(r.get('옵션ID'))}"
+            for r in selectable_products
+        }
+        target_oid = st.selectbox(
+            "추가 BOM을 넣을 상품",
+            options=list(product_labels.keys()),
+            format_func=lambda x: product_labels.get(x, x),
+            key=f"rg_product_bom_v09247_extra_target_{file_fp}",
+        )
+
+        add_col, _ = st.columns([1, 3])
+        if add_col.button(
+            "+ BOM 줄 추가",
+            use_container_width=True,
+            key=f"rg_product_bom_v09247_add_{file_fp}_{target_oid}",
+        ):
+            file_extra_store.setdefault(target_oid, []).append(
+                {"BOM 구성품": "", "소요수량": 1}
+            )
+            extra_store[file_fp] = file_extra_store
+            st.session_state[_EXTRA_BOM_KEY] = extra_store
+            st.rerun()
+
+        for oid in list(file_extra_store.keys()):
+            if oid not in product_labels:
+                continue
+            lines = file_extra_store.get(oid) or []
+            if not lines:
+                continue
+
+            st.markdown(f"**{product_labels[oid]}**")
+            remove_indexes = []
+            for idx, line in enumerate(lines):
+                c1, c2, c3 = st.columns([5, 1.3, 1])
+                current_label = _text(line.get("BOM 구성품"))
+                try:
+                    current_index = raw_options.index(current_label) if current_label in raw_options else 0
+                except Exception:
+                    current_index = 0
+
+                selected_component = c1.selectbox(
+                    f"BOM 구성품 {idx + 2}",
+                    options=raw_options,
+                    index=current_index,
+                    key=f"rg_product_bom_v09247_comp_{file_fp}_{oid}_{idx}",
+                )
+                qty = c2.number_input(
+                    f"수량 {idx + 2}",
+                    min_value=1,
+                    step=1,
+                    value=max(1, int(line.get("소요수량") or 1)),
+                    key=f"rg_product_bom_v09247_qty_{file_fp}_{oid}_{idx}",
+                )
+                if c3.button(
+                    "삭제",
+                    key=f"rg_product_bom_v09247_del_{file_fp}_{oid}_{idx}",
+                    use_container_width=True,
+                ):
+                    remove_indexes.append(idx)
+
+                line["BOM 구성품"] = selected_component
+                line["소요수량"] = int(qty)
+
+            for idx in reversed(remove_indexes):
+                lines.pop(idx)
+            file_extra_store[oid] = lines
+            if remove_indexes:
+                extra_store[file_fp] = file_extra_store
+                st.session_state[_EXTRA_BOM_KEY] = extra_store
+                st.rerun()
+
     if st.button("등록 내용 확인", type="primary", use_container_width=True):
-        review, errors = _validate_review(edited, raw_rows)
+        review, errors = _validate_review(edited, raw_rows, file_extra_store)
         if errors:
             for msg in errors[:15]:
                 st.error(msg)
@@ -538,18 +679,20 @@ def render_page(st, core):
     st.divider()
     st.subheader("최종 등록 확인")
     st.caption("아래 내용은 아직 DB에 등록되지 않았습니다. 확인 후 확정 버튼을 눌러야 등록됩니다.")
-    review_df = pd.DataFrame(
-        [
-            {
-                "상품명": r["상품명"],
-                "옵션ID": r["옵션ID"],
-                "바코드": r["바코드"],
-                "BOM 구성품": r["BOM 구성품"],
-                "소요수량": int(r["소요수량"]),
-            }
-            for r in review
-        ]
-    )
+    review_rows = []
+    for r in review:
+        for idx, bom in enumerate(r.get("BOM") or [], 1):
+            review_rows.append(
+                {
+                    "상품명": r["상품명"],
+                    "옵션ID": r["옵션ID"],
+                    "바코드": r["바코드"],
+                    "BOM 순번": idx,
+                    "BOM 구성품": bom["BOM 구성품"],
+                    "소요수량": int(bom["소요수량"]),
+                }
+            )
+    review_df = pd.DataFrame(review_rows)
     st.dataframe(review_df, use_container_width=True, hide_index=True)
 
     b1, b2 = st.columns(2)
@@ -561,7 +704,8 @@ def render_page(st, core):
         try:
             created = _register(core, review)
             st.session_state.pop(_REVIEW_KEY, None)
-            st.success(f"등록 완료: 신규 RG 상품 {len(created):,}개와 각 상품의 BOM/바코드를 저장했습니다. 바코드는 바코드 인쇄 메뉴에서도 즉시 사용됩니다.")
+            total_bom = sum(len(r.get("BOM") or []) for r in created)
+            st.success(f"등록 완료: 신규 RG 상품 {len(created):,}개, BOM 구성품 {total_bom:,}줄과 바코드를 저장했습니다. 바코드는 바코드 인쇄 메뉴에서도 즉시 사용됩니다.")
             st.rerun()
         except Exception as exc:
             st.error(f"등록 실패: {exc}")
