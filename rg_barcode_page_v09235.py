@@ -307,9 +307,27 @@ def render_page(st, core):
     if not st.session_state.get(_CONFIRMED_KEY):
         return
 
-    st.success("인쇄 내용이 확정되었습니다. 아래 인쇄 버튼을 누르면 프린터 창이 열립니다.")
+    st.success("인쇄 내용이 확정되었습니다. 아래 버튼은 브라우저/PDF를 거치지 않고 라벨프린터로 직접 전송합니다.")
     try:
-        print_html = barcode.build_print_html(plan)
-        components.html(print_html, height=390, scrolling=True)
+        direct = importlib.import_module("rg_barcode_direct_print_v09257")
+        printers = direct.list_printers()
+        preferred = next((p for p in printers if "XP-D4602B" in p.upper()), None)
+        if not preferred:
+            preferred = next((p for p in printers if "XPRINTER" in p.upper()), None)
+        index = printers.index(preferred) if preferred in printers else 0
+        if printers:
+            printer = st.selectbox(
+                "라벨 프린터",
+                printers,
+                index=index,
+                key="rg_barcode_v09257_printer",
+                help="50×30mm 데이터를 프린터로 직접 전송합니다. 브라우저 인쇄 배율과 USER 용지 설정의 영향을 받지 않습니다.",
+            )
+            if st.button("50×30mm 라벨 직접 인쇄", type="primary", use_container_width=True):
+                with st.spinner("라벨프린터로 전송 중..."):
+                    printed = direct.print_labels(plan, printer)
+                st.success(f"{printed:,}장의 50×30mm 라벨을 {printer}로 전송했습니다.")
+        else:
+            st.error("Windows에 설치된 프린터를 찾지 못했습니다.")
     except Exception as exc:
-        st.error(f"바코드 인쇄 화면 생성 실패: {exc}")
+        st.error(f"라벨 직접 인쇄 준비 실패: {exc}")
