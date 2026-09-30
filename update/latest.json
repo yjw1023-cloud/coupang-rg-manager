@@ -1,6 +1,6 @@
 {
-  "version": "0.9.248",
-  "message": "데이터 안전장치를 추가했습니다. RG 상품/BOM 등록, 기존 바코드 반영, 판매자료 업로드, 광고보고서 업로드 직전에 SQLite 전체 백업을 자동 생성합니다. 백업은 ERP DB 옆 _db_backups 폴더에 작업명/시각과 함께 계속 보관하며 자동 삭제하지 않습니다.",
+  "version": "0.9.249",
+  "message": "RG상품/BOM 등록 화면에 '백업 테스트 실행' 버튼을 추가했습니다. 이 버튼은 ERP 데이터를 전혀 변경하지 않고 현재 SQLite DB의 전체 백업본만 _db_backups 폴더에 생성합니다.",
   "files": [
     "VERSION.txt",
     "app.py",
