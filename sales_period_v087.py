@@ -342,6 +342,9 @@ def apply(core_module) -> None:
                         "'기존 기간 자료를 새 파일로 교체'를 체크한 뒤 다시 업로드해 주세요."
                     )
 
+        import importlib
+        backup_mod = importlib.import_module("db_backup_v09248")
+        backup_mod.backup_db(core_module, "sales_stats_import", db_path)
         return original_import_sales_stats(
             source, file_name, start.isoformat(), end.isoformat(), db_path
         )
