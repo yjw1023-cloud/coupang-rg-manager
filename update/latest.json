@@ -1,6 +1,6 @@
 {
-  "version": "0.9.253",
-  "message": "업데이트 적용 중 GitHub API rate limit(403)이 발생해도 raw.githubusercontent.com으로 자동 우회하도록 updater를 수정했습니다. Google Drive AI 중계 기능은 0.9.252 내용 그대로 포함됩니다.",
+  "version": "0.9.254",
+  "message": "ChatGPT가 ERP 전체 데이터 구조를 조회하고 모든 ERP 테이블을 읽을 수 있도록 AI 중계를 확장했습니다. 기존 상품/BOM 등록·수정, 판매/광고 업로드, 백업 기능은 그대로 유지됩니다.",
   "files": [
     "VERSION.txt",
     "app.py",
@@ -14,6 +14,7 @@
     "ad_upload_unify_v09103.py",
     "rg_barcode_print_v09193.py",
     "rg_barcode_page_v09235.py",
-    "rg_barcode_backfill_v09240.py"
+    "rg_barcode_backfill_v09240.py",
+    "ai_db_access_v09254.py"
   ]
 }
