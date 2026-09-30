@@ -136,6 +136,31 @@ def _execute(core,base,cmd):
     return routes[typ]()
 
 
+
+def _filename_commands(base):
+    """Decode content-free commands from filenames.
+
+    Format: CMD__<id>__<type>__<base64url-json>.rgcmd
+    The file bytes are ignored. This lets ChatGPT create commands by copying
+    any existing Drive file and choosing a new filename.
+    """
+    out=[]
+    for p in sorted((base/"inbox").glob("CMD__*.rgcmd"))[:50]:
+        stem=p.name[:-6] if p.name.lower().endswith(".rgcmd") else p.stem
+        parts=stem.split("__",3)
+        if len(parts)!=4 or parts[0]!="CMD":
+            continue
+        _tag,cid,typ,enc=parts
+        try:
+            pad="="*((4-len(enc)%4)%4)
+            payload=json.loads(base64.urlsafe_b64decode((enc+pad).encode("ascii")).decode("utf-8"))
+            if not isinstance(payload,dict):
+                payload={}
+            out.append((p,cid,{"id":cid,"type":typ,"payload":payload}))
+        except Exception:
+            out.append((p,cid,{"id":cid,"type":typ,"payload":{},"_decode_error":True}))
+    return out
+
 def poll_once(core=None):
     core=core or _CORE
     base=configured_base(core)
@@ -146,13 +171,22 @@ def poll_once(core=None):
     state=_load_state(core)
     processed=set(map(str,state.get("processed",[])))
     count=0
+    queue=[]
     for p in sorted((base/"inbox").glob("*.json"))[:50]:
         cid=p.stem
-        if cid in processed:
-            continue
         cmd=None
         try:
             cmd=json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            cmd={}
+        queue.append((p,cid,cmd))
+    queue.extend(_filename_commands(base))
+    for p,cid,cmd in queue[:100]:
+        if cid in processed:
+            continue
+        try:
+            if cmd.get("_decode_error"):
+                raise ValueError("파일명 명령을 해석하지 못했습니다.")
             if str(cmd.get("id") or "")!=cid:
                 raise ValueError("명령 파일명과 id가 일치하지 않습니다.")
             result=_execute(core,base,cmd)
