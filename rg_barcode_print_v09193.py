@@ -386,10 +386,48 @@ def build_print_html(rows: list[dict[str, Any]]) -> str:
 </head>
 <body>
   <div class="toolbar">
-    <button onclick="window.print()">5×3cm 바코드 인쇄</button>
-    <span>총 {total:,}장 · 프린터 설정은 용지 50×30mm / 배율 100% / 여백 없음</span>
+    <button onclick="printLabels()">50×30mm 바코드 인쇄</button>
+    <span>총 {total:,}장 · 라벨 용지 50×30mm / 배율 100% / 여백 없음</span>
   </div>
   <main class="preview">{body}</main>
+<script>
+function printLabels() {{
+  const labels = document.querySelector('.preview').innerHTML;
+  const w = window.open('', '_blank', 'width=520,height=520');
+  if (!w) {{
+    alert('인쇄창이 차단되었습니다. 브라우저 팝업을 허용한 뒤 다시 눌러 주세요.');
+    return;
+  }}
+  const doc = `<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>50x30mm Barcode Labels</title>
+<style>
+  * {{ box-sizing:border-box; }}
+  @page {{ size:50mm 30mm; margin:0; }}
+  html, body {{ margin:0 !important; padding:0 !important; width:50mm; background:#fff; font-family:Arial,'Malgun Gothic',sans-serif; }}
+  .label {{ width:50mm; height:30mm; margin:0; padding:1.0mm 2.4mm 0.9mm 2.4mm;
+            display:flex; flex-direction:column; align-items:center; overflow:hidden;
+            page-break-after:always; break-after:page; background:#fff; }}
+  .label:last-child {{ page-break-after:auto; break-after:auto; }}
+  .bars {{ width:44.5mm; height:10.7mm; flex:0 0 10.7mm; }}
+  .bars svg {{ width:100%; height:100%; display:block; fill:#000; }}
+  .barcode-text {{ width:100%; height:2.7mm; line-height:2.7mm; text-align:center; font-size:6.7pt; letter-spacing:.08mm; }}
+  .product {{ width:100%; height:3.7mm; line-height:3.7mm; white-space:nowrap; overflow:hidden; text-align:center; font-weight:400; }}
+  .option {{ width:100%; height:3.6mm; line-height:3.6mm; white-space:nowrap; overflow:hidden; text-align:center; font-size:8.2pt; }}
+  .origin {{ width:100%; margin-top:auto; height:3.7mm; line-height:3.7mm; text-align:center; font-size:8.4pt; }}
+</style>
+</head>
+<body>${labels}</body>
+</html>`;
+  w.document.open();
+  w.document.write(doc);
+  w.document.close();
+  w.focus();
+  setTimeout(() => {{ w.print(); }}, 250);
+}}
+</script>
 </body>
 </html>"""
 
