@@ -1,9 +1,10 @@
 {
-  "version": "0.9.235",
-  "message": "재고·생산 하위에 바코드 인쇄 메뉴를 추가했습니다. 기존 50×30mm CODE128 바코드 기능을 독립 화면에서 사용할 수 있습니다.",
+  "version": "0.9.236",
+  "message": "v0.9.235 업데이트에서 누락된 RG상품/BOM 등록 모듈을 포함해 시작 오류를 수정했습니다. 재고·생산 하위의 바코드 인쇄 메뉴도 함께 유지됩니다.",
   "files": [
     "VERSION.txt",
     "pnl_month_default_v0915.py",
+    "rg_product_bom_v09234.py",
     "rg_barcode_page_v09235.py"
   ]
 }
