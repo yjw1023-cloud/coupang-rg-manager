@@ -1,9 +1,10 @@
 {
-  "version": "0.9.245",
-  "message": "RG상품/BOM 등록에서 쿠팡 Excel의 예시행을 실제 상품으로 읽는 문제를 수정했습니다. AB열이 실제 바코드 형식이 아닌 설명문 행은 제외합니다. BOM 자동매칭은 핵심명사 일치가 없으면 자동확정하지 않고 추천 후보만 보여주도록 보수적으로 개선했으며, 수영모자/수모·캔따개/캔오프너 등 유사어도 반영합니다.",
+  "version": "0.9.246",
+  "message": "기존 최신버전 확인 로직을 GitHub Contents API 직접 조회 방식으로 교체했습니다. raw CDN 캐시를 사용하지 않고, 새 버전 확인과 업데이트 적용을 같은 화면에서 처리합니다.",
   "files": [
     "VERSION.txt",
     "app.py",
+    "update_check_v09246.py",
     "pnl_month_default_v0915.py",
     "rg_product_bom_v09234.py",
     "rg_barcode_print_v09193.py",
