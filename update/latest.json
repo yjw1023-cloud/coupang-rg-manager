@@ -1,12 +1,13 @@
 {
-  "version": "0.9.249",
-  "message": "RG상품/BOM 등록 화면에 '백업 테스트 실행' 버튼을 추가했습니다. 이 버튼은 ERP 데이터를 전혀 변경하지 않고 현재 SQLite DB의 전체 백업본만 _db_backups 폴더에 생성합니다.",
+  "version": "0.9.250",
+  "message": "ERP가 실행되면 로컬 AI 명령 서버(127.0.0.1:8765)를 자동 시작합니다. 상품/BOM 조회, RG 상품/BOM 등록, BOM 수정, 판매자료 업로드, 광고보고서 업로드, 수동 백업 명령을 지원하며 쓰기 작업은 인증과 DB 백업을 거칩니다. 아직 인터넷에는 노출되지 않으며 다음 단계에서 ChatGPT 연결을 설정합니다.",
   "files": [
     "VERSION.txt",
     "app.py",
     "update_check_v09246.py",
     "pnl_month_default_v0915.py",
     "db_backup_v09248.py",
+    "ai_bridge_v09250.py",
     "rg_product_bom_v09234.py",
     "sales_period_v087.py",
     "ad_upload_unify_v09103.py",
