@@ -459,6 +459,10 @@ def _register(core, rows):
 def render_page(st, core):
     pd = importlib.import_module("pandas")
 
+    drive_relay = importlib.import_module("ai_drive_relay_v09252")
+    drive_relay.render_setup(st, core)
+    st.divider()
+
     st.title("RG상품/BOM 등록")
     st.caption("로켓그로스 신규상품과 BOM을 Excel에서 읽어 확인 후 일괄 등록합니다.")
 
