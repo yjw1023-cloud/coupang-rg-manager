@@ -1,6 +1,6 @@
 {
-  "version": "0.9.256",
-  "message": "바코드 인쇄를 웹페이지 인쇄 방식에서 정확한 50×30mm PDF 생성 방식으로 변경했습니다. A4 미리보기, 날짜/URL/페이지 머리글 문제와 $[ 문자 오류를 제거했습니다.",
+  "version": "0.9.257",
+  "message": "바코드 인쇄를 브라우저/PDF 방식에서 Xprinter 라벨프린터 직접 출력 방식으로 변경했습니다. XP-D4602B 203DPI 기준 50×30mm(400×240dot)로 직접 전송하며, 글자 겹침과 USER 용지/A4 배율 문제를 우회합니다.",
   "files": [
     "VERSION.txt",
     "app.py",
@@ -15,6 +15,7 @@
     "rg_barcode_print_v09193.py",
     "rg_barcode_page_v09235.py",
     "rg_barcode_backfill_v09240.py",
-    "ai_db_access_v09254.py"
+    "ai_db_access_v09254.py",
+    "rg_barcode_direct_print_v09257.py"
   ]
 }
