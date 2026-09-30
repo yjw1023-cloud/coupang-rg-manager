@@ -174,6 +174,7 @@ def render_grouped_sidebar(st_obj, options, default_page=None):
     sales_analysis = importlib.import_module("sales_analysis_v09186")
     simple_margin = importlib.import_module("simple_margin_v09205")
     rg_product_bom = importlib.import_module("rg_product_bom_v09234")
+    rg_barcode_page = importlib.import_module("rg_barcode_page_v09235")
 
     # The grouped sidebar otherwise classifies unknown pages as Data/Admin.
     # Keep sales analysis in its dedicated group and place quick margin inside
@@ -182,6 +183,7 @@ def render_grouped_sidebar(st_obj, options, default_page=None):
     sales_label = str(sales_analysis.PAGE_LABEL)
     margin_label = str(simple_margin.PAGE_LABEL)
     rg_bom_label = str(rg_product_bom.PAGE_LABEL)
+    barcode_label = str(rg_barcode_page.PAGE_LABEL)
     groups = getattr(m, "_GROUPS", None)
     if isinstance(groups, list):
         for title, items in groups:
@@ -210,6 +212,21 @@ def render_grouped_sidebar(st_obj, options, default_page=None):
                     items.insert(insert_at, margin_label)
                 break
 
+        # 바코드 인쇄는 재고·생산 업무 흐름에 둔다.
+        for title, items in groups:
+            if barcode_label in items and str(title) != "📦 재고·생산":
+                items[:] = [x for x in items if x != barcode_label]
+        for title, items in groups:
+            if str(title) == "📦 재고·생산":
+                if barcode_label not in items:
+                    insert_at = len(items)
+                    for idx, label in enumerate(items):
+                        if "생산자료" in str(label):
+                            insert_at = idx + 1
+                            break
+                    items.insert(insert_at, barcode_label)
+                break
+
         # RG 신규상품 등록은 매입/상품 업무 흐름에 둔다.
         for title, items in groups:
             if rg_bom_label in items and str(title) != "🛒 매입·상품":
@@ -226,7 +243,7 @@ def render_grouped_sidebar(st_obj, options, default_page=None):
                 break
 
     runtime_options = [str(x) for x in list(options or [])]
-    for label in (overview.PAGE_LABEL, goals.PAGE_LABEL, sales_label, margin_label, rg_bom_label):
+    for label in (overview.PAGE_LABEL, goals.PAGE_LABEL, sales_label, margin_label, rg_bom_label, barcode_label):
         if label not in runtime_options:
             runtime_options.append(label)
 
@@ -243,6 +260,12 @@ def render_grouped_sidebar(st_obj, options, default_page=None):
         except Exception as exc:
             st_obj.error(f"RG상품/BOM 등록 화면을 여는 중 오류가 발생했습니다: {exc}")
         return "__RG_PRODUCT_BOM_RENDERED__"
+    if current == barcode_label:
+        try:
+            rg_barcode_page.render_page(st_obj, importlib.import_module("core"))
+        except Exception as exc:
+            st_obj.error(f"바코드 인쇄 화면을 여는 중 오류가 발생했습니다: {exc}")
+        return "__RG_BARCODE_PRINT_RENDERED__"
     return current
 
 
