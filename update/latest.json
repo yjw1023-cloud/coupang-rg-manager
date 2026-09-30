@@ -1,9 +1,9 @@
 {
-  "version": "0.9.234",
-  "message": "매입·상품 메뉴 아래에 RG상품/BOM 등록 메뉴를 추가했습니다. 신규 RG 상품과 BOM 등록 전용 화면을 열 수 있으며, BOM은 사용자 확인 전 확정 등록하지 않는 흐름으로 구성했습니다.",
+  "version": "0.9.235",
+  "message": "재고·생산 하위에 바코드 인쇄 메뉴를 추가했습니다. 기존 50×30mm CODE128 바코드 기능을 독립 화면에서 사용할 수 있습니다.",
   "files": [
     "VERSION.txt",
     "pnl_month_default_v0915.py",
-    "rg_product_bom_v09234.py"
+    "rg_barcode_page_v09235.py"
   ]
 }
