@@ -8,6 +8,11 @@ import urllib.request
 import urllib.parse
 import time
 
+try:
+    import requests
+except Exception:
+    requests = None
+
 import core
 
 ROOT = Path(__file__).resolve().parent
@@ -368,6 +373,32 @@ def _rg_urlopen_no_manifest_cache(request, *args, **kwargs):
     return _RG_ORIGINAL_URLOPEN_V09241(request, *args, **kwargs)
 
 urllib.request.urlopen = _rg_urlopen_no_manifest_cache
+
+# v0.9.244: some legacy updater builds use requests rather than urllib.
+# Patch the Session request path too so every latest.json GET gets a unique URL.
+if requests is not None and not getattr(requests.sessions.Session, "_rg_manifest_cache_patch_v09244", False):
+    _rg_original_requests_request_v09244 = requests.sessions.Session.request
+
+    def _rg_requests_no_manifest_cache(self, method, url, *args, **kwargs):
+        try:
+            target = str(url).split("?", 1)[0]
+            if (
+                str(method).upper() == "GET"
+                and "raw.githubusercontent.com/yjw1023-cloud/coupang-rg-manager/" in target
+                and target.endswith("/update/latest.json")
+            ):
+                sep = "&" if "?" in str(url) else "?"
+                url = f"{url}{sep}_rgcb={time.time_ns()}"
+                headers = dict(kwargs.get("headers") or {})
+                headers["Cache-Control"] = "no-cache, no-store, max-age=0"
+                headers["Pragma"] = "no-cache"
+                kwargs["headers"] = headers
+        except Exception:
+            pass
+        return _rg_original_requests_request_v09244(self, method, url, *args, **kwargs)
+
+    requests.sessions.Session.request = _rg_requests_no_manifest_cache
+    requests.sessions.Session._rg_manifest_cache_patch_v09244 = True
 
 source = LOADER.read_text(encoding="utf-8")
 source = source.replace(
