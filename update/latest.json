@@ -1,6 +1,6 @@
 {
-  "version": "0.9.250",
-  "message": "ERP가 실행되면 로컬 AI 명령 서버(127.0.0.1:8765)를 자동 시작합니다. 상품/BOM 조회, RG 상품/BOM 등록, BOM 수정, 판매자료 업로드, 광고보고서 업로드, 수동 백업 명령을 지원하며 쓰기 작업은 인증과 DB 백업을 거칩니다. 아직 인터넷에는 노출되지 않으며 다음 단계에서 ChatGPT 연결을 설정합니다.",
+  "version": "0.9.252",
+  "message": "Google Drive 동기화 기반 AI 중계를 추가했습니다. ERP는 로컬 JDSmall_AI_ERP/inbox 폴더의 명령을 10초마다 처리하고 결과를 outbox에 기록합니다. GitHub/Google 비밀번호나 토큰은 ERP가 전혀 읽거나 저장하지 않습니다. RG상품/BOM 등록 화면 상단에서 로컬 Drive 폴더 경로를 최초 1회 지정할 수 있습니다.",
   "files": [
     "VERSION.txt",
     "app.py",
@@ -8,6 +8,7 @@
     "pnl_month_default_v0915.py",
     "db_backup_v09248.py",
     "ai_bridge_v09250.py",
+    "ai_drive_relay_v09252.py",
     "rg_product_bom_v09234.py",
     "sales_period_v087.py",
     "ad_upload_unify_v09103.py",
