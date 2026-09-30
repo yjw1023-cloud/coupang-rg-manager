@@ -1,10 +1,11 @@
 {
-  "version": "0.9.236",
-  "message": "v0.9.235 업데이트에서 누락된 RG상품/BOM 등록 모듈을 포함해 시작 오류를 수정했습니다. 재고·생산 하위의 바코드 인쇄 메뉴도 함께 유지됩니다.",
+  "version": "0.9.237",
+  "message": "바코드 인쇄를 Excel 업로드 방식에서 ERP 상품 직접 선택 방식으로 변경했습니다. 최근 등록 상품을 위에 표시하고, 검색/체크 선택/출력수량 입력/최종 확인 후 인쇄 흐름을 제공합니다.",
   "files": [
     "VERSION.txt",
     "pnl_month_default_v0915.py",
     "rg_product_bom_v09234.py",
+    "rg_barcode_print_v09193.py",
     "rg_barcode_page_v09235.py"
   ]
 }
