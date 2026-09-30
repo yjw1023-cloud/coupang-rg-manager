@@ -132,8 +132,8 @@ def _canonical_data(core, sales_module, source_module, db, start, end):
         total = float(x["판매량"]); ad = float(x["광고 판매량"])
         if total <= 0 and ad <= 0: continue
         organic = total-ad
-        rows_out.append({"아이템":x["아이템"],"판매량":total,"광고 판매량":ad,"Organic 판매량":organic,"Organic 판매 비율":organic/total*100.0 if total>0 else 0.0})
-    cols = ["아이템","판매량","광고 판매량","Organic 판매량","Organic 판매 비율"]
+        rows_out.append({"product_id":int(x.get("product_id") or 0),"아이템":x["아이템"],"판매량":total,"광고 판매량":ad,"Organic 판매량":organic,"Organic 판매 비율":organic/total*100.0 if total>0 else 0.0})
+    cols = ["product_id","아이템","판매량","광고 판매량","Organic 판매량","Organic 판매 비율"]
     frame = pd.DataFrame(rows_out,columns=cols) if rows_out else pd.DataFrame(columns=cols)
     if not frame.empty:
         frame = frame.sort_values(["판매량","아이템"],ascending=[False,True],kind="stable").reset_index(drop=True)
