@@ -199,6 +199,46 @@ def _validate_review(edited, raw_rows):
     return selected, errors
 
 
+def _existing_barcode_updates(core, parsed_rows):
+    """Return only Excel rows whose G option_id already exists in ERP.
+
+    Existing ERP products are never created here. AB barcode is upserted into the
+    shared barcode master only when both option_id and barcode are present.
+    """
+    option_ids = [_oid(r.get("옵션ID")) for r in parsed_rows if _oid(r.get("옵션ID"))]
+    existing = _existing_options(core, option_ids)
+    updates = []
+    for row in parsed_rows:
+        oid = _oid(row.get("옵션ID"))
+        barcode = _text(row.get("바코드"))
+        if not oid or oid not in existing or not barcode:
+            continue
+        product = existing[oid]
+        updates.append(
+            {
+                "옵션ID": oid,
+                "상품명": _text(product.get("name")) or _text(row.get("상품명")),
+                "바코드": barcode,
+            }
+        )
+    return updates
+
+
+def _apply_existing_barcodes(core, updates):
+    barcode_mod = importlib.import_module("rg_barcode_print_v09193")
+    if not updates:
+        return 0
+    payload = [
+        {
+            "option_id": r["옵션ID"],
+            "barcode": r["바코드"],
+            "product_name": r["상품명"],
+        }
+        for r in updates
+    ]
+    return barcode_mod._save_rows(core, payload, source="rg_product_bom_existing")
+
+
 def _register(core, rows):
     barcode_mod = importlib.import_module("rg_barcode_print_v09193")
     barcode_mod.ensure_schema(core)
@@ -287,6 +327,36 @@ def render_page(st, core):
     c2.metric("신규 등록대상", f"{new_count:,}개")
     c3.metric("이미 등록됨", f"{existing_count:,}개")
 
+    barcode_updates = _existing_barcode_updates(core, prepared)
+    if barcode_updates:
+        st.subheader("기존 ERP 상품 바코드 업데이트")
+        st.caption(
+            "G열 옵션ID가 ERP와 정확히 일치하는 기존 상품만 표시합니다. "
+            "ERP에 없는 옵션ID는 무시하며 새 상품을 만들지 않습니다."
+        )
+        barcode_df = pd.DataFrame(
+            [
+                {
+                    "상품명": r["상품명"],
+                    "옵션ID": r["옵션ID"],
+                    "AB열 바코드": r["바코드"],
+                }
+                for r in barcode_updates
+            ]
+        )
+        st.dataframe(barcode_df, use_container_width=True, hide_index=True)
+        if st.button(
+            f"기존 상품 바코드 {len(barcode_updates):,}개 ERP에 반영",
+            type="primary",
+            key="rg_product_bom_v09239_existing_barcode_apply",
+        ):
+            try:
+                written = _apply_existing_barcodes(core, barcode_updates)
+                st.success(f"기존 ERP 상품 바코드 {written:,}개를 반영했습니다.")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"기존 상품 바코드 반영 실패: {exc}")
+
     st.subheader("상품 및 BOM 확인")
     st.caption("등록할 상품만 체크하고, 자동 추론된 BOM 구성품과 소요수량이 맞는지 수정하세요.")
 
@@ -368,7 +438,7 @@ def render_page(st, core):
         try:
             created = _register(core, review)
             st.session_state.pop(_REVIEW_KEY, None)
-            st.success(f"등록 완료: 신규 RG 상품 {len(created):,}개와 각 상품의 BOM/바코드를 저장했습니다.")
+            st.success(f"등록 완료: 신규 RG 상품 {len(created):,}개와 각 상품의 BOM/바코드를 저장했습니다. 바코드는 바코드 인쇄 메뉴에서도 즉시 사용됩니다.")
             st.rerun()
         except Exception as exc:
             st.error(f"등록 실패: {exc}")
