@@ -51,6 +51,9 @@ with _RG_IMPORT_LOCK:
         "goal_excel_upload_v0984",
         "sales_analysis_v09186",
         "rg_barcode_print_v09193",
+        "rg_barcode_page_v09235",
+        "rg_barcode_direct_print_v09257",
+        "update_check_v09246",
     ):
         _loaded = sys.modules.get(_rg_mod)
         if _loaded is None:
