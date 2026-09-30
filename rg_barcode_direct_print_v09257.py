@@ -112,7 +112,7 @@ def _render_label(row: dict[str, Any]) -> bytes:
         patterns = barcode_mod._CODE128_PATTERNS
         modules = 20 + sum(sum(int(c) for c in patterns[v]) for v in values)
         left, right = 16, LABEL_W - 16
-        bar_top, bar_bottom = 8, 96
+        bar_top, bar_bottom = 8, 128
         usable = right - left
         scale = usable / modules
         x = left + 10 * scale
@@ -129,18 +129,68 @@ def _render_label(row: dict[str, Any]) -> bytes:
                 x += mw
                 bar = not bar
 
-        _draw_center(gdi32, hdc, code, 100, 18)
+        _draw_center(gdi32, hdc, code, 134, 18)
 
         product = _text(row.get("상품명")) or _text(row.get("ERP 상품명"))
-        psize = _fit_font(gdi32, hdc, product, LABEL_W-24, 24, 14)
-        _draw_center(gdi32, hdc, product, 127, psize)
+        origin_px = 24
+        product_px = origin_px
 
-        option = _text(row.get("옵션명"))
-        if option:
-            osize = _fit_font(gdi32, hdc, option, LABEL_W-24, 19, 13)
-            _draw_center(gdi32, hdc, option, 158, osize)
+        def _wrap_product_two_lines(text):
+            text = _text(text)
+            if not text:
+                return [""]
+            font = _make_font(gdi32, product_px)
+            oldfont = gdi32.SelectObject(hdc, font)
+            try:
+                maxw = LABEL_W - 24
+                words = text.split()
+                if not words:
+                    words = [text]
+                lines = []
+                current = ""
+                for word in words:
+                    trial = word if not current else current + " " + word
+                    w, _ = _measure_text(gdi32, hdc, trial)
+                    if w <= maxw:
+                        current = trial
+                    else:
+                        if current:
+                            lines.append(current)
+                            current = word
+                        else:
+                            chunk = ""
+                            for ch in word:
+                                tw, _ = _measure_text(gdi32, hdc, chunk + ch)
+                                if tw <= maxw:
+                                    chunk += ch
+                                else:
+                                    if chunk:
+                                        lines.append(chunk)
+                                    chunk = ch
+                            current = chunk
+                    if len(lines) >= 2:
+                        break
+                if len(lines) < 2 and current:
+                    lines.append(current)
+                if len(lines) == 1:
+                    return lines
+                if len(lines) > 2:
+                    return lines[:2]
+                if len(lines) == 2:
+                    return lines
+                return [text]
+            finally:
+                gdi32.SelectObject(hdc, oldfont)
+                gdi32.DeleteObject(font)
 
-        _draw_center(gdi32, hdc, "MADE IN CHINA", 205, 24)
+        product_lines = _wrap_product_two_lines(product)
+        if len(product_lines) <= 1:
+            _draw_center(gdi32, hdc, product_lines[0] if product_lines else "", 164, product_px)
+        else:
+            _draw_center(gdi32, hdc, product_lines[0], 150, product_px)
+            _draw_center(gdi32, hdc, product_lines[1], 178, product_px)
+
+        _draw_center(gdi32, hdc, "MADE IN CHINA", 210, origin_px)
 
         size = LABEL_W * LABEL_H * 4
         raw = ctypes.string_at(bits, size)
@@ -152,7 +202,7 @@ def _render_label(row: dict[str, Any]) -> bytes:
             for xpix in range(LABEL_W):
                 p = row_off + xpix*4
                 b, g, r = raw[p], raw[p+1], raw[p+2]
-                if (int(r)+int(g)+int(b)) < 384:
+                if (int(r)+int(g)+int(b)) >= 384:
                     out[dst + (xpix >> 3)] |= 0x80 >> (xpix & 7)
         return bytes(out)
     finally:
