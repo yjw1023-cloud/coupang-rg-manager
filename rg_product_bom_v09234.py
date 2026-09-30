@@ -51,6 +51,11 @@ def _parse_excel(uploaded):
             barcode = _text(ws.cell(r, 28).value)
             if not option_id or not option_id.isdigit():
                 continue
+            # Coupang template/example rows can have a numeric G value but an
+            # instructional sentence in AB (e.g. the Snoopy sample row).
+            # Treat only compact ASCII barcode values as real product rows.
+            if not barcode or not re.fullmatch(r"[A-Za-z0-9-]{3,40}", barcode):
+                continue
             if option_id in seen:
                 continue
             seen.add(option_id)
@@ -116,10 +121,64 @@ def _korean_tokens(v: Any):
     text = _norm_name(v)
     stop = {
         "개", "세트", "1개", "2개", "3개", "4개", "5개", "10개",
-        "블랙", "화이트", "실버", "그레이", "우드", "투명", "레드",
+        "블랙", "화이트", "실버", "그레이", "우드", "투명", "레드", "오렌지",
         "free", "jd", "xl", "s", "m", "l",
+        "미니", "휴대용", "다용도", "고급", "대형", "소형", "세트",
+        "거치대", "홀더", "받침대", "케이스", "보관함", "용기", "도구",
     }
     return [x for x in text.split() if len(x) >= 2 and x not in stop]
+
+
+_SEMANTIC_GROUPS = {
+    "수모": ("수영모자", "수모"),
+    "비누": ("비누",),
+    "거치": ("거치대", "홀더", "받침대"),
+    "스텐": ("스텐", "스테인리스", "스테인레스"),
+    "캔오프너": ("캔오프너", "캔따개"),
+    "지퍼백": ("지퍼백", "비닐백"),
+    "브러쉬": ("브러쉬", "브러시", "솔"),
+    "철브러쉬": ("철브러쉬", "철솔", "쇠솔", "와이어브러쉬", "와이어브러시"),
+    "방향제": ("방향제", "디퓨저"),
+    "공병": ("공병", "용기", "리필병"),
+    "스퀴지": ("스퀴지", "헤라"),
+    "테이블보": ("테이블보", "식탁보"),
+    "네임택": ("네임택", "라벨태그", "이름표"),
+    "빗": ("빗", "헤어콤", "콤"),
+    "티슈": ("티슈", "와이프"),
+    "실리콘": ("실리콘",),
+}
+
+
+def _semantic_terms(v: Any):
+    compact = _compact_name(v)
+    out = set()
+    for canon, variants in _SEMANTIC_GROUPS.items():
+        if any(_compact_name(x) in compact for x in variants):
+            out.add(canon)
+    return out
+
+
+def _distinctive_overlap(product_name, raw_name):
+    a_tokens = set(_korean_tokens(product_name))
+    b_compact = _compact_name(raw_name)
+    b_tokens = set(_korean_tokens(raw_name))
+    a_compact = _compact_name(product_name)
+
+    matches = set()
+    for token in a_tokens:
+        if token in b_tokens or _compact_name(token) in b_compact:
+            matches.add(token)
+    for token in b_tokens:
+        if _compact_name(token) in a_compact:
+            matches.add(token)
+
+    sem_a = _semantic_terms(product_name)
+    sem_b = _semantic_terms(raw_name)
+    semantic_matches = sem_a & sem_b
+
+    # "거치" alone is too generic to prove a BOM match.
+    meaningful_semantic = {x for x in semantic_matches if x not in {"거치", "브러쉬"}}
+    return matches, meaningful_semantic, semantic_matches
 
 
 def _similarity_score(product_name, raw_name):
@@ -130,37 +189,30 @@ def _similarity_score(product_name, raw_name):
 
     target_compact = _compact_name(product_name)
     cand_compact = _compact_name(raw_name)
+    lexical, meaningful_semantic, all_semantic = _distinctive_overlap(product_name, raw_name)
 
-    # Strongest signal: one Korean product phrase occurs in the other after
-    # removing spaces/punctuation. This catches 비누 거치대 <-> 비누거치대.
-    contains = 1.0 if (cand_compact in target_compact or target_compact in cand_compact) else 0.0
+    # Do not let a generic word such as 거치대/홀더 alone auto-match unrelated
+    # products (e.g. 비누거치대 -> 면도기거치대).
+    has_distinctive = bool(lexical or meaningful_semantic)
+    if not has_distinctive:
+        return 0.0
 
-    tt = set(_korean_tokens(product_name))
-    ct = set(_korean_tokens(raw_name))
-    token_overlap = len(tt & ct) / max(1, min(len(tt), len(ct))) if tt and ct else 0.0
-
-    # Character similarity also catches 수영모자 <-> 수모 only partially, so
-    # augment with common commerce synonyms used by the user's item master.
-    synonym_groups = [
-        {"수영모자", "수모"},
-        {"거치대", "홀더", "받침대"},
-        {"비누", "비누거치대"},
-        {"스퀴지", "헤라"},
-        {"캔따개", "캔오프너"},
-        {"지퍼백", "비닐백"},
-        {"테이블보", "식탁보"},
-        {"네임택", "라벨태그", "태그"},
-    ]
-    synonym_bonus = 0.0
-    all_text_a = target_compact
-    all_text_b = cand_compact
-    for group in synonym_groups:
-        if any(_compact_name(x) in all_text_a for x in group) and any(_compact_name(x) in all_text_b for x in group):
-            synonym_bonus = max(synonym_bonus, 0.35)
+    contains = 1.0 if (
+        len(cand_compact) >= 4 and cand_compact in target_compact
+        or len(target_compact) >= 4 and target_compact in cand_compact
+    ) else 0.0
 
     seq = SequenceMatcher(None, target_compact, cand_compact).ratio()
-    return min(1.0, contains * 0.55 + token_overlap * 0.30 + seq * 0.15 + synonym_bonus)
+    lexical_score = min(1.0, len(lexical) / 2.0)
+    semantic_score = min(1.0, len(all_semantic) / 2.0)
 
+    return min(
+        1.0,
+        contains * 0.20
+        + lexical_score * 0.45
+        + semantic_score * 0.25
+        + seq * 0.10,
+    )
 
 
 def _candidate_label(row):
@@ -183,7 +235,7 @@ def _infer_component(product_name, raw_rows):
     score, label = ranked[0]
     # Conservative auto-pick; lower-confidence matches remain recommendations
     # for manual confirmation instead of being silently saved.
-    return label if score >= 0.46 else ""
+    return label if score >= 0.62 else ""
 
 
 
@@ -356,6 +408,7 @@ def render_page(st, core):
 
     st.info(
         "Excel 기준: B열+C열=상품명 · G열=옵션ID(상품코드) · AB열=바코드. "
+        "AB열이 실제 바코드가 아닌 설명문인 쿠팡 예시행은 자동 제외합니다. "
         "BOM 구성품과 수량은 자동 추론 후 반드시 직접 확인할 수 있습니다."
     )
 
