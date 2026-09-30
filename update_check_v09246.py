@@ -18,6 +18,7 @@ import shutil
 import tempfile
 import time
 import urllib.request
+import urllib.parse
 from pathlib import Path
 
 REPO = "yjw1023-cloud/coupang-rg-manager"
