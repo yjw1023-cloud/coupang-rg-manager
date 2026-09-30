@@ -1,6 +1,6 @@
 {
-  "version": "0.9.265",
-  "message": "바코드 인쇄 화면에서 출력수량 열을 상품명 바로 옆으로 이동했습니다.",
+  "version": "0.9.266",
+  "message": "ChatGPT 원격 조회에 오가닉 판매 조회 기능을 추가했습니다. 최근 30~365일 전체/광고/자연판매를 ERP와 동일한 기준으로 확인할 수 있습니다.",
   "files": [
     "VERSION.txt",
     "app.py",
@@ -16,6 +16,7 @@
     "rg_barcode_page_v09235.py",
     "rg_barcode_backfill_v09240.py",
     "ai_db_access_v09254.py",
-    "rg_barcode_direct_print_v09257.py"
+    "rg_barcode_direct_print_v09257.py",
+    "organic_sales_display_v09216.py"
   ]
 }
