@@ -83,6 +83,12 @@ _original_import_module = _plain_import_module
 coupang_api_sync_v09140 = _original_import_module("coupang_api_sync_v09140")
 coupang_api_sync_v09140.apply(core)
 
+# v0.9.250: local-only AI command bridge. This does not expose the ERP to the
+# internet; it only prepares a safe authenticated localhost interface for the
+# ChatGPT connector step.
+ai_bridge_v09250 = _original_import_module("ai_bridge_v09250")
+AI_BRIDGE_V09250_STATUS = ai_bridge_v09250.start_background(core)
+
 
 def _apply_purchase_v08(module):
     if module is None or getattr(module, "_rg_purchase_v08_applied", False):
