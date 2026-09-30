@@ -13,6 +13,7 @@ Rules:
 from __future__ import annotations
 
 import hashlib
+import importlib
 
 
 def apply(ad_module):
@@ -42,6 +43,9 @@ def apply(ad_module):
         ps, pe = start.isoformat(), end.isoformat()
         all_overlaps = original_overlaps(core, db, start, end)
         total = float(grouped["ad_spend"].sum())
+
+        backup_mod = importlib.import_module("db_backup_v09248")
+        backup_mod.backup_db(core, "advertising_report_import", db)
 
         with core._conn(db) as c:
             same_hash = c.execute(
