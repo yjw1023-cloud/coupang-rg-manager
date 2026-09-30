@@ -182,9 +182,16 @@ def render_page(st, core):
     pd = importlib.import_module("pandas")
     barcode = importlib.import_module("rg_barcode_print_v09193")
     components = importlib.import_module("streamlit.components.v1")
+    backfill = importlib.import_module("rg_barcode_backfill_v09240")
+    backfill_result = backfill.apply(core)
 
     st.title("바코드 인쇄")
     st.caption("ERP에 등록된 로켓그로스 상품을 직접 선택해 50×30mm 바코드 라벨을 인쇄합니다.")
+    if backfill_result.get("matched"):
+        st.caption(
+            f"업로드해 주신 RG Excel 기준으로 기존 ERP 상품 {backfill_result['matched']:,}개의 바코드를 반영했습니다. "
+            f"ERP에 없는 {backfill_result['ignored']:,}개 옵션ID는 무시했습니다."
+        )
 
     search = st.text_input(
         "상품 검색",
