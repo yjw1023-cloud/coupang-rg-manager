@@ -1,6 +1,6 @@
 {
-  "version": "0.9.264",
-  "message": "라벨 직접 인쇄에서 64비트 Windows GDI 핸들이 int로 잘못 처리되어 발생하던 OverflowError를 수정했습니다. 여러 상품과 대량 수량도 같은 직접 인쇄 방식으로 처리합니다.",
+  "version": "0.9.265",
+  "message": "바코드 인쇄 화면에서 출력수량 열을 상품명 바로 옆으로 이동했습니다.",
   "files": [
     "VERSION.txt",
     "app.py",
