@@ -7,6 +7,7 @@ locally; JSON results are written to outbox and synced by Google Drive for deskt
 from __future__ import annotations
 
 import base64
+from datetime import date, timedelta
 import importlib
 import json
 import os
@@ -111,6 +112,57 @@ def _attachment(base,spec):
     return {"filename":name,"file_base64":base64.b64encode(p.read_bytes()).decode("ascii")}
 
 
+
+def _organic_sales(core,payload):
+    """Return ERP organic-sales summary for remote ChatGPT inspection.
+
+    Organic = total sales quantity - ad-attributed sales quantity, using the same
+    canonical product matching and aligned import periods as the ERP Organic page.
+    """
+    try:
+        days=int(payload.get("days") or 30)
+    except Exception:
+        days=30
+    days=max(1,min(days,365))
+    q=str(payload.get("q") or "").strip().lower()
+    end=date.today()
+    start=end-timedelta(days=days-1)
+
+    sales_module=importlib.import_module("sales_analysis_v09186")
+    source_module=importlib.import_module("organic_sales_estimate_v09211")
+    display_module=importlib.import_module("organic_sales_display_v09216")
+    frame,covered,ad_qty_available=display_module._canonical_data(
+        core,sales_module,source_module,core.DEFAULT_DB,start,end
+    )
+
+    rows=[]
+    if frame is not None and not frame.empty:
+        for row in frame.to_dict("records"):
+            item=str(row.get("아이템") or "")
+            if q:
+                words=[x for x in q.split() if x]
+                hay=item.lower()
+                if not all(w in hay for w in words):
+                    continue
+            rows.append({
+                "product_id": int(row.get("product_id") or 0),
+                "item": item,
+                "sales_qty": float(row.get("판매량") or 0),
+                "ad_sales_qty": float(row.get("광고 판매량") or 0),
+                "organic_sales_qty": float(row.get("Organic 판매량") or 0),
+                "organic_ratio": float(row.get("Organic 판매 비율") or 0),
+            })
+    return {
+        "period_start": start.isoformat(),
+        "period_end": end.isoformat(),
+        "requested_days": days,
+        "covered_days": len(covered or []),
+        "ad_qty_available": bool(ad_qty_available),
+        "query": q,
+        "rows": rows,
+    }
+
+
 def _execute(core,base,cmd):
     bridge=importlib.import_module("ai_bridge_v09250")
     typ=str(cmd.get("type") or "").strip()
@@ -130,6 +182,7 @@ def _execute(core,base,cmd):
         "ads_import":lambda:bridge._ad_import(core,payload),
         "db_schema":lambda:importlib.import_module("ai_db_access_v09254").schema(core,payload),
         "table_read":lambda:importlib.import_module("ai_db_access_v09254").read(core,payload),
+        "organic_sales":lambda:_organic_sales(core,payload),
     }
     if typ not in routes:
         raise ValueError("허용되지 않은 AI 명령입니다: "+typ)
