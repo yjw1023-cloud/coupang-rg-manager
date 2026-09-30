@@ -89,6 +89,10 @@ coupang_api_sync_v09140.apply(core)
 ai_bridge_v09250 = _original_import_module("ai_bridge_v09250")
 AI_BRIDGE_V09250_STATUS = ai_bridge_v09250.start_background(core)
 
+# v0.9.252: Google Drive desktop-sync command/result relay.
+ai_drive_relay_v09252 = _original_import_module("ai_drive_relay_v09252")
+AI_DRIVE_RELAY_V09252_STATUS = ai_drive_relay_v09252.start_background(core)
+
 
 def _apply_purchase_v08(module):
     if module is None or getattr(module, "_rg_purchase_v08_applied", False):
