@@ -351,86 +351,200 @@ def build_print_html(rows: list[dict[str, Any]]) -> str:
         raise ValueError(f"한 번에 최대 {MAX_TOTAL_LABELS:,}장까지 인쇄할 수 있습니다.")
 
     body = "\n".join(labels)
-    return f"""<!doctype html>
+    template = """<!doctype html>
 <html lang="ko">
 <head>
 <meta charset="utf-8">
 <style>
-  * {{ box-sizing: border-box; }}
-  html, body {{ margin:0; padding:0; background:#f3f5f7; font-family: Arial, 'Malgun Gothic', sans-serif; }}
-  .toolbar {{ position:sticky; top:0; z-index:10; display:flex; align-items:center; gap:12px;
-              padding:10px 12px; background:white; border-bottom:1px solid #d9dee5; }}
-  .toolbar button {{ border:0; border-radius:7px; padding:8px 16px; font-weight:700; cursor:pointer;
-                     background:#1367d1; color:white; }}
-  .toolbar span {{ font-size:13px; color:#4d5968; }}
-  .preview {{ padding:12px; display:flex; flex-wrap:wrap; gap:10px; align-items:flex-start; }}
-  .label {{ width:50mm; height:30mm; background:#fff; padding:1.0mm 2.4mm 0.9mm 2.4mm;
-            display:flex; flex-direction:column; align-items:center; overflow:hidden;
-            page-break-after:always; break-after:page; }}
-  .bars {{ width:44.5mm; height:10.7mm; flex:0 0 10.7mm; }}
-  .bars svg {{ width:100%; height:100%; display:block; fill:#000; }}
-  .barcode-text {{ width:100%; height:2.7mm; line-height:2.7mm; text-align:center; font-size:6.7pt; letter-spacing:.08mm; }}
-  .product {{ width:100%; height:3.7mm; line-height:3.7mm; white-space:nowrap; overflow:hidden;
-              text-align:center; font-weight:400; }}
-  .option {{ width:100%; height:3.6mm; line-height:3.6mm; white-space:nowrap; overflow:hidden;
-             text-align:center; font-size:8.2pt; }}
-  .origin {{ width:100%; margin-top:auto; height:3.7mm; line-height:3.7mm; text-align:center; font-size:8.4pt; }}
-  @page {{ size:50mm 30mm; margin:0; }}
-  @media print {{
-    html, body {{ width:50mm; margin:0 !important; padding:0 !important; background:white; }}
-    .toolbar {{ display:none !important; }}
-    .preview {{ display:block; padding:0; margin:0; }}
-    .label {{ margin:0; border:0; box-shadow:none; }}
-  }}
+  * { box-sizing: border-box; }
+  html, body { margin:0; padding:0; background:#f3f5f7; font-family: Arial, 'Malgun Gothic', sans-serif; }
+  .toolbar { position:sticky; top:0; z-index:10; display:flex; align-items:center; gap:12px;
+             padding:10px 12px; background:white; border-bottom:1px solid #d9dee5; }
+  .toolbar button { border:0; border-radius:7px; padding:8px 16px; font-weight:700; cursor:pointer;
+                    background:#1367d1; color:white; }
+  .toolbar span { font-size:13px; color:#4d5968; }
+  .preview { padding:12px; display:flex; flex-wrap:wrap; gap:10px; align-items:flex-start; }
+  .label { width:50mm; height:30mm; background:#fff; padding:1.0mm 2.4mm 0.9mm 2.4mm;
+           display:flex; flex-direction:column; align-items:center; overflow:hidden; }
+  .bars { width:44.5mm; height:10.7mm; flex:0 0 10.7mm; }
+  .bars svg { width:100%; height:100%; display:block; fill:#000; }
+  .barcode-text { width:100%; height:2.7mm; line-height:2.7mm; text-align:center; font-size:6.7pt; letter-spacing:.08mm; }
+  .product { width:100%; height:3.7mm; line-height:3.7mm; white-space:nowrap; overflow:hidden;
+             text-align:center; font-weight:400; }
+  .option { width:100%; height:3.6mm; line-height:3.6mm; white-space:nowrap; overflow:hidden;
+            text-align:center; font-size:8.2pt; }
+  .origin { width:100%; margin-top:auto; height:3.7mm; line-height:3.7mm; text-align:center; font-size:8.4pt; }
 </style>
 </head>
 <body>
   <div class="toolbar">
-    <button onclick="printLabels()">50×30mm 바코드 인쇄</button>
-    <span>총 {total:,}장 · 라벨 용지 50×30mm / 배율 100% / 여백 없음</span>
+    <button onclick="makeLabelPdf()">50×30mm PDF 인쇄</button>
+    <span>총 __TOTAL__장 · 정확한 50×30mm PDF로 생성합니다. 웹페이지/A4 인쇄를 사용하지 않습니다.</span>
   </div>
-  <main class="preview">{body}</main>
+  <main class="preview">__BODY__</main>
 <script>
-function printLabels() {{
-  const labels = document.querySelector('.preview').innerHTML;
-  const w = window.open('', '_blank', 'width=520,height=520');
-  if (!w) {{
-    alert('인쇄창이 차단되었습니다. 브라우저 팝업을 허용한 뒤 다시 눌러 주세요.');
-    return;
-  }}
-  const doc = `<!doctype html>
-<html lang="ko">
-<head>
-<meta charset="utf-8">
-<title>50x30mm Barcode Labels</title>
-<style>
-  * {{ box-sizing:border-box; }}
-  @page {{ size:50mm 30mm; margin:0; }}
-  html, body {{ margin:0 !important; padding:0 !important; width:50mm; background:#fff; font-family:Arial,'Malgun Gothic',sans-serif; }}
-  .label {{ width:50mm; height:30mm; margin:0; padding:1.0mm 2.4mm 0.9mm 2.4mm;
-            display:flex; flex-direction:column; align-items:center; overflow:hidden;
-            page-break-after:always; break-after:page; background:#fff; }}
-  .label:last-child {{ page-break-after:auto; break-after:auto; }}
-  .bars {{ width:44.5mm; height:10.7mm; flex:0 0 10.7mm; }}
-  .bars svg {{ width:100%; height:100%; display:block; fill:#000; }}
-  .barcode-text {{ width:100%; height:2.7mm; line-height:2.7mm; text-align:center; font-size:6.7pt; letter-spacing:.08mm; }}
-  .product {{ width:100%; height:3.7mm; line-height:3.7mm; white-space:nowrap; overflow:hidden; text-align:center; font-weight:400; }}
-  .option {{ width:100%; height:3.6mm; line-height:3.6mm; white-space:nowrap; overflow:hidden; text-align:center; font-size:8.2pt; }}
-  .origin {{ width:100%; margin-top:auto; height:3.7mm; line-height:3.7mm; text-align:center; font-size:8.4pt; }}
-</style>
-</head>
-<body>${labels}</body>
-</html>`;
-  w.document.open();
-  w.document.write(doc);
-  w.document.close();
-  w.focus();
-  setTimeout(() => {{ w.print(); }}, 250);
-}}
+function textBytes(s) {
+  return new TextEncoder().encode(s);
+}
+function b64Bytes(b64) {
+  const raw = atob(b64);
+  const out = new Uint8Array(raw.length);
+  for (let i=0; i<raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+function joinBytes(parts) {
+  let n = 0;
+  for (const p of parts) n += p.length;
+  const out = new Uint8Array(n);
+  let o = 0;
+  for (const p of parts) { out.set(p, o); o += p.length; }
+  return out;
+}
+function fitText(ctx, text, maxWidth, startPx, minPx) {
+  let size = startPx;
+  do {
+    ctx.font = size + "px Arial, 'Malgun Gothic', sans-serif";
+    if (ctx.measureText(text).width <= maxWidth || size <= minPx) return size;
+    size -= 1;
+  } while (size >= minPx);
+  return minPx;
+}
+function labelToJpeg(el) {
+  const W = 600, H = 360, ppm = 12;
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0,0,W,H);
+  ctx.fillStyle = '#000';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  const svg = el.querySelector('.bars svg');
+  const vb = svg.viewBox.baseVal;
+  const bx = 2.4*ppm, by = 1.0*ppm, bw = 44.5*ppm, bh = 10.7*ppm;
+  const sx = bw / vb.width, sy = bh / vb.height;
+  for (const r of svg.querySelectorAll('rect')) {
+    ctx.fillRect(
+      bx + parseFloat(r.getAttribute('x'))*sx,
+      by + parseFloat(r.getAttribute('y'))*sy,
+      Math.max(1, parseFloat(r.getAttribute('width'))*sx),
+      parseFloat(r.getAttribute('height'))*sy
+    );
+  }
+
+  const barcode = el.querySelector('.barcode-text').textContent.trim();
+  const product = el.querySelector('.product').textContent.trim();
+  const option = el.querySelector('.option').textContent.trim();
+  const origin = el.querySelector('.origin').textContent.trim();
+
+  ctx.font = "27px Arial, 'Malgun Gothic', sans-serif";
+  ctx.fillText(barcode, W/2, 147);
+
+  let ps = fitText(ctx, product, W-48, 36, 20);
+  ctx.font = ps + "px Arial, 'Malgun Gothic', sans-serif";
+  ctx.fillText(product, W/2, 188);
+
+  if (option) {
+    let os = fitText(ctx, option, W-48, 33, 19);
+    ctx.font = os + "px Arial, 'Malgun Gothic', sans-serif";
+    ctx.fillText(option, W/2, 232);
+  }
+
+  ctx.font = "34px Arial, 'Malgun Gothic', sans-serif";
+  ctx.fillText(origin, W/2, 319);
+  return c.toDataURL('image/jpeg', 0.98).split(',')[1];
+}
+function buildPdf(jpegs) {
+  const pw = 141.732283, ph = 85.039370;
+  const chunks = [];
+  const offsets = [0];
+  let pos = 0;
+  const push = (u8) => { chunks.push(u8); pos += u8.length; };
+  const pushText = (s) => push(textBytes(s));
+  pushText('%PDF-1.4\\n%LABEL\\n');
+
+  const pageNums = [];
+  const imgNums = [];
+  const contentNums = [];
+  let obj = 3;
+  for (let i=0; i<jpegs.length; i++) {
+    pageNums.push(obj++);
+    imgNums.push(obj++);
+    contentNums.push(obj++);
+  }
+  const totalObjs = obj - 1;
+
+  function startObj(n) { offsets[n] = pos; pushText(n + ' 0 obj\\n'); }
+  function endObj() { pushText('endobj\\n'); }
+
+  startObj(1);
+  pushText('<< /Type /Catalog /Pages 2 0 R >>\\n');
+  endObj();
+
+  startObj(2);
+  pushText('<< /Type /Pages /Count ' + jpegs.length + ' /Kids [' + pageNums.map(n => n + ' 0 R').join(' ') + '] >>\\n');
+  endObj();
+
+  for (let i=0; i<jpegs.length; i++) {
+    const pageN = pageNums[i], imgN = imgNums[i], contN = contentNums[i];
+    const jpg = b64Bytes(jpegs[i]);
+    const stream = 'q\\n' + pw.toFixed(6) + ' 0 0 ' + ph.toFixed(6) + ' 0 0 cm\\n/Im' + i + ' Do\\nQ\\n';
+    const streamBytes = textBytes(stream);
+
+    startObj(pageN);
+    pushText('<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ' + pw.toFixed(6) + ' ' + ph.toFixed(6) +
+             '] /Resources << /XObject << /Im' + i + ' ' + imgN + ' 0 R >> >> /Contents ' + contN + ' 0 R >>\\n');
+    endObj();
+
+    startObj(imgN);
+    pushText('<< /Type /XObject /Subtype /Image /Width 600 /Height 360 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ' + jpg.length + ' >>\\nstream\\n');
+    push(jpg);
+    pushText('\\nendstream\\n');
+    endObj();
+
+    startObj(contN);
+    pushText('<< /Length ' + streamBytes.length + ' >>\\nstream\\n');
+    push(streamBytes);
+    pushText('endstream\\n');
+    endObj();
+  }
+
+  const xrefPos = pos;
+  pushText('xref\\n0 ' + (totalObjs+1) + '\\n');
+  pushText('0000000000 65535 f \\n');
+  for (let n=1; n<=totalObjs; n++) {
+    pushText(String(offsets[n]).padStart(10,'0') + ' 00000 n \\n');
+  }
+  pushText('trailer\\n<< /Size ' + (totalObjs+1) + ' /Root 1 0 R >>\\nstartxref\\n' + xrefPos + '\\n%%EOF');
+  return joinBytes(chunks);
+}
+async function makeLabelPdf() {
+  const els = Array.from(document.querySelectorAll('.preview .label'));
+  if (!els.length) return;
+  const btn = document.querySelector('.toolbar button');
+  btn.disabled = true;
+  const old = btn.textContent;
+  btn.textContent = '50×30mm PDF 만드는 중...';
+  try {
+    await document.fonts.ready;
+    const jpegs = els.map(labelToJpeg);
+    const pdf = buildPdf(jpegs);
+    const url = URL.createObjectURL(new Blob([pdf], {type:'application/pdf'}));
+    const w = window.open(url, '_blank');
+    if (!w) alert('PDF 창이 차단되었습니다. 브라우저 팝업을 허용한 뒤 다시 눌러 주세요.');
+    setTimeout(() => URL.revokeObjectURL(url), 120000);
+  } catch (e) {
+    alert('라벨 PDF 생성 실패: ' + e);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = old;
+  }
+}
 </script>
 </body>
 </html>"""
-
+    return template.replace("__TOTAL__", f"{total:,}").replace("__BODY__", body)
 
 def _editor_rows(core_module, batch_rows, uploaded, db_path=None):
     option_ids = [_oid(row.get("option_id")) for row in batch_rows]
