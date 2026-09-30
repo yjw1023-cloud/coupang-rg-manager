@@ -101,7 +101,6 @@ def _load_products(core):
         saved_barcode = _text(saved.get("barcode"))
         result.append(
             {
-                "선택": False,
                 "상품명": _text(row["name"]) or _text(saved.get("product_name")),
                 "상품코드": _text(row["item_code"]),
                 "옵션ID": option_id,
@@ -157,9 +156,7 @@ def _plan_from_editor(core, edited):
             qty_value = int(row.get("출력수량") or 0)
         except Exception:
             qty_value = 0
-        if qty_value > 0:
-            row["선택"] = True
-        if not bool(row.get("선택")):
+        if qty_value < 1:
             continue
         option_id = _oid(row.get("옵션ID"))
         name = _text(row.get("상품명"))
@@ -236,7 +233,7 @@ def render_page(st, core):
 
     st.caption(
         f"검색 결과 {len(rows):,}개 · 최근 등록 상품이 위에 표시됩니다. "
-        "왼쪽 체크박스로 선택하고 출력수량을 입력하세요."
+        "출력수량을 1개 이상 입력하면 해당 상품이 자동으로 인쇄 대상으로 선택됩니다."
     )
 
     if not rows:
@@ -253,7 +250,6 @@ def render_page(st, core):
         key="rg_barcode_v09237_editor",
         disabled=["상품명", "상품코드", "옵션ID", "등록일"],
         column_config={
-            "선택": st.column_config.CheckboxColumn("선택", width="small"),
             "상품명": st.column_config.TextColumn("상품명", width="large"),
             "상품코드": st.column_config.TextColumn("상품코드", width="medium"),
             "옵션ID": st.column_config.TextColumn("옵션ID", width="medium"),
@@ -287,14 +283,16 @@ def render_page(st, core):
             st.rerun()
 
     edited_rows = _records(edited)
-    synced_rows, auto_changed = _auto_select_by_quantity(edited_rows)
-    if auto_changed:
-        st.session_state["rg_barcode_v09237_editor"] = pd.DataFrame(synced_rows)
-        st.rerun()
-
-    selected_now = [r for r in synced_rows if bool(r.get("선택"))]
+    selected_now = []
+    for r in edited_rows:
+        try:
+            qty_now = int(r.get("출력수량") or 0)
+        except Exception:
+            qty_now = 0
+        if qty_now > 0:
+            selected_now.append(r)
     c2.caption(
-        f"현재 선택 {len(selected_now):,}개 상품 · "
+        f"자동 선택 {len(selected_now):,}개 상품 · "
         f"입력 수량 합계 {sum(max(0, int(r.get('출력수량') or 0)) for r in selected_now):,}장"
     )
 
