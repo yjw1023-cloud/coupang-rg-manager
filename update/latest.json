@@ -1,11 +1,12 @@
 {
-  "version": "0.9.239",
-  "message": "RG상품/BOM 등록에서 G열 옵션ID가 기존 ERP 상품과 일치하면 AB열 바코드를 기존 상품에 반영할 수 있게 했습니다. ERP에 없는 옵션ID는 무시하고 새 상품을 만들지 않습니다. 신규 RG 상품 등록 시 저장한 바코드는 바코드 인쇄 메뉴에서도 즉시 사용됩니다.",
+  "version": "0.9.240",
+  "message": "사용자가 제공한 RG 입고 Excel의 G열 옵션ID와 AB열 바코드 142개를 포함했습니다. ERP에 이미 존재하는 옵션ID와 정확히 일치하는 상품만 바코드 DB에 자동 반영하며, ERP에 없는 상품은 무시합니다. 향후 신규/기존 바코드는 RG상품/BOM 등록 메뉴에서 같은 규칙으로 갱신됩니다.",
   "files": [
     "VERSION.txt",
     "pnl_month_default_v0915.py",
     "rg_product_bom_v09234.py",
     "rg_barcode_print_v09193.py",
-    "rg_barcode_page_v09235.py"
+    "rg_barcode_page_v09235.py",
+    "rg_barcode_backfill_v09240.py"
   ]
 }
