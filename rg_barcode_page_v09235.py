@@ -283,26 +283,68 @@ def render_page(st, core):
     review = pd.DataFrame(
         [
             {
+                "인쇄순서": idx + 1,
                 "상품명": r["상품명"],
                 "바코드": r["바코드"],
                 "바코드 수량": int(r["출력수량"]),
             }
-            for r in plan
+            for idx, r in enumerate(plan)
         ]
     )
-    st.dataframe(review, use_container_width=True, hide_index=True)
+    st.caption("인쇄순서를 바꾸려면 왼쪽 '인쇄순서' 숫자를 1부터 상품 수까지 원하는 순서로 바꾸세요.")
+    ordered_review = st.data_editor(
+        review,
+        use_container_width=True,
+        hide_index=True,
+        num_rows="fixed",
+        key="rg_barcode_v09259_order_editor",
+        disabled=["상품명", "바코드", "바코드 수량"],
+        column_config={
+            "인쇄순서": st.column_config.NumberColumn(
+                "인쇄순서",
+                min_value=1,
+                max_value=max(1, len(plan)),
+                step=1,
+                format="%d",
+                width="small",
+                help="1이 가장 먼저 인쇄됩니다. 각 상품에 1부터 상품 수까지 겹치지 않게 지정하세요.",
+            ),
+            "상품명": st.column_config.TextColumn("상품명", width="large"),
+            "바코드": st.column_config.TextColumn("바코드", width="medium"),
+            "바코드 수량": st.column_config.NumberColumn("바코드 수량", format="%d", width="small"),
+        },
+    )
     total = sum(int(r["출력수량"]) for r in plan)
     st.info(f"총 {len(plan):,}개 상품 / 바코드 {total:,}장을 인쇄합니다.")
 
     b1, b2 = st.columns([1, 1])
     if b1.button("수정하러 돌아가기", use_container_width=True):
         st.session_state.pop(_PLAN_KEY, None)
+        st.session_state.pop("rg_barcode_v09259_order_editor", None)
         st.session_state[_CONFIRMED_KEY] = False
         st.rerun()
 
     if b2.button("이 내용으로 인쇄 확정", type="primary", use_container_width=True):
-        st.session_state[_CONFIRMED_KEY] = True
-        st.rerun()
+        order_rows = _records(ordered_review)
+        try:
+            order_values = [int(r.get("인쇄순서")) for r in order_rows]
+        except Exception:
+            order_values = []
+        expected = list(range(1, len(plan) + 1))
+        if sorted(order_values) != expected:
+            st.error(f"인쇄순서는 1부터 {len(plan)}까지 숫자를 각각 한 번씩만 사용해 주세요.")
+        else:
+            reordered = [
+                item
+                for _, item in sorted(
+                    zip(order_values, plan),
+                    key=lambda pair: pair[0],
+                )
+            ]
+            st.session_state[_PLAN_KEY] = reordered
+            st.session_state.pop("rg_barcode_v09259_order_editor", None)
+            st.session_state[_CONFIRMED_KEY] = True
+            st.rerun()
 
     if not st.session_state.get(_CONFIRMED_KEY):
         return
