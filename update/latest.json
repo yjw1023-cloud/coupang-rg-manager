@@ -1,6 +1,6 @@
 {
-  "version": "0.9.252",
-  "message": "Google Drive 동기화 기반 AI 중계를 추가했습니다. ERP는 로컬 JDSmall_AI_ERP/inbox 폴더의 명령을 10초마다 처리하고 결과를 outbox에 기록합니다. GitHub/Google 비밀번호나 토큰은 ERP가 전혀 읽거나 저장하지 않습니다. RG상품/BOM 등록 화면 상단에서 로컬 Drive 폴더 경로를 최초 1회 지정할 수 있습니다.",
+  "version": "0.9.253",
+  "message": "업데이트 적용 중 GitHub API rate limit(403)이 발생해도 raw.githubusercontent.com으로 자동 우회하도록 updater를 수정했습니다. Google Drive AI 중계 기능은 0.9.252 내용 그대로 포함됩니다.",
   "files": [
     "VERSION.txt",
     "app.py",
