@@ -241,6 +241,8 @@ def render_page(st, core):
         return
 
     frame = pd.DataFrame(rows)
+    preferred_columns = ["상품명", "출력수량", "상품코드", "옵션ID", "바코드", "등록일"]
+    frame = frame[[col for col in preferred_columns if col in frame.columns]]
     edited = st.data_editor(
         frame,
         use_container_width=True,
