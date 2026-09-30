@@ -128,6 +128,8 @@ def _execute(core,base,cmd):
         "bom_set":lambda:bridge._set_bom(core,payload),
         "sales_import":lambda:bridge._sales_import(core,payload),
         "ads_import":lambda:bridge._ad_import(core,payload),
+        "db_schema":lambda:importlib.import_module("ai_db_access_v09254").schema(core,payload),
+        "table_read":lambda:importlib.import_module("ai_db_access_v09254").read(core,payload),
     }
     if typ not in routes:
         raise ValueError("허용되지 않은 AI 명령입니다: "+typ)
