@@ -1,6 +1,6 @@
 {
-  "version": "0.9.243",
-  "message": "RG상품/BOM 등록 화면의 Excel 파서와 ERP 상품 조회 함수가 누락되어 발생한 오류를 수정했습니다. _parse_excel, _load_raw_products, _existing_options를 복구했고 함수 존재 여부를 확인했습니다.",
+  "version": "0.9.244",
+  "message": "업데이트 확인 캐시 우회를 urllib뿐 아니라 requests 기반 경로에도 적용했습니다. latest.json을 요청하는 모든 주요 경로에 매번 고유한 쿼리값과 no-cache 헤더를 붙여 새 버전 확인 지연을 줄였습니다.",
   "files": [
     "VERSION.txt",
     "app.py",
