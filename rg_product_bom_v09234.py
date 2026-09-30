@@ -468,6 +468,20 @@ def render_page(st, core):
         "BOM 구성품과 수량은 자동 추론 후 반드시 직접 확인할 수 있습니다."
     )
 
+    st.markdown("### DB 백업 테스트")
+    st.caption("상품/BOM 등 ERP 데이터는 전혀 변경하지 않고 현재 DB 전체 백업본만 생성합니다.")
+    if st.button(
+        "백업 테스트 실행",
+        key="rg_product_bom_v09249_backup_test",
+        use_container_width=True,
+    ):
+        try:
+            backup_mod = importlib.import_module("db_backup_v09248")
+            backup_path = backup_mod.backup_db(core, "manual_backup_test", core.DEFAULT_DB)
+            st.success(f"백업 테스트 완료: {backup_path}")
+        except Exception as exc:
+            st.error(f"백업 테스트 실패: {exc}")
+
     uploaded = st.file_uploader(
         "RG 상품 Excel 업로드",
         type=["xlsx"],
