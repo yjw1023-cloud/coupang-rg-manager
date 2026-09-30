@@ -290,6 +290,9 @@ pnl_month_default_v0914.apply()
 # v0.9.15 safe monthly routing: never copies/re-indents legacy source blocks.
 pnl_month_default_v0915 = _original_import_module("pnl_month_default_v0915")
 
+# v0.9.246: replace the legacy update-check button with a direct GitHub API updater.
+update_check_v09246 = _original_import_module("update_check_v09246")
+
 # v0.9.31: the patched legacy BOM UI contains direct references to this module.
 # Export it into the globals used by exec() so BOM selectors can resolve it.
 bom_candidate_filter_v0927 = _original_import_module("bom_candidate_filter_v0927")
@@ -419,7 +422,7 @@ source = source.replace(
     'source = sales_analysis_v09186.patch_source(source)\n'
     'source = provisional_pnl_ui_v0913.patch_source(source)\n'
     'source = coupang_api_sync_v09140.patch_source(source)\n'
-    'source = pnl_month_default_v0915.patch_source(source)\n' + loader_exec,
+    'source = pnl_month_default_v0915.patch_source(source)\nsource = update_check_v09246.patch_source(source)\n' + loader_exec,
     1,
 )
 globals()["LEGACY_REPAIR_RESULT"] = LEGACY_REPAIR_RESULT
@@ -444,6 +447,7 @@ globals()["pnl_month_default_v0914"] = pnl_month_default_v0914
 globals()["pnl_month_default_v0915"] = pnl_month_default_v0915
 globals()["coupang_api_sync_v09140"] = coupang_api_sync_v09140
 globals()["bom_candidate_filter_v0927"] = bom_candidate_filter_v0927
+globals()["update_check_v09246"] = update_check_v09246
 globals()["AUTO_PRODUCTION_V09106_RESULT"] = AUTO_PRODUCTION_V09106_RESULT
 globals()["AD_FORCE_CLEANUP_V09111_RESULT"] = AD_FORCE_CLEANUP_V09111_RESULT
 globals()["REQUESTED_PRODUCT_SEED_V09133_RESULT"] = REQUESTED_PRODUCT_SEED_V09133_RESULT
