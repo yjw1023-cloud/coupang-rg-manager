@@ -173,6 +173,7 @@ def render_grouped_sidebar(st_obj, options, default_page=None):
     goals.apply_sidebar(m)
     sales_analysis = importlib.import_module("sales_analysis_v09186")
     simple_margin = importlib.import_module("simple_margin_v09205")
+    rg_product_bom = importlib.import_module("rg_product_bom_v09234")
 
     # The grouped sidebar otherwise classifies unknown pages as Data/Admin.
     # Keep sales analysis in its dedicated group and place quick margin inside
@@ -180,6 +181,7 @@ def render_grouped_sidebar(st_obj, options, default_page=None):
     sales_title = "📊 판매분석"
     sales_label = str(sales_analysis.PAGE_LABEL)
     margin_label = str(simple_margin.PAGE_LABEL)
+    rg_bom_label = str(rg_product_bom.PAGE_LABEL)
     groups = getattr(m, "_GROUPS", None)
     if isinstance(groups, list):
         for title, items in groups:
@@ -208,8 +210,23 @@ def render_grouped_sidebar(st_obj, options, default_page=None):
                     items.insert(insert_at, margin_label)
                 break
 
+        # RG 신규상품 등록은 매입/상품 업무 흐름에 둔다.
+        for title, items in groups:
+            if rg_bom_label in items and str(title) != "🛒 매입·상품":
+                items[:] = [x for x in items if x != rg_bom_label]
+        for title, items in groups:
+            if str(title) == "🛒 매입·상품":
+                if rg_bom_label not in items:
+                    insert_at = 1
+                    for idx, label in enumerate(items):
+                        if "매입관리" in str(label):
+                            insert_at = idx + 1
+                            break
+                    items.insert(insert_at, rg_bom_label)
+                break
+
     runtime_options = [str(x) for x in list(options or [])]
-    for label in (overview.PAGE_LABEL, goals.PAGE_LABEL, sales_label, margin_label):
+    for label in (overview.PAGE_LABEL, goals.PAGE_LABEL, sales_label, margin_label, rg_bom_label):
         if label not in runtime_options:
             runtime_options.append(label)
 
@@ -220,6 +237,12 @@ def render_grouped_sidebar(st_obj, options, default_page=None):
         except Exception as exc:
             st_obj.error(f"간략이익률 화면을 여는 중 오류가 발생했습니다: {exc}")
         return "__RG_SIMPLE_MARGIN_RENDERED__"
+    if current == rg_bom_label:
+        try:
+            rg_product_bom.render_page(st_obj, importlib.import_module("core"))
+        except Exception as exc:
+            st_obj.error(f"RG상품/BOM 등록 화면을 여는 중 오류가 발생했습니다: {exc}")
+        return "__RG_PRODUCT_BOM_RENDERED__"
     return current
 
 
