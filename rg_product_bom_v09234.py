@@ -387,6 +387,8 @@ def _apply_existing_barcodes(core, updates):
     barcode_mod = importlib.import_module("rg_barcode_print_v09193")
     if not updates:
         return 0
+    backup_mod = importlib.import_module("db_backup_v09248")
+    backup_mod.backup_db(core, "rg_existing_barcode_update", core.DEFAULT_DB)
     payload = [
         {
             "option_id": r["옵션ID"],
@@ -401,6 +403,8 @@ def _apply_existing_barcodes(core, updates):
 def _register(core, rows):
     barcode_mod = importlib.import_module("rg_barcode_print_v09193")
     barcode_mod.ensure_schema(core)
+    backup_mod = importlib.import_module("db_backup_v09248")
+    backup_mod.backup_db(core, "rg_product_bom_register", core.DEFAULT_DB)
     now = core.now_iso()
 
     option_ids = [r["옵션ID"] for r in rows]
