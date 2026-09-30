@@ -5,6 +5,8 @@ import importlib
 import sys
 import threading
 import urllib.request
+import urllib.parse
+import time
 
 import core
 
@@ -321,6 +323,52 @@ def _ensure_loader():
 
 
 _ensure_loader()
+
+# v0.9.241: the legacy updater checks the same raw GitHub latest.json URL on
+# every click. CDN/browser/proxy caching can briefly return the previous
+# manifest immediately after a release. Intercept only that manifest request
+# and add a unique query value plus no-cache headers. File downloads themselves
+# keep their normal stable URLs.
+_RG_ORIGINAL_URLOPEN_V09241 = urllib.request.urlopen
+
+def _rg_urlopen_no_manifest_cache(request, *args, **kwargs):
+    try:
+        if isinstance(request, urllib.request.Request):
+            url = request.full_url
+        else:
+            url = str(request)
+        target = url.split("?", 1)[0]
+        if (
+            "raw.githubusercontent.com/yjw1023-cloud/coupang-rg-manager/" in target
+            and target.endswith("/update/latest.json")
+        ):
+            sep = "&" if "?" in url else "?"
+            fresh_url = f"{url}{sep}_rgcb={time.time_ns()}"
+            if isinstance(request, urllib.request.Request):
+                headers = dict(request.header_items())
+                headers["Cache-Control"] = "no-cache, no-store, max-age=0"
+                headers["Pragma"] = "no-cache"
+                request = urllib.request.Request(
+                    fresh_url,
+                    data=request.data,
+                    headers=headers,
+                    method=request.get_method(),
+                )
+            else:
+                request = urllib.request.Request(
+                    fresh_url,
+                    headers={
+                        "User-Agent": "RG-Manager/0.9.241",
+                        "Cache-Control": "no-cache, no-store, max-age=0",
+                        "Pragma": "no-cache",
+                    },
+                )
+    except Exception:
+        pass
+    return _RG_ORIGINAL_URLOPEN_V09241(request, *args, **kwargs)
+
+urllib.request.urlopen = _rg_urlopen_no_manifest_cache
+
 source = LOADER.read_text(encoding="utf-8")
 source = source.replace(
     'st.sidebar.caption("v0.7 · legacy ERP import")',
