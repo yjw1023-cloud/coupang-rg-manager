@@ -12,6 +12,7 @@ review -> explicit confirmation -> transactional product/BOM/barcode registratio
 from __future__ import annotations
 
 import io
+import hashlib
 import importlib
 import re
 from difflib import SequenceMatcher
@@ -19,6 +20,7 @@ from typing import Any
 
 PAGE_LABEL = "RG상품/BOM 등록"
 _REVIEW_KEY = "rg_product_bom_v09238_review"
+_REVIEW_FILE_KEY = "rg_product_bom_v09242_review_file"
 
 
 def _text(v: Any) -> str:
@@ -39,99 +41,83 @@ def _norm_name(v: Any) -> str:
     return " ".join(s.split())
 
 
-def _parse_excel(uploaded):
-    openpyxl = importlib.import_module("openpyxl")
-    data = uploaded.getvalue() if hasattr(uploaded, "getvalue") else uploaded.read()
-    wb = openpyxl.load_workbook(io.BytesIO(data), data_only=True, read_only=True)
-    try:
-        ws = wb.active
-        rows = []
-        seen = set()
-        for r in range(1, ws.max_row + 1):
-            b = _text(ws.cell(r, 2).value)
-            c = _text(ws.cell(r, 3).value)
-            option_id = _oid(ws.cell(r, 7).value)
-            barcode = _text(ws.cell(r, 28).value)
-            # Header / explanatory rows are ignored. Real Coupang option IDs are numeric.
-            if not option_id or not option_id.isdigit():
-                continue
-            if option_id in seen:
-                continue
-            seen.add(option_id)
-            name = " ".join(x for x in (b, c) if x).strip()
-            rows.append(
-                {
-                    "등록": True,
-                    "상품명": name or f"옵션ID {option_id}",
-                    "옵션ID": option_id,
-                    "바코드": barcode,
-                    "BOM 구성품": "",
-                    "소요수량": 1,
-                    "원본행": r,
-                }
-            )
-    finally:
-        try:
-            wb.close()
-        except Exception:
-            pass
-    if not rows:
-        raise ValueError("G열에서 숫자형 옵션ID를 찾지 못했습니다. 로켓그로스 상품 Excel인지 확인해 주세요.")
-    return rows
+def _compact_name(v: Any) -> str:
+    return re.sub(r"[^0-9A-Za-z가-힣]+", "", _text(v).lower())
 
 
-def _load_raw_products(core):
-    core.init_db(core.DEFAULT_DB)
-    with core._conn(core.DEFAULT_DB) as con:
-        rows = con.execute(
-            """SELECT id,item_code,name,unit_cost
-               FROM products
-               WHERE COALESCE(active,1)=1 AND item_type='raw'
-               ORDER BY name,item_code"""
-        ).fetchall()
-    return [dict(r) for r in rows]
+def _korean_tokens(v: Any):
+    text = _norm_name(v)
+    stop = {
+        "개", "세트", "1개", "2개", "3개", "4개", "5개", "10개",
+        "블랙", "화이트", "실버", "그레이", "우드", "투명", "레드",
+        "free", "jd", "xl", "s", "m", "l",
+    }
+    return [x for x in text.split() if len(x) >= 2 and x not in stop]
 
 
-def _existing_options(core, option_ids):
-    ids = [_oid(x) for x in option_ids if _oid(x)]
-    if not ids:
-        return {}
-    placeholders = ",".join("?" for _ in ids)
-    with core._conn(core.DEFAULT_DB) as con:
-        rows = con.execute(
-            f"""SELECT id,option_id,item_code,name
-                FROM products
-                WHERE CAST(option_id AS TEXT) IN ({placeholders})""",
-            ids,
-        ).fetchall()
-    return {_oid(r["option_id"]): dict(r) for r in rows}
+def _similarity_score(product_name, raw_name):
+    target = _norm_name(product_name)
+    cand = _norm_name(raw_name)
+    if not target or not cand:
+        return 0.0
+
+    target_compact = _compact_name(product_name)
+    cand_compact = _compact_name(raw_name)
+
+    # Strongest signal: one Korean product phrase occurs in the other after
+    # removing spaces/punctuation. This catches 비누 거치대 <-> 비누거치대.
+    contains = 1.0 if (cand_compact in target_compact or target_compact in cand_compact) else 0.0
+
+    tt = set(_korean_tokens(product_name))
+    ct = set(_korean_tokens(raw_name))
+    token_overlap = len(tt & ct) / max(1, min(len(tt), len(ct))) if tt and ct else 0.0
+
+    # Character similarity also catches 수영모자 <-> 수모 only partially, so
+    # augment with common commerce synonyms used by the user's item master.
+    synonym_groups = [
+        {"수영모자", "수모"},
+        {"거치대", "홀더", "받침대"},
+        {"비누", "비누거치대"},
+        {"스퀴지", "헤라"},
+        {"캔따개", "캔오프너"},
+        {"지퍼백", "비닐백"},
+        {"테이블보", "식탁보"},
+        {"네임택", "라벨태그", "태그"},
+    ]
+    synonym_bonus = 0.0
+    all_text_a = target_compact
+    all_text_b = cand_compact
+    for group in synonym_groups:
+        if any(_compact_name(x) in all_text_a for x in group) and any(_compact_name(x) in all_text_b for x in group):
+            synonym_bonus = max(synonym_bonus, 0.35)
+
+    seq = SequenceMatcher(None, target_compact, cand_compact).ratio()
+    return min(1.0, contains * 0.55 + token_overlap * 0.30 + seq * 0.15 + synonym_bonus)
+
 
 
 def _candidate_label(row):
     return f"{_text(row.get('item_code'))} | {_text(row.get('name'))}"
 
 
-def _infer_component(product_name, raw_rows):
-    target = _norm_name(product_name)
-    if not target or not raw_rows:
-        return ""
-    tset = set(target.split())
-    best_label = ""
-    best_score = 0.0
+def _rank_components(product_name, raw_rows, limit=3):
+    scored = []
     for raw in raw_rows:
-        cand = _norm_name(raw.get("name"))
-        if not cand:
-            continue
-        cset = set(cand.split())
-        overlap = len(tset & cset) / max(1, len(cset))
-        seq = SequenceMatcher(None, target, cand).ratio()
-        # Raw name fully contained in finished name is a strong BOM hint.
-        contains = 1.0 if cand in target else 0.0
-        score = contains * 0.55 + overlap * 0.30 + seq * 0.15
-        if score > best_score:
-            best_score = score
-            best_label = _candidate_label(raw)
-    return best_label if best_score >= 0.34 else ""
+        score = _similarity_score(product_name, raw.get("name"))
+        scored.append((score, _candidate_label(raw)))
+    scored.sort(key=lambda x: (-x[0], x[1]))
+    return scored[:limit]
+
+
+def _infer_component(product_name, raw_rows):
+    ranked = _rank_components(product_name, raw_rows, 3)
+    if not ranked:
+        return ""
+    score, label = ranked[0]
+    # Conservative auto-pick; lower-confidence matches remain recommendations
+    # for manual confirmation instead of being silently saved.
+    return label if score >= 0.46 else ""
+
 
 
 def _prepare_rows(core, parsed):
@@ -141,7 +127,10 @@ def _prepare_rows(core, parsed):
         row["상태"] = "이미 등록됨" if row["옵션ID"] in existing else "신규"
         if row["상태"] != "신규":
             row["등록"] = False
+        ranked = _rank_components(row["상품명"], raw_rows, 3)
         row["BOM 구성품"] = _infer_component(row["상품명"], raw_rows)
+        for idx in range(3):
+            row[f"추천{idx + 1}"] = ranked[idx][1] if idx < len(ranked) else ""
     return parsed, raw_rows
 
 
@@ -313,6 +302,14 @@ def render_page(st, core):
         st.caption("Excel을 업로드하면 신규상품과 BOM 후보를 읽어 아래에 표시합니다.")
         return
 
+    file_bytes = uploaded.getvalue()
+    file_fp = hashlib.sha256(file_bytes).hexdigest()[:16]
+    previous_fp = st.session_state.get("rg_product_bom_v09242_file_fp")
+    if previous_fp != file_fp:
+        st.session_state["rg_product_bom_v09242_file_fp"] = file_fp
+        st.session_state.pop(_REVIEW_KEY, None)
+        st.session_state.pop(_REVIEW_FILE_KEY, None)
+
     try:
         parsed = _parse_excel(uploaded)
         prepared, raw_rows = _prepare_rows(core, parsed)
@@ -362,7 +359,7 @@ def render_page(st, core):
 
     raw_options = [""] + [_candidate_label(r) for r in raw_rows]
     frame = pd.DataFrame(prepared)[
-        ["등록", "상품명", "옵션ID", "바코드", "BOM 구성품", "소요수량", "상태"]
+        ["등록", "상품명", "옵션ID", "바코드", "BOM 구성품", "소요수량", "추천1", "추천2", "추천3", "상태"]
     ]
     edited = st.data_editor(
         frame,
@@ -370,8 +367,8 @@ def render_page(st, core):
         hide_index=True,
         num_rows="fixed",
         height=min(760, max(300, 38 * (min(len(frame), 18) + 1))),
-        key="rg_product_bom_v09238_editor",
-        disabled=["옵션ID", "상태"],
+        key=f"rg_product_bom_v09242_editor_{file_fp}",
+        disabled=["옵션ID", "추천1", "추천2", "추천3", "상태"],
         column_config={
             "등록": st.column_config.CheckboxColumn("등록", width="small"),
             "상품명": st.column_config.TextColumn("상품명", width="large"),
@@ -384,6 +381,9 @@ def render_page(st, core):
             "소요수량": st.column_config.NumberColumn(
                 "소요수량", min_value=1, step=1, format="%d", width="small"
             ),
+            "추천1": st.column_config.TextColumn("추천 1", width="large"),
+            "추천2": st.column_config.TextColumn("추천 2", width="large"),
+            "추천3": st.column_config.TextColumn("추천 3", width="large"),
             "상태": st.column_config.TextColumn("상태", width="small"),
         },
     )
@@ -406,9 +406,12 @@ def render_page(st, core):
                 st.session_state.pop(_REVIEW_KEY, None)
             else:
                 st.session_state[_REVIEW_KEY] = review
+                st.session_state[_REVIEW_FILE_KEY] = file_fp
                 st.rerun()
 
     review = st.session_state.get(_REVIEW_KEY)
+    if st.session_state.get(_REVIEW_FILE_KEY) != file_fp:
+        review = None
     if not review:
         return
 
