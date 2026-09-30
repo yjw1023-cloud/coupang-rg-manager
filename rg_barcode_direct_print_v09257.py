@@ -27,11 +27,44 @@ def _win_only():
 
 def _gdi():
     _win_only()
-    return ctypes.WinDLL("gdi32", use_last_error=True), ctypes.WinDLL("user32", use_last_error=True)
+    gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+
+    # Explicit 64-bit-safe signatures. Without these ctypes assumes c_int for
+    # HANDLE/HDC/HGDIOBJ arguments, which can raise "OverflowError: int too long
+    # to convert" on 64-bit Windows after a few GDI objects are created.
+    H = wintypes.HANDLE
+    gdi32.CreateCompatibleDC.argtypes = [H]
+    gdi32.CreateCompatibleDC.restype = H
+    gdi32.SelectObject.argtypes = [H, H]
+    gdi32.SelectObject.restype = H
+    gdi32.DeleteObject.argtypes = [H]
+    gdi32.DeleteObject.restype = wintypes.BOOL
+    gdi32.DeleteDC.argtypes = [H]
+    gdi32.DeleteDC.restype = wintypes.BOOL
+    gdi32.PatBlt.argtypes = [H, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.DWORD]
+    gdi32.PatBlt.restype = wintypes.BOOL
+    gdi32.SetBkMode.argtypes = [H, ctypes.c_int]
+    gdi32.SetBkMode.restype = ctypes.c_int
+    gdi32.SetTextColor.argtypes = [H, wintypes.DWORD]
+    gdi32.SetTextColor.restype = wintypes.DWORD
+    gdi32.TextOutW.argtypes = [H, ctypes.c_int, ctypes.c_int, wintypes.LPCWSTR, ctypes.c_int]
+    gdi32.TextOutW.restype = wintypes.BOOL
+    gdi32.GetTextExtentPoint32W.argtypes = [H, wintypes.LPCWSTR, ctypes.c_int, ctypes.c_void_p]
+    gdi32.GetTextExtentPoint32W.restype = wintypes.BOOL
+    gdi32.CreateDIBSection.argtypes = [H, ctypes.c_void_p, wintypes.UINT, ctypes.POINTER(ctypes.c_void_p), H, wintypes.DWORD]
+    gdi32.CreateDIBSection.restype = H
+    return gdi32, user32
 
 
 def _make_font(gdi32, height: int, weight: int = 400, face: str = "Malgun Gothic"):
     fn = gdi32.CreateFontW
+    fn.argtypes = [
+        ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+        wintypes.DWORD, wintypes.DWORD, wintypes.DWORD, wintypes.DWORD,
+        wintypes.DWORD, wintypes.DWORD, wintypes.DWORD, wintypes.DWORD,
+        wintypes.LPCWSTR,
+    ]
     fn.restype = wintypes.HANDLE
     return fn(-abs(int(height)), 0, 0, 0, weight, 0, 0, 0, 129, 0, 0, 4, 0, face)
 
