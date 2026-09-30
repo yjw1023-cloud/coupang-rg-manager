@@ -71,8 +71,28 @@ def _fetch_file(path: str) -> bytes:
     return _fetch_raw(path)
 
 
+def _fetch_manifest_via_commit():
+    # Resolve the current main-branch commit first, then read the manifest at that
+    # immutable SHA. This avoids stale raw-CDN branch snapshots.
+    ref = _request_json(f"https://api.github.com/repos/{REPO}/git/ref/heads/main")
+    sha = str(((ref or {}).get("object") or {}).get("sha") or "").strip()
+    if not sha:
+        raise RuntimeError("GitHub main 브랜치 커밋을 확인하지 못했습니다.")
+    safe = urllib.parse.quote("update/latest.json", safe="/")
+    obj = _request_json(f"{API_ROOT}/{safe}?ref={sha}")
+    content = obj.get("content")
+    if not content:
+        raise RuntimeError("GitHub에서 최신 업데이트 정보를 읽지 못했습니다.")
+    return base64.b64decode(content)
+
+
 def fetch_manifest():
-    raw = _fetch_file("update/latest.json")
+    try:
+        raw = _fetch_manifest_via_commit()
+    except Exception:
+        # Fallback remains available for temporary GitHub API failures, but the
+        # normal path above is commit-pinned and therefore not branch-cache stale.
+        raw = _fetch_file("update/latest.json")
     manifest = json.loads(raw.decode("utf-8"))
     if not isinstance(manifest, dict) or not manifest.get("version"):
         raise RuntimeError("업데이트 정보 형식이 올바르지 않습니다.")
