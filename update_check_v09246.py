@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import ast
 import base64
+import urllib.error
 import json
 import os
 import shutil
@@ -21,6 +22,7 @@ from pathlib import Path
 
 REPO = "yjw1023-cloud/coupang-rg-manager"
 API_ROOT = f"https://api.github.com/repos/{REPO}/contents"
+RAW_ROOT = f"https://raw.githubusercontent.com/{REPO}/main"
 _STATE = "_rg_direct_updater_v09246_manifest"
 
 
@@ -39,12 +41,33 @@ def _request_json(url: str):
         return json.loads(resp.read().decode("utf-8"))
 
 
+def _fetch_raw(path: str) -> bytes:
+    safe = "/".join(urllib.parse.quote(x, safe="") for x in str(path).split("/"))
+    sep = "&" if "?" in safe else "?"
+    req = urllib.request.Request(
+        f"{RAW_ROOT}/{safe}?_rgcb={time.time_ns()}",
+        headers={
+            "User-Agent": "RG-Manager/0.9.253",
+            "Cache-Control": "no-cache, no-store, max-age=0",
+            "Pragma": "no-cache",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return resp.read()
+
+
 def _fetch_file(path: str) -> bytes:
-    obj = _request_json(f"{API_ROOT}/{path}?ref=main")
-    content = obj.get("content")
-    if not content:
-        raise RuntimeError(f"GitHub에서 파일 내용을 받지 못했습니다: {path}")
-    return base64.b64decode(content)
+    # Prefer the GitHub Contents API when available, but automatically fall back
+    # to raw.githubusercontent.com when the unauthenticated API rate limit is
+    # exhausted (HTTP 403) or the API is otherwise temporarily unavailable.
+    try:
+        obj = _request_json(f"{API_ROOT}/{path}?ref=main")
+        content = obj.get("content")
+        if content:
+            return base64.b64decode(content)
+    except Exception:
+        pass
+    return _fetch_raw(path)
 
 
 def fetch_manifest():
