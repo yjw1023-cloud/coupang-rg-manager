@@ -221,6 +221,16 @@ def _row_name(core, db, product_id) -> str:
 
 def period_unmatched(core, db, start, end) -> list[dict]:
     normals = _normal_ids(core, db)
+    # Direct live-product guard: if the option already exists as an active ERP
+    # finished product, it is a normal sale even when the registry is stale.
+    try:
+        with core._conn(db) as c:
+            live_rows = c.execute(
+                "SELECT option_id FROM products WHERE item_type='finished' AND COALESCE(active,1)=1"
+            ).fetchall()
+        normals |= {_oid(r["option_id"]) for r in live_rows if _oid(r["option_id"])}
+    except Exception:
+        pass
     confirmed = set(confirmed_alias_map(core, db))
     suggested = _legacy_suggestions(core, db)
     with core._conn(db) as c:
@@ -264,6 +274,14 @@ def frame_unmatched(core, db, frame) -> list[dict]:
     if frame is None or getattr(frame, "empty", True):
         return []
     normals = _normal_ids(core, db)
+    try:
+        with core._conn(db) as c:
+            live_rows = c.execute(
+                "SELECT option_id FROM products WHERE item_type='finished' AND COALESCE(active,1)=1"
+            ).fetchall()
+        normals |= {_oid(r["option_id"]) for r in live_rows if _oid(r["option_id"])}
+    except Exception:
+        pass
     confirmed = set(confirmed_alias_map(core, db))
     suggested = _legacy_suggestions(core, db)
     oidcol = next((c for c in ("옵션ID","쿠팡 옵션ID","option_id") if c in frame.columns), None)
