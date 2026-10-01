@@ -1,6 +1,6 @@
 {
-  "version": "0.9.272",
-  "message": "반품 확인 UI를 띄우기 직전에 ERP products 원장을 다시 직접 조회하도록 최종 안전장치를 추가했습니다. 동일 옵션ID의 active finished 상품은 어떤 이전 판정 결과가 남아 있어도 반품 매칭 화면에서 제외됩니다.",
+  "version": "0.9.273",
+  "message": "오가닉판매가 실제 실행 중인 organic_sales_estimate 모듈에서 신규 RG 정상상품을 정적 원장ID만으로 판정하던 원인을 수정했습니다. ERP products의 finished·원가>0 상품을 정상상품으로 직접 인정하며, 업데이트 확인도 여러 GitHub 경로 중 가장 최신 manifest를 선택하도록 개선했습니다.",
   "files": [
     "VERSION.txt",
     "app.py",
@@ -19,6 +19,7 @@
     "rg_barcode_direct_print_v09257.py",
     "organic_sales_display_v09216.py",
     "shared_return_match_ui_v09217.py",
-    "normal_option_fix_v09268.py"
+    "normal_option_fix_v09268.py",
+    "organic_sales_estimate_v09211.py"
   ]
 }
