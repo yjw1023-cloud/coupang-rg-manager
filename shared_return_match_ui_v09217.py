@@ -45,11 +45,17 @@ def _ensure_confirmation_schema(core, db):
 
 
 def _normal_ids(core, db) -> set[str]:
+    out = set()
     with core._conn(db) as c:
-        if not _exists(c, "coupang_normal_option_registry"):
-            return set()
-        rows = c.execute("SELECT vendor_item_id FROM coupang_normal_option_registry").fetchall()
-    return {_oid(r["vendor_item_id"]) for r in rows if _oid(r["vendor_item_id"])}
+        if _exists(c, "coupang_normal_option_registry"):
+            rows = c.execute("SELECT vendor_item_id FROM coupang_normal_option_registry").fetchall()
+            out |= {_oid(r["vendor_item_id"]) for r in rows if _oid(r["vendor_item_id"])}
+        rows = c.execute(
+            "SELECT option_id FROM products WHERE item_type=? AND active=? AND unit_cost>?",
+            ("finished", 1, 0),
+        ).fetchall()
+        out |= {_oid(r["option_id"]) for r in rows if _oid(r["option_id"])}
+    return out
 
 
 def confirmed_alias_map(core, db) -> dict[str, int]:
