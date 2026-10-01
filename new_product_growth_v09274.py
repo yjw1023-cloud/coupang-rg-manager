@@ -360,6 +360,61 @@ def _period_data(core, db, start: date, end: date):
     return by_pid, len(covered or []), bool(ad_qty_available)
 
 
+
+def _latest_common_data_date(core, db) -> date:
+    """Latest date for which both sales and ad source data have been entered."""
+    with core._conn(db) as c:
+        if not _exists(c, "imports"):
+            return date.today()
+        row = c.execute(
+            """SELECT data_type, MAX(period_end) max_end
+               FROM imports
+               WHERE data_type IN ('sales_stats','ad_performance')
+                 AND period_end IS NOT NULL AND period_end<>''
+               GROUP BY data_type"""
+        ).fetchall()
+    ends = {}
+    for r in row:
+        try:
+            ends[str(r["data_type"])] = date.fromisoformat(str(r["max_end"])[:10])
+        except Exception:
+            pass
+    if "sales_stats" in ends and "ad_performance" in ends:
+        return min(ends["sales_stats"], ends["ad_performance"])
+    return ends.get("sales_stats") or ends.get("ad_performance") or date.today()
+
+
+def _cumulative_metrics(core, db, managed, data_end: date):
+    """Metrics from each SKU launch date through the latest entered common-data date."""
+    result = {}
+    by_launch = {}
+    for g in managed:
+        pid = int(g["product_id"])
+        try:
+            launch = date.fromisoformat(str(g["launch_date"])[:10])
+        except Exception:
+            launch = data_end
+        if launch > data_end:
+            result[pid] = {
+                "sales": 0.0, "ad_sales": 0.0, "organic": 0.0,
+                "organic_ratio": 0.0, "ad_spend": 0.0, "elapsed_days": 0,
+            }
+            continue
+        by_launch.setdefault(launch, []).append(pid)
+
+    for launch, pids in by_launch.items():
+        metrics, _covered, _ad_ok = _period_data(core, db, launch, data_end)
+        elapsed = max(1, (data_end - launch).days + 1)
+        for pid in pids:
+            m = dict(metrics.get(pid) or {
+                "sales": 0.0, "ad_sales": 0.0, "organic": 0.0,
+                "organic_ratio": 0.0, "ad_spend": 0.0,
+            })
+            m["elapsed_days"] = elapsed
+            result[pid] = m
+    return result
+
+
 def _all_metrics(core, db):
     out, coverage, ad_ok = {}, {}, {}
     end = date.today()
@@ -445,40 +500,42 @@ def _status_hint(m30, prev30, target):
     return "관찰"
 
 
-def _overview_frame(managed, metrics):
+def _overview_frame(managed, metrics, cumulative, data_end):
     rows = []
-    today = date.today()
     for g in managed:
         pid = int(g["product_id"])
+        cum = cumulative.get(pid) or {
+            "sales": 0.0, "ad_sales": 0.0, "organic": 0.0,
+            "organic_ratio": 0.0, "ad_spend": 0.0, "elapsed_days": 0,
+        }
         m30 = _metric(metrics, 30, pid)
         prev = _metric(metrics, "prev30", pid)
-        try:
-            launch = date.fromisoformat(str(g["launch_date"])[:10])
-            age = max(0, (today - launch).days + 1)
-        except Exception:
-            age = 0
-        org_daily = m30["organic"] / 30.0
-        prev_daily = prev["organic"] / 30.0
+        age = int(cum.get("elapsed_days") or 0)
+        denom = max(1, age)
+        org_daily = _num(cum.get("organic")) / denom if age > 0 else 0.0
+        sales_daily = _num(cum.get("sales")) / denom if age > 0 else 0.0
+        ad_daily = _num(cum.get("ad_spend")) / denom if age > 0 else 0.0
+        prev_daily = _num(prev.get("organic")) / 30.0
         rows.append({
             "상태": str(g["status"]),
             "상품명": str(g["name"]),
             "상품코드": str(g.get("item_code") or ""),
             "런칭일": str(g["launch_date"])[:10],
             "경과일": age,
-            "30일 판매": m30["sales"],
-            "30일 일평균": m30["sales"] / 30.0,
-            "30일 광고비": m30["ad_spend"],
-            "광고판매": m30["ad_sales"],
-            "오가닉판매": m30["organic"],
+            "누적판매": _num(cum.get("sales")),
+            "일평균 판매": sales_daily,
+            "누적 광고비": _num(cum.get("ad_spend")),
+            "일평균 광고비": ad_daily,
+            "광고판매": _num(cum.get("ad_sales")),
+            "누적 오가닉": _num(cum.get("organic")),
             "오가닉 일평균": org_daily,
-            "오가닉비율": m30["organic_ratio"],
-            "이전30일 오가닉": prev["organic"],
+            "오가닉비율": _num(cum.get("organic_ratio")),
+            "이전30일 오가닉": _num(prev.get("organic")),
             "오가닉 일평균증감": org_daily - prev_daily,
             "판단": _status_hint(m30, prev, g["target_daily_organic"]),
             "product_id": pid,
         })
     return pd.DataFrame(rows)
-
 
 def _render_add(core, db):
     products = _products(core, db)
@@ -517,7 +574,7 @@ def _render_add(core, db):
             st.rerun()
 
 
-def _render_detail(core, db, managed, metrics, cumulative_ad):
+def _render_detail(core, db, managed, metrics, cumulative, data_end):
     st.markdown("### 상품 상세")
     by_id = {int(x["product_id"]): x for x in managed}
     pid = st.selectbox(
@@ -528,25 +585,33 @@ def _render_detail(core, db, managed, metrics, cumulative_ad):
     g = by_id[int(pid)]
     m30 = _metric(metrics, 30, pid)
     prev = _metric(metrics, "prev30", pid)
+    cum = cumulative.get(int(pid)) or {
+        "sales": 0.0, "ad_sales": 0.0, "organic": 0.0,
+        "organic_ratio": 0.0, "ad_spend": 0.0, "elapsed_days": 0,
+    }
+    age = int(cum.get("elapsed_days") or 0)
+    denom = max(1, age)
+    org_daily = _num(cum.get("organic")) / denom if age > 0 else 0.0
 
     c1, c2, c3, c4, c5, c6 = st.columns(6)
-    c1.metric("최근 30일 판매", f"{_fmt_qty(m30['sales'])}개")
-    c2.metric("오가닉 일평균", f"{m30['organic']/30.0:,.1f}개", delta=f"{m30['organic']/30.0 - prev['organic']/30.0:+.1f}개")
-    c3.metric("30일 오가닉", f"{_fmt_qty(m30['organic'])}개")
-    c4.metric("오가닉 비율", f"{m30['organic_ratio']:,.1f}%")
-    c5.metric("30일 광고비", _fmt_money(m30["ad_spend"]))
-    c6.metric("런칭 후 광고비", _fmt_money(cumulative_ad.get(int(pid), 0.0)))
+    c1.metric("누적 판매", f"{_fmt_qty(cum['sales'])}개")
+    c2.metric("일평균 판매", f"{_num(cum['sales'])/denom if age>0 else 0:,.1f}개")
+    c3.metric("누적 오가닉", f"{_fmt_qty(cum['organic'])}개")
+    c4.metric("오가닉 일평균", f"{org_daily:,.1f}개")
+    c5.metric("누적 광고비", _fmt_money(cum["ad_spend"]))
+    c6.metric("일평균 광고비", _fmt_money(_num(cum["ad_spend"])/denom if age>0 else 0))
 
     rows = []
     for d in PERIODS:
         m = _metric(metrics, d, pid)
+        used_days = max(1, min(d, age)) if age > 0 else d
         rows.append({
             "기간": f"최근 {d}일",
             "판매량": m["sales"],
-            "일평균 판매": m["sales"] / d,
+            "일평균 판매": m["sales"] / used_days,
             "광고판매": m["ad_sales"],
             "오가닉판매": m["organic"],
-            "오가닉 일평균": m["organic"] / d,
+            "오가닉 일평균": m["organic"] / used_days,
             "오가닉 비율(%)": m["organic_ratio"],
             "광고비": m["ad_spend"],
         })
@@ -625,24 +690,21 @@ def render_page(st_obj, core, db=None):
 
     with st_obj.spinner("기간별 판매·광고·오가닉 데이터를 계산하는 중..."):
         metrics, coverage, ad_ok = _all_metrics(core, db)
-        cumulative_ad = _cumulative_ad_spend(core, db, managed)
+        data_end = _latest_common_data_date(core, db)
+        cumulative = _cumulative_metrics(core, db, managed, data_end)
         _save_daily_snapshots(core, db, managed, metrics)
 
-    overview = _overview_frame(managed, metrics)
-    if not overview.empty:
-        overview["누적 광고비"] = overview["product_id"].map(
-            lambda pid: _num(cumulative_ad.get(int(pid), 0.0))
-        )
+    overview = _overview_frame(managed, metrics, cumulative, data_end)
 
-    m30_total_sales = float(overview["30일 판매"].sum()) if not overview.empty else 0.0
-    m30_total_org = float(overview["오가닉판매"].sum()) if not overview.empty else 0.0
-    m30_total_ad = float(overview["30일 광고비"].sum()) if not overview.empty else 0.0
+    total_sales = float(overview["누적판매"].sum()) if not overview.empty else 0.0
+    total_org = float(overview["누적 오가닉"].sum()) if not overview.empty else 0.0
+    total_ad = float(overview["누적 광고비"].sum()) if not overview.empty else 0.0
 
     c1, c2, c3, c4 = st_obj.columns(4)
     c1.metric("육성관리 SKU", f"{len(managed):,}개")
-    c2.metric("30일 총판매", f"{_fmt_qty(m30_total_sales)}개")
-    c3.metric("30일 오가닉", f"{_fmt_qty(m30_total_org)}개")
-    c4.metric("30일 광고비", _fmt_money(m30_total_ad))
+    c2.metric("누적 총판매", f"{_fmt_qty(total_sales)}개")
+    c3.metric("누적 오가닉", f"{_fmt_qty(total_org)}개")
+    c4.metric("누적 광고비", _fmt_money(total_ad))
 
     st_obj.markdown("### 육성 현황")
     f1, f2 = st_obj.columns([2, 1])
@@ -661,29 +723,40 @@ def render_page(st_obj, core, db=None):
         view = view.iloc[0:0]
 
     show_cols = [
-        "상태", "상품명", "런칭일", "경과일", "30일 판매", "30일 일평균",
-        "30일 광고비", "누적 광고비", "광고판매", "오가닉판매", "오가닉 일평균",
+        "상태", "상품명", "런칭일", "경과일", "누적판매", "일평균 판매",
+        "누적 광고비", "일평균 광고비", "광고판매", "누적 오가닉", "오가닉 일평균",
         "오가닉비율", "이전30일 오가닉", "오가닉 일평균증감", "판단",
     ]
+    display = view[show_cols].copy()
+    styled = (
+        display.style
+        .format({
+            "경과일": "{:,.0f}",
+            "누적판매": "{:,.0f}",
+            "일평균 판매": "{:,.1f}",
+            "누적 광고비": "{:,.0f}원",
+            "일평균 광고비": "{:,.0f}원",
+            "광고판매": "{:,.0f}",
+            "누적 오가닉": "{:,.0f}",
+            "오가닉 일평균": "{:,.1f}",
+            "오가닉비율": "{:,.1f}%",
+            "이전30일 오가닉": "{:,.0f}",
+            "오가닉 일평균증감": "{:+,.1f}",
+        })
+        .set_properties(**{"text-align": "center"})
+        .set_table_styles([
+            {"selector": "th", "props": [("text-align", "center")]},
+            {"selector": "td", "props": [("text-align", "center")]},
+        ])
+    )
     st_obj.dataframe(
-        view[show_cols],
+        styled,
         use_container_width=True,
         hide_index=True,
         height=min(760, max(230, 38 * (len(view) + 1))),
-        column_config={
-            "30일 판매": st.column_config.NumberColumn(format="%.0f"),
-            "30일 일평균": st.column_config.NumberColumn(format="%.1f"),
-            "30일 광고비": st.column_config.NumberColumn(format="%d원"),
-            "누적 광고비": st.column_config.NumberColumn(format="%d원"),
-            "광고판매": st.column_config.NumberColumn(format="%.0f"),
-            "오가닉판매": st.column_config.NumberColumn(format="%.0f"),
-            "오가닉 일평균": st.column_config.NumberColumn(format="%.1f"),
-            "오가닉비율": st.column_config.NumberColumn(format="%.1f%%"),
-            "이전30일 오가닉": st.column_config.NumberColumn(format="%.0f"),
-            "오가닉 일평균증감": st.column_config.NumberColumn(format="%+.1f"),
-        },
     )
 
+    st_obj.caption(f"누적 기준일: 런칭일 ~ 최근 판매·광고 공통 입력일 {data_end.isoformat()}")
     cdays = int(coverage.get(30, 0))
     if cdays < 30:
         st_obj.warning(
@@ -695,7 +768,7 @@ def render_page(st_obj, core, db=None):
     else:
         st_obj.caption("최근 30일 판매자료와 광고자료가 모두 확인됩니다.")
 
-    _render_detail(core, db, managed, metrics, cumulative_ad)
+    _render_detail(core, db, managed, metrics, cumulative, data_end)
 
 
 def _install_sidebar_route():
