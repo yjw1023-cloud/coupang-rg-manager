@@ -87,19 +87,52 @@ def _fetch_manifest_via_commit():
 
 
 def fetch_manifest():
-    try:
-        raw = _fetch_manifest_via_commit()
-    except Exception:
-        # Fallback remains available for temporary GitHub API failures, but the
-        # normal path above is commit-pinned and therefore not branch-cache stale.
-        raw = _fetch_file("update/latest.json")
-    manifest = json.loads(raw.decode("utf-8"))
-    if not isinstance(manifest, dict) or not manifest.get("version"):
-        raise RuntimeError("업데이트 정보 형식이 올바르지 않습니다.")
-    files = manifest.get("files")
-    if not isinstance(files, list) or not files:
-        raise RuntimeError("업데이트 파일 목록이 없습니다.")
-    return manifest
+    """Read several independent GitHub paths and keep the newest manifest.
+
+    GitHub can briefly expose different branch snapshots through ref, contents,
+    and raw endpoints immediately after a commit. One click therefore checks all
+    available paths (with short retries) instead of trusting the first response.
+    """
+    candidates = []
+    errors = []
+
+    for attempt in range(3):
+        readers = (
+            _fetch_manifest_via_commit,
+            lambda: base64.b64decode(
+                _request_json(f"{API_ROOT}/update/latest.json?ref=main").get("content") or b""
+            ),
+            lambda: _fetch_raw("update/latest.json"),
+        )
+        for reader in readers:
+            try:
+                raw = reader()
+                if not raw:
+                    continue
+                manifest = json.loads(raw.decode("utf-8"))
+                if not isinstance(manifest, dict) or not manifest.get("version"):
+                    continue
+                files = manifest.get("files")
+                if not isinstance(files, list) or not files:
+                    continue
+                candidates.append(manifest)
+            except Exception as exc:
+                errors.append(str(exc))
+        if candidates:
+            newest = max(candidates, key=lambda m: _version_tuple(m.get("version")))
+            # A second pass catches the short propagation window without making
+            # the user click repeatedly.
+            if attempt >= 1:
+                return newest
+        if attempt < 2:
+            time.sleep(0.8)
+
+    if candidates:
+        return max(candidates, key=lambda m: _version_tuple(m.get("version")))
+    raise RuntimeError(
+        "GitHub에서 최신 업데이트 정보를 확인하지 못했습니다."
+        + (f" ({errors[-1]})" if errors else "")
+    )
 
 
 def _version_tuple(value):
