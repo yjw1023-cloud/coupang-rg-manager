@@ -79,8 +79,38 @@ def _canonical_data(core, sales_module, source_module, db, start, end):
     normal_map = matcher.normal_option_to_product(core, db)
 
     with core._conn(db) as con:
-        product_rows = con.execute("SELECT id,name,option_id FROM products").fetchall()
-        products = {int(r["id"]): {"name":str(r["name"] or ""),"option_id":matcher._oid(r["option_id"])} for r in product_rows}
+        product_rows = con.execute(
+            "SELECT id,name,option_id,item_type,unit_cost,active FROM products"
+        ).fetchall()
+        products = {
+            int(r["id"]): {
+                "name": str(r["name"] or ""),
+                "option_id": matcher._oid(r["option_id"]),
+                "item_type": str(r["item_type"] or ""),
+                "unit_cost": float(r["unit_cost"] or 0),
+                "active": int(r["active"] or 0),
+            }
+            for r in product_rows
+        }
+
+        # A real ERP finished product is a normal Coupang product regardless of
+        # whether the separate normal-option registry was populated first.
+        # Historical/discontinued products are included too; active status must
+        # not turn an old normal sale into a return sale.
+        direct_normal_map = {}
+        for pid, p in products.items():
+            oid = matcher._oid(p.get("option_id"))
+            if not oid or p.get("item_type") != "finished" or float(p.get("unit_cost") or 0) <= 0:
+                continue
+            prev = direct_normal_map.get(oid)
+            if prev is None:
+                direct_normal_map[oid] = pid
+                continue
+            oldp = products.get(prev, {})
+            old_score = (int(oldp.get("active") or 0), -int(prev))
+            new_score = (int(p.get("active") or 0), -int(pid))
+            if new_score > old_score:
+                direct_normal_map[oid] = pid
 
         sales_imports = source_module._contained_imports(con,sales_module,"sales_stats",start,end)
         ad_imports = source_module._contained_imports(con,sales_module,"ad_performance",start,end)
@@ -90,7 +120,7 @@ def _canonical_data(core, sales_module, source_module, db, start, end):
 
         def resolve(oid_value):
             oid = matcher._oid(oid_value)
-            pid = int(confirmed.get(oid) or normal_map.get(oid) or 0)
+            pid = int(confirmed.get(oid) or direct_normal_map.get(oid) or normal_map.get(oid) or 0)
             if pid <= 0:
                 return "",0,""
             p = products.get(pid,{})
@@ -153,9 +183,9 @@ def apply(core, db=None):
         end = date.today(); start = end - timedelta(days=int(days)-1)
         st_obj.caption(f"조회기간: {start.isoformat()} ~ {end.isoformat()}")
 
-        matcher = importlib.import_module("shared_return_match_ui_v09217")
-        matcher.ensure_period_mappings(core_obj,target,start,end,"오가닉판매 추정")
-
+        # Organic is a reporting page, so it must never be blocked by a
+        # stale return-option registry. _canonical_data resolves confirmed return
+        # aliases and real ERP finished products directly from the live DB.
         sales_module = importlib.import_module("sales_analysis_v09186")
         frame,covered,ad_qty_available = _canonical_data(core_obj,sales_module,module,target,start,end)
         wanted = _period_days(start,end)
@@ -174,4 +204,4 @@ def apply(core, db=None):
 
     module.render_page = render_page
     module._rg_display_v09223_direct_canonical = True
-    return {"ok":True,"aggregation":"raw_option_to_confirmed_master_before_grouping","confirmation":"required"}
+    return {"ok":True,"aggregation":"raw_option_to_confirmed_or_direct_erp_product","confirmation":"non_blocking"}
