@@ -56,6 +56,7 @@ with _RG_IMPORT_LOCK:
         "update_check_v09246",
         "shared_return_match_ui_v09217",
         "normal_option_fix_v09268",
+        "organic_sales_estimate_v09211",
     ):
         _loaded = sys.modules.get(_rg_mod)
         if _loaded is None:
