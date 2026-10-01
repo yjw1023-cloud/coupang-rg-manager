@@ -306,6 +306,30 @@ def frame_unmatched(core, db, frame) -> list[dict]:
 def _ask(core, db, items: list[dict], source: str) -> bool:
     if not items:
         return False
+
+    # v0.9.272 final safety gate: re-check every unresolved option against the
+    # live ERP product master immediately before rendering the confirmation UI.
+    # This makes the page usable even if an older registry or earlier matching
+    # stage still classified a newly registered product as a return option.
+    filtered = []
+    with core._conn(db) as c:
+        for item in items:
+            oid = _oid(item.get("option_id"))
+            row = c.execute(
+                """SELECT id FROM products
+                   WHERE CAST(option_id AS TEXT)=?
+                     AND item_type='finished'
+                     AND COALESCE(active,1)=1
+                   ORDER BY id DESC LIMIT 1""",
+                (oid,),
+            ).fetchone()
+            if row:
+                continue
+            filtered.append(item)
+    items = filtered
+    if not items:
+        return False
+
     products = _candidate_products(core, db)
     if not products:
         st.error("ERP 완제품 목록을 불러오지 못해 반품상품을 매칭할 수 없습니다.")
