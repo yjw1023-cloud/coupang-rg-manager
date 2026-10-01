@@ -1,6 +1,6 @@
 {
-  "version": "0.9.270",
-  "message": "오가닉판매의 정상상품 판정을 직접 수정했습니다. ERP products 원장에 active finished 원가>0인 동일 옵션ID가 있으면 즉시 정상상품으로 처리하며, 관련 매칭 모듈도 업데이트 후 강제로 다시 로드합니다.",
+  "version": "0.9.271",
+  "message": "오가닉판매 반품 매칭 직전 단계에서 ERP의 active finished 옵션ID를 직접 정상상품으로 제외하도록 수정했습니다. 판매자료가 먼저 들어온 신규상품도 더 이상 반품 매칭에 막히지 않습니다.",
   "files": [
     "VERSION.txt",
     "app.py",
