@@ -177,6 +177,11 @@ item_ui_v086 = _original_import_module("item_ui_v086")
 product_visibility_v0995 = _original_import_module("product_visibility_v0995")
 product_visibility_v0995.apply_runtime(core)
 
+# v0.9.268: a newly registered RG finished product must be treated as a normal
+# option even when sales data arrived before the normal-option registry was refreshed.
+normal_option_fix_v09268 = _original_import_module("normal_option_fix_v09268")
+NORMAL_OPTION_FIX_V09268_RESULT = normal_option_fix_v09268.apply(core)
+
 # v0.9.133/v0.9.136: the ten user-requested Coupang finished products and their
 # BOMs must actually be checked/registered in the live local DB on every app run.
 # The seed itself is idempotent, so this is safe on Streamlit reruns.
