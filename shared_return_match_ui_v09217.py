@@ -114,9 +114,57 @@ def normal_option_to_product(core, db) -> dict[str, int]:
     return {_oid(p.get("option_id")): int(p["id"]) for p in _normal_products(core, db)}
 
 
+def _candidate_products(core, db) -> list[dict]:
+    """Manual parent candidates: every real ERP finished product, registry-independent.
+
+    A new RG product can be registered/produced after its first sales-stat upload.
+    In that case the verified normal-option registry may not contain it yet, but the
+    operator must still be able to select it as the original product.  Keep the
+    normal registry rule for automatic classification; broaden only the manual
+    confirmation selector.
+    """
+    with core._conn(db) as c:
+        rows = c.execute(
+            """SELECT id,item_code,option_id,name,item_type,unit_cost,active
+               FROM products
+               WHERE item_type='finished' AND COALESCE(TRIM(CAST(option_id AS TEXT)),'')<>''"""
+        ).fetchall()
+
+    out = []
+    for r in rows:
+        p = dict(r)
+        oid = _oid(p.get("option_id"))
+        if not oid:
+            continue
+        p["option_id"] = oid
+        code = str(p.get("item_code") or "").strip()
+        # Exclude the obvious CP-* zero-cost placeholder created only because a
+        # sales file arrived before the real ERP product existed.
+        normalized_code = code[3:] if code.upper().startswith("CP-") else code
+        try:
+            unit_cost = float(p.get("unit_cost") or 0)
+        except Exception:
+            unit_cost = 0.0
+        if normalized_code == oid and unit_cost <= 0:
+            continue
+        out.append(p)
+
+    out.sort(
+        key=lambda p: (
+            0 if int(p.get("active") or 0) else 1,
+            str(p.get("name") or ""),
+            str(p.get("item_code") or ""),
+            str(p.get("option_id") or ""),
+        )
+    )
+    return out
+
+
 def _product_label(p: dict) -> str:
     status = "" if int(p.get("active") or 0) else " · 판매중단/보관"
-    return f"{p.get('name','')} · 옵션ID {p.get('option_id','')}{status}"
+    code = str(p.get("item_code") or "").strip()
+    code_text = f" · ERP코드 {code}" if code else ""
+    return f"{p.get('name','')}{code_text} · 옵션ID {p.get('option_id','')}{status}"
 
 
 def _candidate_score(item: dict, p: dict) -> float:
@@ -234,12 +282,17 @@ def frame_unmatched(core, db, frame) -> list[dict]:
 def _ask(core, db, items: list[dict], source: str) -> bool:
     if not items:
         return False
-    products = _normal_products(core, db)
+    products = _candidate_products(core, db)
     if not products:
-        st.error("정상 원상품 목록을 불러오지 못해 반품상품을 매칭할 수 없습니다.")
+        st.error("ERP 완제품 목록을 불러오지 못해 반품상품을 매칭할 수 없습니다.")
         st.stop()
     item = items[0]
     oid = _oid(item.get("option_id")); name = str(item.get("name") or f"옵션ID {oid}")
+    # Do not offer the unmatched/return option itself as its own original product.
+    products = [p for p in products if _oid(p.get("option_id")) != oid]
+    if not products:
+        st.error("선택 가능한 ERP 완제품이 없습니다.")
+        st.stop()
     ordered = sorted(products, key=lambda p: _candidate_score(item,p), reverse=True)
     suggested = int(item.get("suggested_parent_id") or 0)
     if suggested:
