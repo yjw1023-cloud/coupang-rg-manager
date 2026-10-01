@@ -175,6 +175,7 @@ def render_grouped_sidebar(st_obj, options, default_page=None):
     simple_margin = importlib.import_module("simple_margin_v09205")
     rg_product_bom = importlib.import_module("rg_product_bom_v09234")
     rg_barcode_page = importlib.import_module("rg_barcode_page_v09235")
+    growth = importlib.import_module("new_product_growth_v09274")
 
     # The grouped sidebar otherwise classifies unknown pages as Data/Admin.
     # Keep sales analysis in its dedicated group and place quick margin inside
@@ -184,6 +185,7 @@ def render_grouped_sidebar(st_obj, options, default_page=None):
     margin_label = str(simple_margin.PAGE_LABEL)
     rg_bom_label = str(rg_product_bom.PAGE_LABEL)
     barcode_label = str(rg_barcode_page.PAGE_LABEL)
+    growth_label = str(growth.PAGE_TEXT)
     groups = getattr(m, "_GROUPS", None)
     if isinstance(groups, list):
         for title, items in groups:
@@ -243,11 +245,17 @@ def render_grouped_sidebar(st_obj, options, default_page=None):
                 break
 
     runtime_options = [str(x) for x in list(options or [])]
-    for label in (overview.PAGE_LABEL, goals.PAGE_LABEL, sales_label, margin_label, rg_bom_label, barcode_label):
+    for label in (overview.PAGE_LABEL, goals.PAGE_LABEL, sales_label, growth_label, margin_label, rg_bom_label, barcode_label):
         if label not in runtime_options:
             runtime_options.append(label)
 
     current = m.render_sidebar(st_obj, runtime_options, default_page)
+    if current == growth_label:
+        try:
+            growth.render_page(st_obj, importlib.import_module("core"))
+        except Exception as exc:
+            st_obj.error(f"신규상품 육성관리 화면을 여는 중 오류가 발생했습니다: {exc}")
+        return "__RG_GROWTH_RENDERED__"
     if current == margin_label:
         try:
             simple_margin.render_page(st_obj, importlib.import_module("core"))
