@@ -54,6 +54,8 @@ with _RG_IMPORT_LOCK:
         "rg_barcode_page_v09235",
         "rg_barcode_direct_print_v09257",
         "update_check_v09246",
+        "shared_return_match_ui_v09217",
+        "normal_option_fix_v09268",
     ):
         _loaded = sys.modules.get(_rg_mod)
         if _loaded is None:
