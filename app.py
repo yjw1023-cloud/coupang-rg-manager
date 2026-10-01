@@ -50,6 +50,7 @@ with _RG_IMPORT_LOCK:
         "coupang_api_sync_v09140",
         "goal_excel_upload_v0984",
         "sales_analysis_v09186",
+        "new_product_growth_v09274",
         "rg_barcode_print_v09193",
         "rg_barcode_page_v09235",
         "rg_barcode_direct_print_v09257",
@@ -277,6 +278,10 @@ pnl_views_v0912.apply(core)
 # v0.9.186 dedicated item sales analysis by paid date.
 sales_analysis_v09186 = _original_import_module("sales_analysis_v09186")
 
+# v0.9.274: new-product growth portfolio tracking.
+new_product_growth_v09274 = _original_import_module("new_product_growth_v09274")
+NEW_PRODUCT_GROWTH_V09274_RESULT = new_product_growth_v09274.apply(core)
+
 # v0.9.8 sales P&L presentation cleanup.
 sales_pnl_ui_v098 = _original_import_module("sales_pnl_ui_v098")
 sales_pnl_ui_v098.apply()
@@ -458,6 +463,7 @@ globals()["rg_barcode_print_v09193"] = rg_barcode_print_v09193
 globals()["search_ui_v096"] = search_ui_v096
 globals()["pnl_views_v0912"] = pnl_views_v0912
 globals()["sales_analysis_v09186"] = sales_analysis_v09186
+globals()["new_product_growth_v09274"] = new_product_growth_v09274
 globals()["sales_pnl_ui_v098"] = sales_pnl_ui_v098
 globals()["return_discount_v099"] = return_discount_v099
 globals()["return_sale_match_v0944"] = return_sale_match_v0944
