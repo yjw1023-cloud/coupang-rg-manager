@@ -57,6 +57,12 @@ def _ensure_schema(core, db):
             )"""
         )
         c.execute(
+            """CREATE TABLE IF NOT EXISTS product_growth_seen(
+                product_id INTEGER PRIMARY KEY,
+                first_seen_at TEXT NOT NULL
+            )"""
+        )
+        c.execute(
             """CREATE TABLE IF NOT EXISTS product_growth_snapshots(
                 snapshot_date TEXT NOT NULL,
                 product_id INTEGER NOT NULL,
@@ -73,6 +79,65 @@ def _ensure_schema(core, db):
                 PRIMARY KEY(snapshot_date, product_id)
             )"""
         )
+
+
+
+def _sync_new_products_after_baseline(core, db) -> dict:
+    """Seed today's baseline once, then auto-enroll every newly registered finished product.
+
+    This deliberately does not depend on a products.created_at column. On the first
+    run after this feature is installed, every existing finished product is marked
+    as already seen without adding it to growth management. On later runs, any new
+    finished product ID is automatically added with today's date as launch_date.
+    A product the user later removes from growth management stays removed because
+    it remains in product_growth_seen.
+    """
+    _ensure_schema(core, db)
+    now = core.now_iso()
+    today = date.today().isoformat()
+    with core._conn(db) as c:
+        products = c.execute(
+            """SELECT id
+               FROM products
+               WHERE item_type='finished'
+                 AND COALESCE(active,1)=1
+                 AND COALESCE(TRIM(CAST(option_id AS TEXT)),'')<>''"""
+        ).fetchall()
+        pids = [int(r["id"]) for r in products]
+        seen_count = int(c.execute("SELECT COUNT(*) n FROM product_growth_seen").fetchone()["n"] or 0)
+
+        # First execution after installing this version: establish the baseline only.
+        if seen_count == 0:
+            c.executemany(
+                "INSERT OR IGNORE INTO product_growth_seen(product_id,first_seen_at) VALUES(?,?)",
+                [(pid, now) for pid in pids],
+            )
+            return {"baseline_seeded": len(pids), "auto_added": 0}
+
+        seen = {
+            int(r["product_id"])
+            for r in c.execute("SELECT product_id FROM product_growth_seen").fetchall()
+        }
+        new_ids = [pid for pid in pids if pid not in seen]
+        added = 0
+        for pid in new_ids:
+            c.execute(
+                "INSERT OR IGNORE INTO product_growth_seen(product_id,first_seen_at) VALUES(?,?)",
+                (pid, now),
+            )
+            exists = c.execute(
+                "SELECT 1 FROM product_growth_management WHERE product_id=?", (pid,)
+            ).fetchone()
+            if exists:
+                continue
+            c.execute(
+                """INSERT INTO product_growth_management
+                   (product_id,launch_date,status,target_daily_organic,memo,created_at,updated_at)
+                   VALUES(?,?,?,?,?,?,?)""",
+                (pid, today, "신규", 4.0, "자동등록", now, now),
+            )
+            added += 1
+    return {"baseline_seeded": 0, "auto_added": added}
 
 
 def _products(core, db) -> list[dict]:
@@ -665,6 +730,8 @@ def _install_sidebar_route():
 
 def apply(core=None):
     _install_sidebar_route()
+    sync = {"baseline_seeded": 0, "auto_added": 0}
     if core is not None:
         _ensure_schema(core, core.DEFAULT_DB)
-    return {"ok": True, "page": PAGE_TEXT}
+        sync = _sync_new_products_after_baseline(core, core.DEFAULT_DB)
+    return {"ok": True, "page": PAGE_TEXT, **sync}
