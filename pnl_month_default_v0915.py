@@ -199,6 +199,16 @@ def render_grouped_sidebar(st_obj, options, default_page=None):
                 if str(title) == sales_title and sales_label not in items:
                     items.append(sales_label)
 
+        # 신규상품 육성관리는 반드시 판매분석 그룹에 고정한다.
+        for title, items in groups:
+            if growth_label in items and str(title) != sales_title:
+                items[:] = [x for x in items if x != growth_label]
+        for title, items in groups:
+            if str(title) == sales_title:
+                if growth_label not in items:
+                    items.append(growth_label)
+                break
+
         for title, items in groups:
             if margin_label in items and str(title) != "💰 손익·정산":
                 items[:] = [x for x in items if x != margin_label]
