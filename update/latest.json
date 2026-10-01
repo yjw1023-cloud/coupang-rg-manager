@@ -1,6 +1,6 @@
 {
-  "version": "0.9.271",
-  "message": "오가닉판매 반품 매칭 직전 단계에서 ERP의 active finished 옵션ID를 직접 정상상품으로 제외하도록 수정했습니다. 판매자료가 먼저 들어온 신규상품도 더 이상 반품 매칭에 막히지 않습니다.",
+  "version": "0.9.272",
+  "message": "반품 확인 UI를 띄우기 직전에 ERP products 원장을 다시 직접 조회하도록 최종 안전장치를 추가했습니다. 동일 옵션ID의 active finished 상품은 어떤 이전 판정 결과가 남아 있어도 반품 매칭 화면에서 제외됩니다.",
   "files": [
     "VERSION.txt",
     "app.py",
