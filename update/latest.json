@@ -1,6 +1,6 @@
 {
-  "version": "0.9.269",
-  "message": "오가닉판매 반품 판정이 정상상품 원장을 놓치는 문제를 수정했습니다. 이제 ERP 상품마스터의 active finished 상품(원가>0)을 직접 정상옵션으로 인정합니다.",
+  "version": "0.9.270",
+  "message": "오가닉판매의 정상상품 판정을 직접 수정했습니다. ERP products 원장에 active finished 원가>0인 동일 옵션ID가 있으면 즉시 정상상품으로 처리하며, 관련 매칭 모듈도 업데이트 후 강제로 다시 로드합니다.",
   "files": [
     "VERSION.txt",
     "app.py",
