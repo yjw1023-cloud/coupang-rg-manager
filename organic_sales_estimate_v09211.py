@@ -93,13 +93,37 @@ def _table_exists(con, name: str) -> bool:
 
 
 def _normal_ids(con, sales_module) -> set[str]:
-    """Normal products come directly from the uploaded-master constants, never DB registry."""
+    """Return every option ID that is a real ERP normal product.
+
+    The historical uploaded-master constants remain valid, but newly registered
+    RG products must become normal products immediately even when their first
+    sales file was uploaded before product/BOM registration.
+    """
     rules = importlib.import_module("canonical_product_rules_v09214")
-    return {
+    out = {
         _oid(sales_module, oid)
         for oid in set(getattr(rules, "CURRENT_IDS", set()))
         if _oid(sales_module, oid)
     }
+
+    # ERP product master is authoritative for newly registered normal products.
+    # Do not require active=1: a discontinued historical product is still a
+    # normal product, not a returned-item option. unit_cost>0 excludes the
+    # zero-cost CP-* placeholders created from sales files before registration.
+    if _table_exists(con, "products"):
+        rows = con.execute(
+            """SELECT option_id
+               FROM products
+               WHERE item_type='finished'
+                 AND COALESCE(unit_cost,0)>0
+                 AND COALESCE(TRIM(CAST(option_id AS TEXT)),'')<>''"""
+        ).fetchall()
+        out |= {
+            _oid(sales_module, r["option_id"])
+            for r in rows
+            if _oid(sales_module, r["option_id"])
+        }
+    return out
 
 
 def _confirmed_method(method: Any) -> bool:
