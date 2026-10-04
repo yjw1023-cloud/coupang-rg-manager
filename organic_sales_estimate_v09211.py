@@ -1,4 +1,4 @@
-"""Organic sales estimate page for Sales Analysis (v0.9.231).
+"""Organic sales estimate page for Sales Analysis (v0.9.279).
 
 Authoritative normal-product source: the user's uploaded product master copied to
 canonical_product_rules_v09214.CURRENT_IDS (132 option IDs). The DB registry is
@@ -485,6 +485,7 @@ def _organic_estimate_data(core, sales_module, db, start: date, end: date):
                 "아이템": name,
                 "판매량": 0.0,
                 "광고 판매량": 0.0,
+                "광고비": 0.0,
             })
 
         if sales_imports and sales_module._exists(con, "sales_stats"):
@@ -523,7 +524,9 @@ def _organic_estimate_data(core, sales_module, db, start: date, end: date):
         if ad_imports and sales_module._exists(con, "ad_performance"):
             cols = set(sales_module._cols(con, "ad_performance"))
             ad_qty_available = "sales_qty_14" in cols
-            if ad_qty_available and "import_id" in cols:
+            if "import_id" in cols and (
+                "sales_qty_14" in cols or "spend" in cols
+            ):
                 ids = [int(r["id"]) for r in ad_imports]
                 marks = ",".join("?" for _ in ids)
                 product_expr = (
@@ -536,8 +539,19 @@ def _organic_estimate_data(core, sales_module, db, start: date, end: date):
                     if "option_id" in cols
                     else "'' AS option_id"
                 )
+                ad_qty_expr = (
+                    "sales_qty_14"
+                    if "sales_qty_14" in cols
+                    else "0 AS sales_qty_14"
+                )
+                spend_expr = (
+                    "spend"
+                    if "spend" in cols
+                    else "0 AS spend"
+                )
                 rows = con.execute(
-                    f"""SELECT {product_expr},{option_expr},sales_qty_14
+                    f"""SELECT {product_expr},{option_expr},
+                               {ad_qty_expr},{spend_expr}
                         FROM ad_performance
                         WHERE import_id IN ({marks})""",
                     ids,
@@ -552,18 +566,22 @@ def _organic_estimate_data(core, sales_module, db, start: date, end: date):
                         row["option_id"],
                     )
                     if key:
-                        get_item(key, pid, oid)[
-                            "광고 판매량"
-                        ] += max(
+                        target = get_item(key, pid, oid)
+                        target["광고 판매량"] += max(
                             0.0,
                             sales_module._num(row["sales_qty_14"]),
+                        )
+                        target["광고비"] += max(
+                            0.0,
+                            sales_module._num(row["spend"]),
                         )
 
     rows_out = []
     for item in totals.values():
         total_qty = float(item["판매량"])
         ad_qty = float(item["광고 판매량"])
-        if total_qty <= 0 and ad_qty <= 0:
+        ad_spend = float(item["광고비"])
+        if total_qty <= 0 and ad_qty <= 0 and ad_spend <= 0:
             continue
         organic_qty = total_qty - ad_qty
         rows_out.append({
@@ -576,6 +594,7 @@ def _organic_estimate_data(core, sales_module, db, start: date, end: date):
                 if total_qty > 0
                 else 0.0
             ),
+            "광고비": ad_spend,
         })
 
     columns = [
@@ -584,6 +603,7 @@ def _organic_estimate_data(core, sales_module, db, start: date, end: date):
         "광고 판매량",
         "Organic 판매량",
         "Organic 판매 비율",
+        "광고비",
     ]
     if not rows_out:
         frame = pd.DataFrame(columns=columns)
@@ -609,25 +629,16 @@ def _fmt_count(value: Any) -> str:
 
 
 def _style_table(frame: pd.DataFrame):
-    numeric_cols = [
-        "판매량",
-        "광고 판매량",
-        "Organic 판매량",
-        "Organic 판매 비율",
-    ]
     styler = frame.style.format({
         "판매량": _fmt_count,
         "광고 판매량": _fmt_count,
         "Organic 판매량": _fmt_count,
         "Organic 판매 비율": lambda v: f"{float(v):.1f}%",
+        "광고비": lambda v: f"{float(v):,.0f}원",
     })
     styler = styler.set_properties(
-        subset=numeric_cols,
+        subset=list(frame.columns),
         **{"text-align": "center", "vertical-align": "middle"},
-    )
-    styler = styler.set_properties(
-        subset=["아이템"],
-        **{"text-align": "left", "vertical-align": "middle"},
     )
     styler = styler.set_properties(
         subset=["Organic 판매량", "Organic 판매 비율"],
@@ -724,6 +735,7 @@ def render_page(st_obj, core, db_path=None):
             "광고 판매량",
             "Organic 판매량",
             "Organic 판매 비율",
+            "광고비",
         ]
     ].copy()
     styled = _style_table(show)
@@ -744,6 +756,9 @@ def render_page(st_obj, core, db_path=None):
             ),
             "Organic 판매 비율": st_obj.column_config.NumberColumn(
                 "Organic 판매 비율", width="small"
+            ),
+            "광고비": st_obj.column_config.NumberColumn(
+                "광고비", width="small"
             ),
         }
     except Exception:
