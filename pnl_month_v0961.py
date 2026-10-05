@@ -241,7 +241,8 @@ def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
             f"주문 조회범위 {int(api_meta.get('covered_days') or 0)}/{int(api_meta.get('expected_days') or 0)}일 · "
             f"반품 조회범위 {int(api_meta.get('return_covered_days') or 0)}/{int(api_meta.get('return_expected_days') or 0)}일 · "
             f"상품연결 {int(api_meta.get('matched_rows') or 0):,}/{int(api_meta.get('rows') or 0):,}행. "
-            "판매수수료는 확정 전 10.8% 예상치이며, 반품 회수·재입고비와 배송비는 월말 확정자료 전까지 0원입니다."
+            "평균 수수료와 평균 입출고배송비는 해당 상품의 이전 월 중 가장 최근 정산자료를 자동 적용하며, "
+            "정산이력이 없는 상품만 기존 추정값을 사용합니다."
         )
         if int(api_meta.get("unmatched_rows") or 0):
             st_obj.warning(
