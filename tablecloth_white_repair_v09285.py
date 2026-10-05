@@ -33,9 +33,6 @@ def apply(core):
             "SELECT id,active FROM products WHERE option_id=? LIMIT 1",
             (GHOST_OID,),
         ).fetchone()
-        if target and (not ghost or int(ghost["active"] or 0) == 0):
-            return {"ok": True, "status": "already_repaired", "target_product_id": int(target["id"])}
-
     import importlib
     backup_mod = importlib.import_module("db_backup_v09248")
     backup_mod.backup_db(core, "tablecloth_white_repair_v09285", core.DEFAULT_DB)
