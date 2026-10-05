@@ -58,6 +58,7 @@ with _RG_IMPORT_LOCK:
         "shared_return_match_ui_v09217",
         "normal_option_fix_v09268",
         "organic_sales_estimate_v09211",
+        "tablecloth_white_repair_v09285",
     ):
         _loaded = sys.modules.get(_rg_mod)
         if _loaded is None:
@@ -185,6 +186,11 @@ product_visibility_v0995.apply_runtime(core)
 # option even when sales data arrived before the normal-option registry was refreshed.
 normal_option_fix_v09268 = _original_import_module("normal_option_fix_v09268")
 NORMAL_OPTION_FIX_V09268_RESULT = normal_option_fix_v09268.apply(core)
+
+# v0.9.285: restore the missing white PEVA tablecloth RG master, reconnect
+# its October sales/ad rows, and deactivate the phantom piano-cover master.
+tablecloth_white_repair_v09285 = _original_import_module("tablecloth_white_repair_v09285")
+TABLECLOTH_WHITE_REPAIR_V09285_RESULT = tablecloth_white_repair_v09285.apply(core)
 
 # v0.9.133/v0.9.136: the ten user-requested Coupang finished products and their
 # BOMs must actually be checked/registered in the live local DB on every app run.
