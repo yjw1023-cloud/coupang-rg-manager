@@ -2339,6 +2339,30 @@ def provisional_rows_from_api(core: Any, month: str, db_path=None):
         # 10.8% commission and zero logistics even when September settlement
         # data already existed.
         oid = _oid(product["option_id"]) or _oid(product["item_code"])
+        # v0.9.286: October white PEVA tablecloth sales were historically
+        # attached to the obsolete piano-cover master. Normalize the row to the
+        # actual RG option before provisional P&L is calculated.
+        if str(month) == "2026-10" and oid == "94731787590":
+            oid = "96089460574"
+            replacement = next(
+                (
+                    p for p in products.values()
+                    if (_oid(p["option_id"]) or _oid(p["item_code"])) == oid
+                ),
+                None,
+            )
+            if replacement is not None:
+                product = replacement
+                product_id = next(
+                    (
+                        pid for pid, p in products.items()
+                        if (_oid(p["option_id"]) or _oid(p["item_code"])) == oid
+                    ),
+                    product_id,
+                )
+                unit_cost = abs(_num(product["unit_cost"]))
+                cogs = -qty * unit_cost
+
         prior_comm = None
         prior_logi = None
         try:
@@ -2363,7 +2387,11 @@ def provisional_rows_from_api(core: Any, month: str, db_path=None):
         no_ad = revenue + cogs + commission + inout + delivery
         output.append({
             "옵션ID": oid,
-            "상품명": _text(product["name"]),
+            "상품명": (
+                "행사용 일회용 테이블보 PEVA / 5개 화이트 137x180cm"
+                if str(month) == "2026-10" and oid == "96089460574"
+                else _text(product["name"])
+            ),
             # The base monthly aggregator uses this signed net quantity for
             # financial arithmetic. sales_quantity_v0965 replaces the visible
             # column with API gross/cancel/net counts afterwards.
