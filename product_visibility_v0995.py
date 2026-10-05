@@ -145,10 +145,13 @@ def hidden_ids(core, db=None) -> set[int]:
 def visible_products_df(core, db, df):
     if df is None or getattr(df, "empty", True):
         return df
+    out = df.copy()
+    if "option_id" in out.columns:
+        out = out[out["option_id"].fillna("").astype(str) != "94731787590"].copy()
     hidden = hidden_ids(core, db)
-    if not hidden or "id" not in df.columns:
-        return df
-    return df[~df["id"].astype(int).isin(hidden)].copy()
+    if not hidden or "id" not in out.columns:
+        return out
+    return out[~out["id"].astype(int).isin(hidden)].copy()
 
 
 def _promote_hidden_item(core, db, product_id: int, name: str, unit_cost: float, item_code: str = ""):
