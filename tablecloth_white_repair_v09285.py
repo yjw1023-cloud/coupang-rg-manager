@@ -130,12 +130,7 @@ def apply(core):
                 if {"product_id", "import_id"}.issubset(sc) and {"id", "period_start", "period_end"}.issubset(ic):
                     cur = con.execute(
                         """UPDATE sales_stats
-                           SET product_id=?,
-                               option_id=CASE
-                                   WHEN option_id IS NULL OR TRIM(CAST(option_id AS TEXT))='' OR CAST(option_id AS TEXT)=?
-                                   THEN ?
-                                   ELSE option_id
-                               END
+                           SET product_id=?, option_id=?
                            WHERE product_id=?
                              AND import_id IN (
                                  SELECT id FROM imports
@@ -143,7 +138,7 @@ def apply(core):
                                    AND period_end>='2026-10-01'
                                    AND period_start<='2026-10-31'
                              )""",
-                        (target_id, GHOST_OID, TARGET_OID, ghost_id),
+                        (target_id, TARGET_OID, ghost_id),
                     )
                     moved["october_ghost_sales_stats"] = int(cur.rowcount or 0)
 
