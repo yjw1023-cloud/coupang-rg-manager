@@ -1,6 +1,6 @@
 {
-  "version": "0.9.284",
-  "message": "잠정손익 표의 광고비를 모든 수량·반품 행 변환이 끝난 뒤 현재 행의 정확한 옵션ID로 다시 매칭하도록 수정했습니다. 다른 상품의 광고비가 행 위치 때문에 잘못 붙는 문제를 차단합니다.",
+  "version": "0.9.285",
+  "message": "화이트 PEVA 테이블보 완제품(96089460574)을 복구하고 JDS800×5 BOM/바코드를 재등록합니다. 10월에 피아노커버로 잘못 연결된 판매자료를 화이트 테이블보로 복구하고, 유령 레이스 피아노커버 상품은 비활성화합니다.",
   "files": [
     "VERSION.txt",
     "app.py",
@@ -24,6 +24,7 @@
     "new_product_growth_v09274.py",
     "coupang_api_sync_v09140.py",
     "pnl_month_v0961.py",
-    "pnl_month_v0965.py"
+    "pnl_month_v0965.py",
+    "tablecloth_white_repair_v09285.py"
   ]
 }
