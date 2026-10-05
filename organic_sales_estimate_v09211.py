@@ -1,4 +1,4 @@
-"""Organic sales estimate page for Sales Analysis (v0.9.279).
+"""Organic sales estimate page for Sales Analysis (v0.9.280).
 
 Authoritative normal-product source: the user's uploaded product master copied to
 canonical_product_rules_v09214.CURRENT_IDS (132 option IDs). The DB registry is
@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 from difflib import SequenceMatcher
+import html
 import importlib
 import sys
 from typing import Any
@@ -486,6 +487,7 @@ def _organic_estimate_data(core, sales_module, db, start: date, end: date):
                 "판매량": 0.0,
                 "광고 판매량": 0.0,
                 "광고비": 0.0,
+                "_광고제외 이익": 0.0,
             })
 
         if sales_imports and sales_module._exists(con, "sales_stats"):
@@ -519,6 +521,34 @@ def _organic_estimate_data(core, sales_module, db, start: date, end: date):
                         get_item(key, pid, oid)["판매량"] += _sales_qty(
                             sales_module, row, cols
                         )
+
+        # 같은 판매자료 구간의 잠정손익에서 광고비를 제외한 이익을 먼저 합산합니다.
+        # 아래 광고성과보고서의 실제 spend를 같은 기간 기준으로 빼서 최종 이익을 만듭니다.
+        for sales_import in sales_imports:
+            try:
+                pnl_frame, _pnl_meta = core.estimated_pnl(
+                    int(sales_import["id"]), None, db
+                )
+            except Exception:
+                pnl_frame = pd.DataFrame()
+            if pnl_frame is None or pnl_frame.empty:
+                continue
+            for _, pnl_row in pnl_frame.iterrows():
+                key, pid, oid = _canonical_identity(
+                    sales_module,
+                    normal_ids,
+                    normal_by_oid,
+                    confirmed,
+                    pnl_row.get("product_id"),
+                    pnl_row.get("option_id"),
+                )
+                if not key:
+                    continue
+                try:
+                    profit_ex_ad = float(pnl_row.get("profit_ex_ad") or 0)
+                except Exception:
+                    profit_ex_ad = 0.0
+                get_item(key, pid, oid)["_광고제외 이익"] += profit_ex_ad
 
         ad_qty_available = False
         if ad_imports and sales_module._exists(con, "ad_performance"):
@@ -584,6 +614,7 @@ def _organic_estimate_data(core, sales_module, db, start: date, end: date):
         if total_qty <= 0 and ad_qty <= 0 and ad_spend <= 0:
             continue
         organic_qty = total_qty - ad_qty
+        profit_after_ad = float(item.get("_광고제외 이익") or 0) - ad_spend
         rows_out.append({
             "아이템": item["아이템"],
             "판매량": total_qty,
@@ -595,6 +626,7 @@ def _organic_estimate_data(core, sales_module, db, start: date, end: date):
                 else 0.0
             ),
             "광고비": ad_spend,
+            "광고차감 이익": profit_after_ad,
         })
 
     columns = [
@@ -604,6 +636,7 @@ def _organic_estimate_data(core, sales_module, db, start: date, end: date):
         "Organic 판매량",
         "Organic 판매 비율",
         "광고비",
+        "광고차감 이익",
     ]
     if not rows_out:
         frame = pd.DataFrame(columns=columns)
@@ -626,6 +659,60 @@ def _fmt_count(value: Any) -> str:
     if abs(n - round(n)) < 1e-9:
         return f"{int(round(n)):,}"
     return f"{n:,.2f}"
+
+
+def _table_html(frame: pd.DataFrame) -> str:
+    rows = []
+    for _, r in frame.iterrows():
+        name = html.escape(str(r.get("아이템") or ""))
+        total = _fmt_count(r.get("판매량"))
+        ad_qty = _fmt_count(r.get("광고 판매량"))
+        organic = _fmt_count(r.get("Organic 판매량"))
+        try:
+            ratio = float(r.get("Organic 판매 비율") or 0)
+        except Exception:
+            ratio = 0.0
+        try:
+            spend = float(r.get("광고비") or 0)
+        except Exception:
+            spend = 0.0
+        try:
+            profit = float(r.get("광고차감 이익") or 0)
+        except Exception:
+            profit = 0.0
+        rows.append(
+            "<tr>"
+            f"<td>{name}</td>"
+            f"<td>{total}</td>"
+            f"<td>{ad_qty}</td>"
+            f"<td class='organic'>{organic}</td>"
+            f"<td class='organic'>{ratio:.1f}%</td>"
+            f"<td>{spend:,.0f}원</td>"
+            f"<td>{profit:,.0f}원</td>"
+            "</tr>"
+        )
+    body = "".join(rows)
+    return f"""
+<style>
+.rg-organic-wrap{{border:1px solid #dfe6ee;border-radius:12px;overflow:auto;max-height:760px;background:#fff}}
+.rg-organic-table{{width:100%;border-collapse:separate;border-spacing:0;font-size:14px;color:#172033;table-layout:fixed}}
+.rg-organic-table th,.rg-organic-table td{{text-align:center!important;vertical-align:middle!important}}
+.rg-organic-table thead th{{position:sticky;top:0;z-index:2;background:#edf3f8!important;color:#334155;font-weight:750;padding:11px 8px;border-bottom:1px solid #cbd5e1;border-right:1px solid #dde5ed;white-space:nowrap}}
+.rg-organic-table tbody td{{padding:10px 8px;border-bottom:1px solid #e7edf3;border-right:1px solid #edf1f5;font-variant-numeric:tabular-nums}}
+.rg-organic-table thead th:first-child{{width:34%}}
+.rg-organic-table thead th:nth-child(2),.rg-organic-table thead th:nth-child(3),.rg-organic-table thead th:nth-child(4){{width:10%}}
+.rg-organic-table thead th:nth-child(5){{width:12%}}
+.rg-organic-table thead th:nth-child(6),.rg-organic-table thead th:nth-child(7){{width:12%}}
+.rg-organic-table tbody td.organic{{background:#f2fbf5!important;font-weight:700;color:#176b3a}}
+.rg-organic-table tbody tr:hover td{{background:#f8fafc!important}}
+.rg-organic-table tbody tr:hover td.organic{{background:#eaf8ef!important}}
+.rg-organic-table thead th:last-child,.rg-organic-table tbody td:last-child{{border-right:none}}
+</style>
+<div class="rg-organic-wrap"><table class="rg-organic-table"><thead><tr>
+<th>아이템</th><th>판매량</th><th>광고 판매량</th><th>Organic 판매량</th>
+<th>Organic 판매 비율</th><th>광고비</th><th>광고차감 이익</th>
+</tr></thead><tbody>{body}</tbody></table></div>
+"""
 
 
 def _style_table(frame: pd.DataFrame):
@@ -736,42 +823,10 @@ def render_page(st_obj, core, db_path=None):
             "Organic 판매량",
             "Organic 판매 비율",
             "광고비",
+            "광고차감 이익",
         ]
     ].copy()
-    styled = _style_table(show)
-    column_config = None
-    try:
-        column_config = {
-            "아이템": st_obj.column_config.TextColumn(
-                "아이템", width="large"
-            ),
-            "판매량": st_obj.column_config.NumberColumn(
-                "판매량", width="small"
-            ),
-            "광고 판매량": st_obj.column_config.NumberColumn(
-                "광고 판매량", width="small"
-            ),
-            "Organic 판매량": st_obj.column_config.NumberColumn(
-                "Organic 판매량", width="small"
-            ),
-            "Organic 판매 비율": st_obj.column_config.NumberColumn(
-                "Organic 판매 비율", width="small"
-            ),
-            "광고비": st_obj.column_config.NumberColumn(
-                "광고비", width="small"
-            ),
-        }
-    except Exception:
-        column_config = None
-
-    kwargs = {
-        "use_container_width": True,
-        "hide_index": True,
-        "height": min(760, max(220, 38 * (len(show) + 1))),
-    }
-    if column_config is not None:
-        kwargs["column_config"] = column_config
-    st_obj.dataframe(styled, **kwargs)
+    st_obj.markdown(_table_html(show), unsafe_allow_html=True)
 
 
 def apply(sales_module, core):
