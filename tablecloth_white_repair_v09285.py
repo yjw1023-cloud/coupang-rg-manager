@@ -161,13 +161,29 @@ def apply(core):
                     )
                     moved["october_ghost_api_orders"] = int(cur.rowcount or 0)
 
+            # Make the restored white item user-visible even if it had once
+            # been auto-hidden when report data created a placeholder master.
+            if _exists(con, "system_hidden_products"):
+                con.execute(
+                    "DELETE FROM system_hidden_products WHERE product_id=?",
+                    (target_id,),
+                )
+
             if ghost_id is not None and ghost_id != target_id:
                 con.execute(
                     """UPDATE products
-                       SET active=0,name='[삭제] 레이스 피아노 커버 90x180cm',updated_at=?
+                       SET active=0,updated_at=?
                        WHERE id=?""",
                     (now, ghost_id),
                 )
+                if _exists(con, "system_hidden_products"):
+                    con.execute(
+                        """INSERT INTO system_hidden_products(product_id,reason,hidden_at)
+                           VALUES(?,?,?)
+                           ON CONFLICT(product_id) DO UPDATE SET
+                             reason=excluded.reason, hidden_at=excluded.hidden_at""",
+                        (ghost_id, "obsolete_wrong_master", now),
+                    )
 
             con.commit()
         except Exception:
