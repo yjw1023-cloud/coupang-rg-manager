@@ -1,6 +1,6 @@
 {
-  "version": "0.9.285",
-  "message": "화이트 PEVA 테이블보 완제품(96089460574)을 복구하고 JDS800×5 BOM/바코드를 재등록합니다. 10월에 피아노커버로 잘못 연결된 판매자료를 화이트 테이블보로 복구하고, 유령 레이스 피아노커버 상품은 비활성화합니다.",
+  "version": "0.9.286",
+  "message": "화이트 테이블보(96089460574) 10월 판매를 피아노커버 유령행에서 복구하고, 피아노커버 옵션은 품목목록에서 숨깁니다. 업데이트 확인/적용은 GitHub와 Google Drive 동기화 폴더를 모두 지원합니다.",
   "files": [
     "VERSION.txt",
     "app.py",
@@ -25,6 +25,9 @@
     "coupang_api_sync_v09140.py",
     "pnl_month_v0961.py",
     "pnl_month_v0965.py",
-    "tablecloth_white_repair_v09285.py"
+    "tablecloth_white_repair_v09285.py",
+    "drive_update_fallback_v09286.py",
+    "sales_quantity_v0965.py",
+    "product_visibility_v0995.py"
   ]
 }
