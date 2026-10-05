@@ -150,22 +150,19 @@ def apply(core):
             if ghost_id is not None and _exists(con, "coupang_rg_order_items"):
                 cols = _cols(con, "coupang_rg_order_items")
                 if {"product_id", "paid_date"}.issubset(cols):
-                    where = ["product_id=?", "paid_date>='2026-10-01'", "paid_date<='2026-10-31'"]
-                    params = [ghost_id]
-                    if {"vendor_item_id", "product_name"}.issubset(cols):
-                        where.append("(CAST(vendor_item_id AS TEXT)=? OR product_name LIKE ?)")
-                        params.extend([TARGET_OID, "%테이블보%"])
-                    elif "vendor_item_id" in cols:
-                        where.append("CAST(vendor_item_id AS TEXT)=?")
+                    set_bits = ["product_id=?"]
+                    params = [target_id]
+                    if "vendor_item_id" in cols:
+                        set_bits.append("vendor_item_id=?")
                         params.append(TARGET_OID)
-                    elif "product_name" in cols:
-                        where.append("product_name LIKE ?")
-                        params.append("%테이블보%")
-                    else:
-                        where.append("1=0")
+                    if "product_name" in cols:
+                        set_bits.append("product_name=?")
+                        params.append(TARGET_NAME)
+                    params.append(ghost_id)
                     cur = con.execute(
-                        "UPDATE coupang_rg_order_items SET product_id=? WHERE " + " AND ".join(where),
-                        [target_id] + params,
+                        "UPDATE coupang_rg_order_items SET " + ",".join(set_bits)
+                        + " WHERE product_id=? AND paid_date>='2026-10-01' AND paid_date<='2026-10-31'",
+                        params,
                     )
                     moved["october_ghost_api_orders"] = int(cur.rowcount or 0)
 
