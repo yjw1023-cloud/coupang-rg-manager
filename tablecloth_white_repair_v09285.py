@@ -1,0 +1,194 @@
+"""v0.9.285 one-time repair for the missing white PEVA tablecloth RG product."""
+from __future__ import annotations
+
+TARGET_OID = "96089460574"
+TARGET_CODE = "CP-96089460574"
+TARGET_NAME = "행사용 일회용 테이블보 PEVA / 5개 화이트 137x180cm"
+TARGET_BARCODE = "S0038542080293"
+COMPONENT_CODE = "JDS800"
+GHOST_OID = "94731787590"
+
+
+def _cols(con, table):
+    try:
+        return {str(r["name"]) for r in con.execute(f'PRAGMA table_info("{table}")').fetchall()}
+    except Exception:
+        return set()
+
+
+def _exists(con, table):
+    return con.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+    ).fetchone() is not None
+
+
+def apply(core):
+    core.init_db(core.DEFAULT_DB)
+    with core._conn(core.DEFAULT_DB) as con:
+        target = con.execute(
+            "SELECT id,active FROM products WHERE option_id=? OR item_code=? LIMIT 1",
+            (TARGET_OID, TARGET_CODE),
+        ).fetchone()
+        ghost = con.execute(
+            "SELECT id,active FROM products WHERE option_id=? LIMIT 1",
+            (GHOST_OID,),
+        ).fetchone()
+        if target and (not ghost or int(ghost["active"] or 0) == 0):
+            return {"ok": True, "status": "already_repaired", "target_product_id": int(target["id"])}
+
+    import importlib
+    backup_mod = importlib.import_module("db_backup_v09248")
+    backup_mod.backup_db(core, "tablecloth_white_repair_v09285", core.DEFAULT_DB)
+
+    now = core.now_iso()
+    moved = {}
+    with core._conn(core.DEFAULT_DB) as con:
+        con.execute("BEGIN IMMEDIATE")
+        try:
+            target = con.execute(
+                "SELECT id FROM products WHERE option_id=? OR item_code=? LIMIT 1",
+                (TARGET_OID, TARGET_CODE),
+            ).fetchone()
+            if target:
+                target_id = int(target["id"])
+                con.execute(
+                    """UPDATE products
+                       SET item_code=?,option_id=?,name=?,item_type='finished',active=1,updated_at=?
+                       WHERE id=?""",
+                    (TARGET_CODE, TARGET_OID, TARGET_NAME, now, target_id),
+                )
+            else:
+                cur = con.execute(
+                    """INSERT INTO products(item_code,option_id,name,item_type,unit_cost,active,updated_at)
+                       VALUES(?,?,?,'finished',0,1,?)""",
+                    (TARGET_CODE, TARGET_OID, TARGET_NAME, now),
+                )
+                target_id = int(cur.lastrowid)
+
+            component = con.execute(
+                "SELECT id FROM products WHERE item_code=? LIMIT 1",
+                (COMPONENT_CODE,),
+            ).fetchone()
+            if not component:
+                raise RuntimeError("JDS800 화이트 테이블보 원재료를 찾지 못했습니다.")
+            component_id = int(component["id"])
+
+            if _exists(con, "bom_items"):
+                con.execute("DELETE FROM bom_items WHERE parent_product_id=?", (target_id,))
+                con.execute(
+                    """INSERT OR REPLACE INTO bom_items(parent_product_id,component_product_id,qty_per)
+                       VALUES(?,?,?)""",
+                    (target_id, component_id, 5),
+                )
+
+            if _exists(con, "rg_barcode_master"):
+                con.execute(
+                    """INSERT INTO rg_barcode_master
+                       (vendor_item_id,barcode,seller_product_id,product_name,option_name,source,updated_at)
+                       VALUES(?,?,?,?,?,'tablecloth_white_repair_v09285',?)
+                       ON CONFLICT(vendor_item_id) DO UPDATE SET
+                         barcode=excluded.barcode,
+                         product_name=excluded.product_name,
+                         source=excluded.source,
+                         updated_at=excluded.updated_at""",
+                    (TARGET_OID, TARGET_BARCODE, "", TARGET_NAME, "", now),
+                )
+
+            ghost = con.execute(
+                "SELECT id FROM products WHERE option_id=? LIMIT 1",
+                (GHOST_OID,),
+            ).fetchone()
+            ghost_id = int(ghost["id"]) if ghost else None
+
+            for table, option_col in (
+                ("sales_stats", "option_id"),
+                ("ad_performance", "option_id"),
+                ("settlement_sales", "option_id"),
+                ("logistics_fees", "option_id"),
+            ):
+                if not _exists(con, table):
+                    continue
+                cols = _cols(con, table)
+                if "product_id" in cols and option_col in cols:
+                    cur = con.execute(
+                        f'UPDATE "{table}" SET product_id=? WHERE CAST("{option_col}" AS TEXT)=?',
+                        (target_id, TARGET_OID),
+                    )
+                    moved[table] = int(cur.rowcount or 0)
+
+            if _exists(con, "coupang_rg_order_items"):
+                cols = _cols(con, "coupang_rg_order_items")
+                if {"vendor_item_id", "product_id"}.issubset(cols):
+                    cur = con.execute(
+                        """UPDATE coupang_rg_order_items
+                           SET product_id=?
+                           WHERE CAST(vendor_item_id AS TEXT)=?""",
+                        (target_id, TARGET_OID),
+                    )
+                    moved["coupang_rg_order_items"] = int(cur.rowcount or 0)
+
+            if ghost_id is not None and _exists(con, "sales_stats") and _exists(con, "imports"):
+                sc = _cols(con, "sales_stats")
+                ic = _cols(con, "imports")
+                if {"product_id", "import_id"}.issubset(sc) and {"id", "period_start", "period_end"}.issubset(ic):
+                    cur = con.execute(
+                        """UPDATE sales_stats
+                           SET product_id=?,
+                               option_id=CASE
+                                   WHEN option_id IS NULL OR TRIM(CAST(option_id AS TEXT))='' OR CAST(option_id AS TEXT)=?
+                                   THEN ?
+                                   ELSE option_id
+                               END
+                           WHERE product_id=?
+                             AND import_id IN (
+                                 SELECT id FROM imports
+                                 WHERE data_type='sales_stats'
+                                   AND period_end>='2026-10-01'
+                                   AND period_start<='2026-10-31'
+                             )""",
+                        (target_id, GHOST_OID, TARGET_OID, ghost_id),
+                    )
+                    moved["october_ghost_sales_stats"] = int(cur.rowcount or 0)
+
+            if ghost_id is not None and _exists(con, "coupang_rg_order_items"):
+                cols = _cols(con, "coupang_rg_order_items")
+                if {"product_id", "paid_date"}.issubset(cols):
+                    where = ["product_id=?", "paid_date>='2026-10-01'", "paid_date<='2026-10-31'"]
+                    params = [ghost_id]
+                    if {"vendor_item_id", "product_name"}.issubset(cols):
+                        where.append("(CAST(vendor_item_id AS TEXT)=? OR product_name LIKE ?)")
+                        params.extend([TARGET_OID, "%테이블보%"])
+                    elif "vendor_item_id" in cols:
+                        where.append("CAST(vendor_item_id AS TEXT)=?")
+                        params.append(TARGET_OID)
+                    elif "product_name" in cols:
+                        where.append("product_name LIKE ?")
+                        params.append("%테이블보%")
+                    else:
+                        where.append("1=0")
+                    cur = con.execute(
+                        "UPDATE coupang_rg_order_items SET product_id=? WHERE " + " AND ".join(where),
+                        [target_id] + params,
+                    )
+                    moved["october_ghost_api_orders"] = int(cur.rowcount or 0)
+
+            if ghost_id is not None and ghost_id != target_id:
+                con.execute(
+                    """UPDATE products
+                       SET active=0,name='[삭제] 레이스 피아노 커버 90x180cm',updated_at=?
+                       WHERE id=?""",
+                    (now, ghost_id),
+                )
+
+            con.commit()
+        except Exception:
+            con.rollback()
+            raise
+
+    return {
+        "ok": True,
+        "status": "repaired",
+        "target_product_id": target_id,
+        "ghost_product_id": ghost_id,
+        "moved": moved,
+    }
