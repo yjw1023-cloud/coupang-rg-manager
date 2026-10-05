@@ -119,6 +119,27 @@ def render_provisional_month_page(st_obj, pd_obj, core, db_path=None):
         if month:
             counted, qty_meta = quantities.annotate_month(core, db, month, applied)
             merged, return_meta = returns.consolidate_month(core, db, month, counted)
+
+            # v0.9.284: after all quantity/return row transforms, bind ad spend
+            # one last time by the row's *current exact option ID*.  This prevents
+            # a transformed/reordered row from retaining another option's ad spend.
+            ad_items = dict((dataset or {}).get("items") or {})
+            if "광고비" not in merged.columns:
+                merged["광고비"] = 0.0
+            for idx in merged.index:
+                oid = ad._oid(merged.at[idx, "옵션ID"] if "옵션ID" in merged.columns else "")
+                item = ad_items.get(oid)
+                spend = abs(ad._num(item.get("ad_spend"))) if item else 0.0
+                merged.at[idx, "광고비"] = -spend
+
+                no_ad = _num(merged.at[idx, "광고제외이익"]) if "광고제외이익" in merged.columns else 0.0
+                revenue = _num(merged.at[idx, "예상매출"]) if "예상매출" in merged.columns else 0.0
+                profit = no_ad - spend
+                if "예상이익" in merged.columns:
+                    merged.at[idx, "예상이익"] = profit
+                if "이익률(%)" in merged.columns:
+                    merged.at[idx, "이익률(%)"] = profit / revenue * 100 if abs(revenue) > 1e-12 else 0.0
+
             merged = _add_return_columns(merged)
             merged = _add_average_cost_columns(merged)
         else:
