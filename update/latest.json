@@ -1,6 +1,6 @@
 {
-  "version": "0.9.283",
-  "message": "잠정손익이 쿠팡 주문 API 자료를 사용하는 경우에도 상품별 이전 정산월의 실제 평균 수수료와 평균 입출고·배송비를 자동 적용하도록 수정했습니다. 10월은 9월 정산자료가 있으면 9월 값을 사용하며, 정산이력이 없는 상품만 기존 추정값을 사용합니다.",
+  "version": "0.9.284",
+  "message": "잠정손익 표의 광고비를 모든 수량·반품 행 변환이 끝난 뒤 현재 행의 정확한 옵션ID로 다시 매칭하도록 수정했습니다. 다른 상품의 광고비가 행 위치 때문에 잘못 붙는 문제를 차단합니다.",
   "files": [
     "VERSION.txt",
     "app.py",
@@ -23,6 +23,7 @@
     "organic_sales_estimate_v09211.py",
     "new_product_growth_v09274.py",
     "coupang_api_sync_v09140.py",
-    "pnl_month_v0961.py"
+    "pnl_month_v0961.py",
+    "pnl_month_v0965.py"
   ]
 }
