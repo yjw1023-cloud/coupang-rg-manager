@@ -2242,7 +2242,9 @@ def provisional_rows_from_api(core: Any, month: str, db_path=None):
     Revenue-recognition facts belong to confirmed P&L and must never move an
     order into a different provisional month. Returns/cancellations are deducted
     on their receipt date and a later withdrawal restores them on the withdrawal
-    date. Until the settlement fee is confirmed, use the ERP's 10.8% estimate.
+    date. Commission and RG logistics use the most recent prior settlement
+    month for the same product; only products without settlement history fall
+    back to the legacy estimate.
     """
     db = db_path or core.DEFAULT_DB
     ensure_schema(core, db)
@@ -2329,10 +2331,38 @@ def provisional_rows_from_api(core: Any, month: str, db_path=None):
         )
         unit_cost = abs(_num(product["unit_cost"]))
         cogs = -qty * unit_cost
-        commission = -revenue * PROVISIONAL_COMMISSION_RATE
-        no_ad = revenue + cogs + commission
+
+        # v0.9.283: current-month provisional P&L must use the previous
+        # settlement's actual per-unit commission and in/out + delivery fees.
+        # The monthly page can prefer API sales rows over sales-stat snapshots,
+        # so applying this here is necessary; otherwise API-backed rows showed
+        # 10.8% commission and zero logistics even when September settlement
+        # data already existed.
+        oid = _oid(product["option_id"]) or _oid(product["item_code"])
+        prior_comm = None
+        prior_logi = None
+        try:
+            basis = importlib.import_module("provisional_sales_basis_v09196")
+            prior_comm = basis._prior_comm(core, db, str(month), oid, product_id)
+            prior_logi = basis._prior_logi(core, db, str(month), oid, product_id)
+        except Exception:
+            prior_comm = None
+            prior_logi = None
+
+        if prior_comm and _num(prior_comm.get("unit")) > 0 and abs(qty) > 1e-12:
+            commission = -abs(qty) * abs(_num(prior_comm.get("unit")))
+        else:
+            commission = -revenue * PROVISIONAL_COMMISSION_RATE
+
+        inout = 0.0
+        delivery = 0.0
+        if prior_logi and abs(qty) > 1e-12:
+            inout = -abs(qty) * abs(_num(prior_logi.get("inout")))
+            delivery = -abs(qty) * abs(_num(prior_logi.get("delivery")))
+
+        no_ad = revenue + cogs + commission + inout + delivery
         output.append({
-            "옵션ID": _oid(product["option_id"]) or _oid(product["item_code"]),
+            "옵션ID": oid,
             "상품명": _text(product["name"]),
             # The base monthly aggregator uses this signed net quantity for
             # financial arithmetic. sales_quantity_v0965 replaces the visible
@@ -2345,14 +2375,14 @@ def provisional_rows_from_api(core: Any, month: str, db_path=None):
             "원가/개": unit_cost,
             "매출원가": cogs,
             "판매수수료": commission,
-            "입출고비": 0.0,
-            "배송비": 0.0,
+            "입출고비": inout,
+            "배송비": delivery,
             "반품충당": 0.0,
             "광고비": 0.0,
             "광고제외이익": no_ad,
             "예상이익": no_ad,
             "이익률(%)": no_ad / revenue * 100 if abs(revenue) > 1e-12 else 0.0,
-            "RG비용": 0.0,
+            "RG비용": inout + delivery,
         })
     coverage = _order_month_coverage(core, db, month)
     return_coverage = _return_month_coverage(core, db, month)
