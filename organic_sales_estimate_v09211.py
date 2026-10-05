@@ -1,4 +1,4 @@
-"""Organic sales estimate page for Sales Analysis (v0.9.280).
+"""Organic sales estimate page for Sales Analysis (v0.9.281).
 
 Authoritative normal-product source: the user's uploaded product master copied to
 canonical_product_rules_v09214.CURRENT_IDS (132 option IDs). The DB registry is
@@ -10,6 +10,7 @@ from datetime import date, timedelta
 from difflib import SequenceMatcher
 import html
 import importlib
+import json
 import sys
 from typing import Any
 
@@ -487,7 +488,7 @@ def _organic_estimate_data(core, sales_module, db, start: date, end: date):
                 "판매량": 0.0,
                 "광고 판매량": 0.0,
                 "광고비": 0.0,
-                "_광고제외 이익": 0.0,
+                "_잠정손익 예상이익": 0.0,
             })
 
         if sales_imports and sales_module._exists(con, "sales_stats"):
@@ -522,33 +523,54 @@ def _organic_estimate_data(core, sales_module, db, start: date, end: date):
                             sales_module, row, cols
                         )
 
-        # 같은 판매자료 구간의 잠정손익에서 광고비를 제외한 이익을 먼저 합산합니다.
-        # 아래 광고성과보고서의 실제 spend를 같은 기간 기준으로 빼서 최종 이익을 만듭니다.
-        for sales_import in sales_imports:
-            try:
-                pnl_frame, _pnl_meta = core.estimated_pnl(
-                    int(sales_import["id"]), None, db
-                )
-            except Exception:
-                pnl_frame = pd.DataFrame()
-            if pnl_frame is None or pnl_frame.empty:
-                continue
-            for _, pnl_row in pnl_frame.iterrows():
-                key, pid, oid = _canonical_identity(
-                    sales_module,
-                    normal_ids,
-                    normal_by_oid,
-                    confirmed,
-                    pnl_row.get("product_id"),
-                    pnl_row.get("option_id"),
-                )
-                if not key:
-                    continue
+        # 이익은 별도로 재계산하지 않습니다.
+        # 잠정손익 화면이 최종 표시한 '예상이익' 스냅샷을 그대로 사용해야
+        # 두 메뉴의 숫자가 1원 단위까지 동일합니다.
+        profit_snapshot_imports: set[int] = set()
+        sales_import_ids = [int(r["id"]) for r in sales_imports]
+        if sales_import_ids and _table_exists(con, "provisional_pnl_snapshots"):
+            marks = ",".join("?" for _ in sales_import_ids)
+            snapshot_rows = con.execute(
+                f"""SELECT import_id,rows_json
+                    FROM provisional_pnl_snapshots
+                    WHERE import_id IN ({marks})""",
+                sales_import_ids,
+            ).fetchall()
+            for snapshot in snapshot_rows:
+                import_id = int(snapshot["import_id"])
                 try:
-                    profit_ex_ad = float(pnl_row.get("profit_ex_ad") or 0)
+                    pnl_rows = json.loads(str(snapshot["rows_json"] or "[]"))
                 except Exception:
-                    profit_ex_ad = 0.0
-                get_item(key, pid, oid)["_광고제외 이익"] += profit_ex_ad
+                    pnl_rows = []
+                if not isinstance(pnl_rows, list):
+                    continue
+                profit_snapshot_imports.add(import_id)
+                for pnl_row in pnl_rows:
+                    if not isinstance(pnl_row, dict):
+                        continue
+                    oid = _oid(sales_module, pnl_row.get("옵션ID"))
+                    key, pid, canonical_oid = _canonical_identity(
+                        sales_module,
+                        normal_ids,
+                        normal_by_oid,
+                        confirmed,
+                        0,
+                        oid,
+                    )
+                    if not key:
+                        continue
+                    try:
+                        expected_profit = float(pnl_row.get("예상이익") or 0)
+                    except Exception:
+                        expected_profit = 0.0
+                    get_item(key, pid, canonical_oid)[
+                        "_잠정손익 예상이익"
+                    ] += expected_profit
+
+        profit_snapshot_complete = (
+            bool(sales_import_ids)
+            and set(sales_import_ids).issubset(profit_snapshot_imports)
+        )
 
         ad_qty_available = False
         if ad_imports and sales_module._exists(con, "ad_performance"):
@@ -614,7 +636,11 @@ def _organic_estimate_data(core, sales_module, db, start: date, end: date):
         if total_qty <= 0 and ad_qty <= 0 and ad_spend <= 0:
             continue
         organic_qty = total_qty - ad_qty
-        profit_after_ad = float(item.get("_광고제외 이익") or 0) - ad_spend
+        profit_after_ad = (
+            float(item.get("_잠정손익 예상이익") or 0)
+            if profit_snapshot_complete
+            else None
+        )
         rows_out.append({
             "아이템": item["아이템"],
             "판매량": total_qty,
@@ -648,6 +674,9 @@ def _organic_estimate_data(core, sales_module, db, start: date, end: date):
             ascending=[False, True],
             kind="stable",
         ).reset_index(drop=True)
+    frame.attrs["profit_snapshot_complete"] = profit_snapshot_complete
+    frame.attrs["profit_snapshot_import_count"] = len(profit_snapshot_imports)
+    frame.attrs["profit_sales_import_count"] = len(sales_import_ids)
     return frame, covered, ad_qty_available
 
 
@@ -676,10 +705,11 @@ def _table_html(frame: pd.DataFrame) -> str:
             spend = float(r.get("광고비") or 0)
         except Exception:
             spend = 0.0
+        raw_profit = r.get("광고차감 이익")
         try:
-            profit = float(r.get("광고차감 이익") or 0)
+            profit = None if pd.isna(raw_profit) else float(raw_profit)
         except Exception:
-            profit = 0.0
+            profit = None
         rows.append(
             "<tr>"
             f"<td>{name}</td>"
@@ -688,7 +718,7 @@ def _table_html(frame: pd.DataFrame) -> str:
             f"<td class='organic'>{organic}</td>"
             f"<td class='organic'>{ratio:.1f}%</td>"
             f"<td>{spend:,.0f}원</td>"
-            f"<td>{profit:,.0f}원</td>"
+            f"<td>{profit:,.0f}원</td>" if profit is not None else "<td>-</td>"
             "</tr>"
         )
     body = "".join(rows)
@@ -804,6 +834,15 @@ def render_page(st_obj, core, db_path=None):
             "선택 기간에 판매자료와 광고자료가 함께 확인되는 상품이 없습니다."
         )
         return
+
+    if not bool(frame.attrs.get("profit_snapshot_complete")):
+        done = int(frame.attrs.get("profit_snapshot_import_count") or 0)
+        total = int(frame.attrs.get("profit_sales_import_count") or 0)
+        st_obj.warning(
+            "광고차감 이익은 잠정손익 화면의 '예상이익'과 완전히 동일한 값만 표시합니다. "
+            f"현재 잠정손익 스냅샷이 {done}/{total}개 판매구간만 확인되어 이익은 '-'로 표시합니다. "
+            "해당 판매구간의 잠정손익 메뉴를 한 번 열면 최종 예상이익이 저장됩니다."
+        )
 
     if (
         pd.to_numeric(
