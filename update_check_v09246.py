@@ -86,7 +86,7 @@ def _fetch_manifest_via_commit():
     return base64.b64decode(content)
 
 
-def fetch_manifest():
+def fetch_manifest(root=None):
     """Read several independent GitHub paths and keep the newest manifest.
 
     GitHub can briefly expose different branch snapshots through ref, contents,
@@ -95,6 +95,16 @@ def fetch_manifest():
     """
     candidates = []
     errors = []
+
+    if root is not None:
+        try:
+            import importlib
+            drive = importlib.import_module("drive_update_fallback_v09286")
+            dm = drive.manifest(root)
+            if dm:
+                candidates.append(dm)
+        except Exception as exc:
+            errors.append("Drive: " + str(exc))
 
     for attempt in range(3):
         readers = (
@@ -115,6 +125,8 @@ def fetch_manifest():
                 files = manifest.get("files")
                 if not isinstance(files, list) or not files:
                     continue
+                manifest = dict(manifest)
+                manifest["_source"] = "github"
                 candidates.append(manifest)
             except Exception as exc:
                 errors.append(str(exc))
@@ -170,9 +182,15 @@ def apply_update(root: Path, manifest):
     backup.mkdir(parents=True, exist_ok=True)
     try:
         downloaded = []
+        source = str(manifest.get("_source") or "github")
         for rel in files:
             target = _safe_target(root, rel)
-            payload = _fetch_file(rel)
+            if source == "drive":
+                import importlib
+                drive = importlib.import_module("drive_update_fallback_v09286")
+                payload = drive.read_file(root, rel)
+            else:
+                payload = _fetch_file(rel)
             staged = staging / rel
             staged.parent.mkdir(parents=True, exist_ok=True)
             staged.write_bytes(payload)
@@ -199,8 +217,8 @@ def render(st, root):
     clicked = st.button("최신 버전 확인", use_container_width=True, key="rg_direct_update_check_v09246")
     if clicked:
         try:
-            with st.spinner("GitHub에서 최신 버전을 직접 확인하고 있습니다..."):
-                manifest = fetch_manifest()
+            with st.spinner("GitHub와 Google Drive에서 최신 버전을 확인하고 있습니다..."):
+                manifest = fetch_manifest(root)
             st.session_state[_STATE] = manifest
         except Exception as exc:
             st.error(f"최신 버전 확인 실패: {exc}")
