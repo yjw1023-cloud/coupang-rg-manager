@@ -1,4 +1,4 @@
-"""Organic sales estimate page for Sales Analysis (v0.9.281).
+"""Organic sales estimate page for Sales Analysis (v0.9.282).
 
 Authoritative normal-product source: the user's uploaded product master copied to
 canonical_product_rules_v09214.CURRENT_IDS (132 option IDs). The DB registry is
@@ -63,17 +63,63 @@ def _coverage(imports: list[Any]) -> set[str]:
 
 
 def _aligned_imports(sales_imports: list[Any], ad_imports: list[Any]) -> tuple[list[Any], list[Any], set[str]]:
-    sales = list(sales_imports)
-    ads = list(ad_imports)
-    for _ in range(8):
-        common = _coverage(sales) & _coverage(ads)
-        new_sales = [r for r in sales if _import_days(r) and _import_days(r).issubset(common)]
-        new_ads = [r for r in ads if _import_days(r) and _import_days(r).issubset(common)]
-        if [int(r["id"]) for r in new_sales] == [int(r["id"]) for r in sales] and [int(r["id"]) for r in new_ads] == [int(r["id"]) for r in ads]:
-            sales, ads = new_sales, new_ads
-            break
-        sales, ads = new_sales, new_ads
-    return sales, ads, _coverage(sales) & _coverage(ads)
+    """Use one current, exact sales/ad pair for each covered date.
+
+    Older replacement files can remain in imports.  The previous implementation
+    combined every overlapping import, so an old September/cross-month P&L
+    snapshot could be added to the current October row even when the visible
+    sales/ad numbers came from the newer October file.
+
+    Rules:
+    - sales and ad files must have the same exact period;
+    - for duplicate exact periods, the newest import id wins;
+    - overlapping exact periods are not double-counted; the newest pair wins.
+    """
+    def latest_by_period(rows: list[Any]) -> dict[tuple[str, str], Any]:
+        out: dict[tuple[str, str], Any] = {}
+        for row in rows:
+            ps = str(row["period_start"] or "")[:10]
+            pe = str(row["period_end"] or "")[:10]
+            if not ps or not pe:
+                continue
+            key = (ps, pe)
+            prev = out.get(key)
+            if prev is None or int(row["id"]) > int(prev["id"]):
+                out[key] = row
+        return out
+
+    sales_by_period = latest_by_period(list(sales_imports))
+    ads_by_period = latest_by_period(list(ad_imports))
+    exact_periods = set(sales_by_period) & set(ads_by_period)
+
+    candidates = []
+    for period in exact_periods:
+        s = sales_by_period[period]
+        a = ads_by_period[period]
+        days = _import_days(s)
+        if not days or days != _import_days(a):
+            continue
+        pair_rank = max(int(s["id"]), int(a["id"]))
+        candidates.append((pair_rank, period, s, a, days))
+
+    # Newest replacement pair owns overlapping dates.
+    selected = []
+    used_days: set[str] = set()
+    for rank, period, s, a, days in sorted(
+        candidates, key=lambda x: (x[0], x[1]), reverse=True
+    ):
+        if used_days & days:
+            continue
+        selected.append((period, s, a, days))
+        used_days |= days
+
+    selected.sort(key=lambda x: x[0])
+    sales = [x[1] for x in selected]
+    ads = [x[2] for x in selected]
+    covered: set[str] = set()
+    for _period, _s, _a, days in selected:
+        covered |= days
+    return sales, ads, covered
 
 
 def _oid(sales_module, value: Any) -> str:
