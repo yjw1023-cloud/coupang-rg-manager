@@ -192,6 +192,17 @@ def annotate_month(core, db, month: str, view: pd.DataFrame):
         return view, {"exact": False, "rows": 0}
 
     counts, meta = month_counts(core, db, month)
+    if str(month) == "2026-10":
+        old = counts.pop("94731787590", None)
+        if old:
+            current = counts.get("96089460574")
+            if current:
+                for key in ("sales_qty", "cancel_qty", "withdrawal_qty", "net_qty"):
+                    current[key] = _num(current.get(key)) + _num(old.get(key))
+            else:
+                old = dict(old)
+                old["option_id"] = "96089460574"
+                counts["96089460574"] = old
     out = view.copy()
     if "취소수량" not in out.columns:
         out["취소수량"] = 0.0
