@@ -214,6 +214,9 @@ def apply_update(root: Path, manifest):
 
 def render(st, root):
     root = Path(root)
+    applied = st.session_state.pop("_rg_update_applied_v09246", None)
+    if applied:
+        st.success(f"v{applied} 업데이트를 적용했고 새 코드로 다시 로드했습니다.")
     clicked = st.button("최신 버전 확인", use_container_width=True, key="rg_direct_update_check_v09246")
     if clicked:
         try:
@@ -244,7 +247,12 @@ def render(st, root):
             with st.spinner(f"v{latest} 업데이트를 적용하고 있습니다..."):
                 apply_update(root, manifest)
             st.session_state.pop(_STATE, None)
-            st.success(f"v{latest} 업데이트를 적용했습니다. 프로그램을 다시 실행해 주세요.")
+            st.session_state["_rg_update_applied_v09246"] = latest
+            # The updater replaces Python files on disk while the current
+            # Streamlit process still has the old modules in memory. Force one
+            # rerun so app.py starts again from the newly written files and its
+            # module-cache eviction logic reloads patched modules immediately.
+            st.rerun()
         except Exception as exc:
             st.error(f"업데이트 적용 실패: {exc}")
 
