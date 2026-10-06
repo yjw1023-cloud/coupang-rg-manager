@@ -14,6 +14,8 @@ import base64
 import urllib.error
 import json
 import os
+import importlib
+import sys
 import shutil
 import tempfile
 import time
@@ -208,6 +210,29 @@ def apply_update(root: Path, manifest):
             tmp = target.with_suffix(target.suffix + ".tmp")
             shutil.copy2(staged, tmp)
             os.replace(tmp, target)
+
+        # Streamlit reruns do not guarantee that already-imported Python modules
+        # are reloaded from the newly written source files. Reload every updated
+        # top-level .py module that is currently present in sys.modules. reload()
+        # mutates the existing module object in place, so references held by the
+        # running app (for example pnl_views_v0912) immediately see new functions.
+        importlib.invalidate_caches()
+        for rel, _staged, _target in downloaded:
+            rel_path = Path(rel)
+            if rel_path.suffix != ".py" or len(rel_path.parts) != 1:
+                continue
+            mod_name = rel_path.stem
+            if mod_name in {"app", Path(__file__).stem}:
+                continue
+            mod = sys.modules.get(mod_name)
+            if mod is None:
+                continue
+            try:
+                importlib.reload(mod)
+            except Exception:
+                # Do not make the updater unusable because one optional module
+                # cannot be hot-reloaded; app.py will still reload it on restart.
+                pass
     finally:
         shutil.rmtree(staging, ignore_errors=True)
 
