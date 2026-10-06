@@ -35,6 +35,7 @@ _RG_IMPORT_LOCK = builtins._rg_import_rerun_lock_v09194
 with _RG_IMPORT_LOCK:
     for _rg_mod in (
         "pnl_month_default_v0915",
+        "pnl_views_v0912",
         "pnl_month_v0959",
         "pnl_month_v0960",
         "pnl_month_v0961",
