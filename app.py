@@ -285,8 +285,9 @@ AUTO_PRODUCTION_V09106_RESULT = auto_produce_requested_v09106.apply(core, produc
 search_ui_v096 = _original_import_module("search_ui_v096")
 search_ui_v096.apply()
 
-# v0.9.12 P&L menu separation + provisional snapshot capture.
-pnl_views_v0912 = _original_import_module("pnl_views_v0912")
+# v0.9.321: load confirmed P&L from a fresh module filename so a stale
+# pnl_views_v0912.py cannot survive an updater/cache mismatch.
+pnl_views_v0912 = _original_import_module("pnl_views_v09321")
 pnl_views_v0912.apply(core)
 
 # v0.9.186 dedicated item sales analysis by paid date.
