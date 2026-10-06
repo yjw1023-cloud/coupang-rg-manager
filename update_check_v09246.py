@@ -133,7 +133,13 @@ def fetch_manifest(root=None):
             except Exception as exc:
                 errors.append(str(exc))
         if candidates:
-            newest = max(candidates, key=lambda m: _version_tuple(m.get("version")))
+            newest = max(
+                candidates,
+                key=lambda m: (
+                    _version_tuple(m.get("version")),
+                    1 if str(m.get("_source") or "") == "github" else 0,
+                ),
+            )
             # A second pass catches the short propagation window without making
             # the user click repeatedly.
             if attempt >= 1:
@@ -142,7 +148,13 @@ def fetch_manifest(root=None):
             time.sleep(0.8)
 
     if candidates:
-        return max(candidates, key=lambda m: _version_tuple(m.get("version")))
+        return max(
+            candidates,
+            key=lambda m: (
+                _version_tuple(m.get("version")),
+                1 if str(m.get("_source") or "") == "github" else 0,
+            ),
+        )
     raise RuntimeError(
         "GitHub에서 최신 업데이트 정보를 확인하지 못했습니다."
         + (f" ({errors[-1]})" if errors else "")
