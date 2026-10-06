@@ -1,6 +1,6 @@
 {
-  "version": "0.9.288",
-  "message": "판매통계 첫 판매 시 이미 ERP의 RG상품/BOM 등록으로 확정된 정상 신상품을 반품 재판매로 오인하던 문제를 수정했습니다. item_code가 CP-옵션ID이고 unit_cost가 0이어도 BOM이 연결된 finished 상품은 정상 RG 상품으로 처리하며, 이전 버전에서 잘못 생성된 반품 재판매 확인 알림도 자동 정리합니다.",
+  "version": "0.9.289",
+  "message": "재고·생산 하위에 '쿠팡 라벨 작업지시' 메뉴를 추가했습니다. 편집한 중국 구매대행 발주 Excel을 업로드하면 발주 품목을 ERP RG상품/BOM과 매칭하고, 쿠팡 등록상품명·바코드·바코드 그림·라벨수량·작업요청사항을 확인/수정한 뒤 배대지용 Excel 작업지시서를 다운로드할 수 있습니다.",
   "files": [
     "VERSION.txt",
     "app.py",
@@ -30,6 +30,7 @@
     "sales_quantity_v0965.py",
     "product_visibility_v0995.py",
     "return_discount_v099.py",
-    "return_sale_confirm_v09195.py"
+    "return_sale_confirm_v09195.py",
+    "coupang_label_instruction_v09289.py"
   ]
 }
