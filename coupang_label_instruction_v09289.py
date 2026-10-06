@@ -1,4 +1,4 @@
-"""RG Manager v0.9.293 — Coupang label work-instruction workbook generator.
+"""RG Manager v0.9.294 — Coupang label work-instruction workbook generator.
 
 User uploads the edited China purchasing/order workbook. The page extracts the
 rows, links them to ERP RG/BOM products, lets the user correct option IDs / label
@@ -449,6 +449,23 @@ def _label_50x30_png(barcode: str, product_name: str, scale: int = 4) -> io.Byte
     return out
 
 
+def _sample_label_png() -> io.BytesIO:
+    """Fixed crossed-out sample label shown in the warehouse instruction template."""
+    from PIL import Image, ImageDraw
+
+    base = _label_50x30_png("S0000KCT828282", "상품 옵션명 / 옵션 1개", scale=4)
+    img = Image.open(base).convert("RGB")
+    draw = ImageDraw.Draw(img)
+    w, h = img.size
+    red = (230, 90, 90)
+    draw.line((w * 0.18, h * 0.20, w * 0.82, h * 0.72), fill=red, width=max(4, w // 180))
+    draw.line((w * 0.82, h * 0.20, w * 0.18, h * 0.72), fill=red, width=max(4, w // 180))
+    out = io.BytesIO()
+    img.save(out, format="PNG")
+    out.seek(0)
+    return out
+
+
 def build_instruction_xlsx(rows: list[dict]) -> bytes:
     from openpyxl import Workbook
     from openpyxl.drawing.image import Image as XLImage
@@ -458,12 +475,14 @@ def build_instruction_xlsx(rows: list[dict]) -> bytes:
     ws = wb.active
     ws.title = "쿠팡 라벨 작업지시"
 
-    # Match the warehouse work-instruction format the user already uses.
+    # Exact column structure of the user's existing warehouse worksheet:
+    # 주문번호 / 옵션 / 사진 / 수량 / 바코드번호 / 라벨이미지 / 작업요청사항
     headers = [
         "주문번호",
         "옵션",
         "사진",
         "수량",
+        "바코드",
         "바코드 및 한글표시스티커\n"
         "바코드는 사진을 크게 캡처해서 아래 사진보다\n"
         "선명한 사진으로 넣어주세요. 흐린사진은 바코드 인식을\n"
@@ -474,46 +493,77 @@ def build_instruction_xlsx(rows: list[dict]) -> bytes:
         ws.cell(1, col, value)
 
     header_fill = PatternFill("solid", fgColor="DDD8C0")
+    sample_fill = PatternFill("solid", fgColor="FFF200")
     thin = Side(style="thin", color="555555")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
 
-    for col in range(1, 7):
+    for col in range(1, 8):
         cell = ws.cell(1, col)
         cell.font = Font(name="맑은 고딕", bold=True, size=10)
         cell.fill = header_fill
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         cell.border = border
-
     ws.row_dimensions[1].height = 62
 
-    # Column proportions follow the reference sheet.
+    # Match the reference proportions closely.
     for col, width in {
-        "A": 13,
-        "B": 40,
+        "A": 12.5,
+        "B": 39,
         "C": 18,
-        "D": 13,
-        "E": 49,
-        "F": 54,
+        "D": 12.5,
+        "E": 18,
+        "F": 34,
+        "G": 52,
     }.items():
         ws.column_dimensions[col].width = width
 
-    data_start = 2
+    # Fixed sample row, kept as part of the template.
+    sample_row = 2
+    ws.cell(sample_row, 1, "241004012\n\n샘플")
+    ws.cell(sample_row, 2, "상품 옵션명 / 옵션 1개")
+    ws.cell(sample_row, 3, "제품사진")
+    ws.cell(sample_row, 4, 320)
+    ws.cell(sample_row, 5, "S0000KCT828282")
+    ws.cell(sample_row, 6, "")
+    ws.cell(
+        sample_row,
+        7,
+        "개별 박스 위에 바코드 스티커 부착부탁드립니다.\n"
+        "20Kg 미만 160cm 미만 포장으로 해주세요.",
+    )
+    for col in range(1, 8):
+        cell = ws.cell(sample_row, col)
+        cell.font = Font(name="맑은 고딕", size=10)
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = border
+    ws.cell(sample_row, 1).fill = sample_fill
+    ws.cell(sample_row, 1).font = Font(name="맑은 고딕", bold=True, size=10)
+    ws.row_dimensions[sample_row].height = 105
+
+    try:
+        simg = XLImage(_sample_label_png())
+        simg.width = 195
+        simg.height = 117
+        ws.add_image(simg, f"F{sample_row}")
+    except Exception:
+        pass
+
+    data_start = 3
     for idx, row in enumerate(rows, start=data_start):
-        # "옵션" is the purchased/source item; the label image itself uses the
-        # Coupang registered product name.
         ws.cell(idx, 1, row.get("order_no") or "")
         ws.cell(idx, 2, row.get("source_name") or row.get("product_name") or "")
         ws.cell(idx, 4, int(row.get("label_qty") or 0))
-        ws.cell(idx, 5, "")
-        ws.cell(idx, 6, row.get("instruction") or "")
+        ws.cell(idx, 5, _text(row.get("barcode")))
+        ws.cell(idx, 6, "")
+        ws.cell(idx, 7, row.get("instruction") or "")
 
-        for col in range(1, 7):
+        for col in range(1, 8):
             cell = ws.cell(idx, col)
             cell.font = Font(name="맑은 고딕", size=10)
             cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
             cell.border = border
 
-        # Tall rows like the original warehouse sheet.
+        # Reference sheet uses tall product rows.
         ws.row_dimensions[idx].height = 112
 
         img_bytes = row.get("image_bytes")
@@ -533,26 +583,31 @@ def build_instruction_xlsx(rows: list[dict]) -> bytes:
                 scale=4,
             )
             bimg = XLImage(label_png)
-            # Display the complete 50x30 label image at a readable size while
-            # keeping the 5:3 aspect ratio. Source image remains 1600x960.
-            bimg.width = 245
-            bimg.height = 147
-            ws.add_image(bimg, f"E{idx}")
+            # Same visual size as the user's reference, but source remains 1600x960.
+            bimg.width = 195
+            bimg.height = 117
+            ws.add_image(bimg, f"F{idx}")
         except Exception as exc:
-            ws.cell(idx, 5, f"5x3 라벨 이미지 생성 실패: {exc}")
+            ws.cell(idx, 6, f"5x3 라벨 이미지 생성 실패: {exc}")
 
-    # If the same order number repeats consecutively, merge it vertically like
-    # the user's existing instruction sheet.
-    merge_start = data_start
-    last_order = _text(ws.cell(data_start, 1).value) if rows else ""
-    for r in range(data_start + 1, data_start + len(rows) + 1):
-        order = _text(ws.cell(r, 1).value) if r <= data_start + len(rows) - 1 else "__END__"
-        if order != last_order:
-            if last_order and r - merge_start > 1:
-                ws.merge_cells(start_row=merge_start, start_column=1, end_row=r - 1, end_column=1)
-                ws.cell(merge_start, 1).alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-            merge_start = r
-            last_order = order
+    # Merge repeated order numbers vertically, like the reference template.
+    if rows:
+        merge_start = data_start
+        last_order = _text(ws.cell(data_start, 1).value)
+        last_data_row = data_start + len(rows) - 1
+        for r in range(data_start + 1, last_data_row + 2):
+            order = _text(ws.cell(r, 1).value) if r <= last_data_row else "__END__"
+            if order != last_order:
+                if last_order and r - merge_start > 1:
+                    ws.merge_cells(
+                        start_row=merge_start, start_column=1,
+                        end_row=r - 1, end_column=1,
+                    )
+                    ws.cell(merge_start, 1).alignment = Alignment(
+                        horizontal="center", vertical="center", wrap_text=True
+                    )
+                merge_start = r
+                last_order = order
 
     ws.freeze_panes = "A2"
     ws.sheet_view.showGridLines = False
@@ -591,7 +646,7 @@ def render_page(st, core):
     uploaded = st.file_uploader(
         "편집 완료한 중국 구매대행 발주서 Excel",
         type=["xlsx"],
-        key="coupang_label_instruction_v09293_upload",
+        key="coupang_label_instruction_v09294_upload",
     )
     if uploaded is None:
         return
@@ -636,7 +691,7 @@ def render_page(st, core):
             f"{item['발주상품명']} 쿠팡상품",
             options=choices,
             index=default_index,
-            key=f"coupang_label_instruction_v09293_match_{source_row}",
+            key=f"coupang_label_instruction_v09294_match_{source_row}",
             label_visibility="collapsed",
             placeholder="쿠팡 상품을 선택하세요",
         )
@@ -686,7 +741,7 @@ def render_page(st, core):
         hide_index=True,
         num_rows="fixed",
         height=min(760, max(300, 38 * (min(len(frame), 17) + 1))),
-        key="coupang_label_instruction_v09293_editor",
+        key="coupang_label_instruction_v09294_editor",
         disabled=["원본행", "발주상품명", "발주수량", "옵션ID", "쿠팡등록상품명", "바코드", "상태", "BOM구성수량"],
         column_config={
             "포함": st.column_config.CheckboxColumn("포함", width="small"),
@@ -715,7 +770,7 @@ def render_page(st, core):
             "쿠팡 라벨 작업지시서 만들기",
             disabled=True,
             use_container_width=True,
-            key="coupang_label_instruction_v09293_generate_disabled",
+            key="coupang_label_instruction_v09294_generate_disabled",
         )
         return
 
@@ -724,15 +779,15 @@ def render_page(st, core):
         "쿠팡 라벨 작업지시서 만들기",
         type="primary",
         use_container_width=True,
-        key="coupang_label_instruction_v09293_generate",
+        key="coupang_label_instruction_v09294_generate",
     ):
         try:
-            st.session_state["coupang_label_instruction_v09293_file"] = build_instruction_xlsx(rows)
+            st.session_state["coupang_label_instruction_v09294_file"] = build_instruction_xlsx(rows)
         except Exception as exc:
             st.error(f"작업지시서 생성 실패: {exc}")
             return
 
-    xlsx = st.session_state.get("coupang_label_instruction_v09293_file")
+    xlsx = st.session_state.get("coupang_label_instruction_v09294_file")
     if not xlsx:
         st.caption("위 버튼을 누르면 Excel 파일을 만든 뒤 다운로드 버튼이 나타납니다.")
         return
@@ -745,5 +800,5 @@ def render_page(st, core):
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         type="primary",
         use_container_width=True,
-        key="coupang_label_instruction_v09293_download",
+        key="coupang_label_instruction_v09294_download",
     )
