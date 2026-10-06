@@ -53,6 +53,7 @@ with _RG_IMPORT_LOCK:
         "new_product_growth_v09274",
         "rg_barcode_print_v09193",
         "rg_barcode_page_v09235",
+        "coupang_label_instruction_v09289",
         "rg_barcode_direct_print_v09257",
         "update_check_v09246",
         "shared_return_match_ui_v09217",
