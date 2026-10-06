@@ -1,4 +1,4 @@
-"""RG Manager v0.9.291 — Coupang label work-instruction workbook generator.
+"""RG Manager v0.9.292 — Coupang label work-instruction workbook generator.
 
 User uploads the edited China purchasing/order workbook. The page extracts the
 rows, links them to ERP RG/BOM products, lets the user correct option IDs / label
@@ -315,24 +315,22 @@ def _resolve_editor_rows(core, edited_rows: list[dict], prepared_rows: list[dict
     return result, errors
 
 
-def _barcode_png(value: str, scale: int = 2, bar_height: int = 56) -> io.BytesIO:
-    from PIL import Image, ImageDraw
-    barcode_mod = __import__("rg_barcode_print_v09193")
-    codes = barcode_mod._code128_values(value)
-    patterns = barcode_mod._CODE128_PATTERNS
-    quiet = 10
-    units = quiet * 2 + sum(sum(int(x) for x in patterns[c]) for c in codes)
-    img = Image.new("RGB", (max(1, units * scale), bar_height), "white")
-    draw = ImageDraw.Draw(img)
-    x = quiet * scale
-    for code in codes:
-        bar = True
-        for ch in patterns[code]:
-            w = int(ch) * scale
-            if bar:
-                draw.rectangle([x, 0, x + w - 1, bar_height - 1], fill="black")
-            x += w
-            bar = not bar
+def _label_50x30_png(barcode: str, product_name: str) -> io.BytesIO:
+    """Render the exact same 400x240 bitmap used by ERP 50x30 direct printing."""
+    from PIL import Image
+    direct = __import__("rg_barcode_direct_print_v09257")
+    packed = direct._render_label({
+        "바코드": _text(barcode),
+        "상품명": _text(product_name),
+        "옵션명": "",
+    })
+    img = Image.frombytes(
+        "1",
+        (int(direct.LABEL_W), int(direct.LABEL_H)),
+        packed,
+        "raw",
+        "1",
+    ).convert("RGB")
     out = io.BytesIO()
     img.save(out, format="PNG")
     out.seek(0)
@@ -360,21 +358,21 @@ def build_instruction_xlsx(rows: list[dict]) -> bytes:
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         cell.border = border
     ws.row_dimensions[1].height = 56
-    for col, width in {"A": 15, "B": 38, "C": 19, "D": 11, "E": 43, "F": 42}.items():
+    for col, width in {"A": 15, "B": 38, "C": 19, "D": 11, "E": 47, "F": 42}.items():
         ws.column_dimensions[col].width = width
 
     for idx, row in enumerate(rows, start=2):
         ws.cell(idx, 1, row.get("order_no") or "")
         ws.cell(idx, 2, row.get("product_name") or "")
         ws.cell(idx, 4, int(row.get("label_qty") or 0))
-        ws.cell(idx, 5, f"{row.get('barcode','')}\n\n\n{row.get('product_name','')}\nMADE IN CHINA")
+        ws.cell(idx, 5, "")
         ws.cell(idx, 6, row.get("instruction") or "")
         for c in range(1, 7):
             cell = ws.cell(idx, c)
             cell.font = Font(name="맑은 고딕", size=10)
             cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
             cell.border = border
-        ws.row_dimensions[idx].height = 105
+        ws.row_dimensions[idx].height = 118
 
         img_bytes = row.get("image_bytes")
         if img_bytes:
@@ -387,13 +385,18 @@ def build_instruction_xlsx(rows: list[dict]) -> bytes:
                 pass
 
         try:
-            barcode_png = _barcode_png(_text(row.get("barcode")), scale=2, bar_height=52)
-            bimg = XLImage(barcode_png)
-            bimg.width = 220
-            bimg.height = 52
+            label_png = _label_50x30_png(
+                _text(row.get("barcode")),
+                _text(row.get("product_name")),
+            )
+            bimg = XLImage(label_png)
+            # Preserve the physical 50:30 label aspect ratio in the worksheet.
+            bimg.width = 250
+            bimg.height = 150
             ws.add_image(bimg, f"E{idx}")
-        except Exception:
-            pass
+        except Exception as exc:
+            # Do not silently substitute the old barcode-only layout.
+            ws.cell(idx, 5, f"5x3 라벨 이미지 생성 실패: {exc}")
 
     ws.freeze_panes = "A2"
     ws.sheet_view.showGridLines = False
@@ -430,7 +433,7 @@ def render_page(st, core):
     uploaded = st.file_uploader(
         "편집 완료한 중국 구매대행 발주서 Excel",
         type=["xlsx"],
-        key="coupang_label_instruction_v09291_upload",
+        key="coupang_label_instruction_v09292_upload",
     )
     if uploaded is None:
         return
@@ -475,7 +478,7 @@ def render_page(st, core):
             f"{item['발주상품명']} 쿠팡상품",
             options=choices,
             index=default_index,
-            key=f"coupang_label_instruction_v09291_match_{source_row}",
+            key=f"coupang_label_instruction_v09292_match_{source_row}",
             label_visibility="collapsed",
             placeholder="쿠팡 상품을 선택하세요",
         )
@@ -525,7 +528,7 @@ def render_page(st, core):
         hide_index=True,
         num_rows="fixed",
         height=min(760, max(300, 38 * (min(len(frame), 17) + 1))),
-        key="coupang_label_instruction_v09291_editor",
+        key="coupang_label_instruction_v09292_editor",
         disabled=["원본행", "발주상품명", "발주수량", "옵션ID", "쿠팡등록상품명", "바코드", "상태", "BOM구성수량"],
         column_config={
             "포함": st.column_config.CheckboxColumn("포함", width="small"),
@@ -554,7 +557,7 @@ def render_page(st, core):
             "쿠팡 라벨 작업지시서 만들기",
             disabled=True,
             use_container_width=True,
-            key="coupang_label_instruction_v09291_generate_disabled",
+            key="coupang_label_instruction_v09292_generate_disabled",
         )
         return
 
@@ -563,15 +566,15 @@ def render_page(st, core):
         "쿠팡 라벨 작업지시서 만들기",
         type="primary",
         use_container_width=True,
-        key="coupang_label_instruction_v09291_generate",
+        key="coupang_label_instruction_v09292_generate",
     ):
         try:
-            st.session_state["coupang_label_instruction_v09291_file"] = build_instruction_xlsx(rows)
+            st.session_state["coupang_label_instruction_v09292_file"] = build_instruction_xlsx(rows)
         except Exception as exc:
             st.error(f"작업지시서 생성 실패: {exc}")
             return
 
-    xlsx = st.session_state.get("coupang_label_instruction_v09291_file")
+    xlsx = st.session_state.get("coupang_label_instruction_v09292_file")
     if not xlsx:
         st.caption("위 버튼을 누르면 Excel 파일을 만든 뒤 다운로드 버튼이 나타납니다.")
         return
@@ -584,5 +587,5 @@ def render_page(st, core):
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         type="primary",
         use_container_width=True,
-        key="coupang_label_instruction_v09291_download",
+        key="coupang_label_instruction_v09292_download",
     )
