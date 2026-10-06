@@ -551,8 +551,29 @@ def render_confirmed_page(st_obj, pd_obj, core, db_path=None):
     c3.metric("입출고·배송비", _fmt_money(totals["inout"] + totals["delivery"]))
     c4.metric("반품비", _fmt_money(totals["returns"]))
 
+    # Product advertising cost is not itemized in the monthly ad settlement.
+    # Use the monthly advertising-performance report's option-ID proportions and
+    # scale them to the month's exact billable advertising total.
+    ad_items = {}
+    ad_report_total = 0.0
+    try:
+        import provisional_ad_report_v0956 as _ad_report
+        ad_dataset = _ad_report.load_month(core, month, db)
+        ad_items = dict((ad_dataset or {}).get("items") or {})
+        ad_report_total = abs(_num((ad_dataset or {}).get("total")))
+    except Exception:
+        ad_dataset = {}
+
+    billable_ad_total = abs(_num(totals.get("ad")))
+    ad_scale = (billable_ad_total / ad_report_total) if ad_report_total > 1e-12 else 0.0
+    ad_by_oid = {
+        _oid(oid): abs(_num(item.get("ad_spend"))) * ad_scale
+        for oid, item in ad_items.items()
+        if _oid(oid)
+    }
+
     by_id, _ = _product_master(core, db)
-    rows = []
+    rows_by_oid = {}
     for _, r in mdf.iterrows():
         pid = int(_num(r.get("product_id"))) if "product_id" in mdf.columns else 0
         p = by_id.get(pid, {})
@@ -564,37 +585,91 @@ def render_confirmed_page(st_obj, pd_obj, core, db_path=None):
                     oid = _oid(r.get(col))
                     if oid:
                         break
+        oid = _oid(oid)
         rev = _num(r.get("realized_sales"))
         cogs = abs(_num(r.get("cogs")))
         comm = abs(_num(r.get("commission")))
         inout = abs(_num(r.get("inout")))
         delivery = abs(_num(r.get("delivery")))
         ret = abs(_num(r.get("return_pickup"))) + abs(_num(r.get("return_restock")))
-        rows.append(
+        x = rows_by_oid.setdefault(
+            oid,
             {
                 "옵션ID": oid,
                 "상품명": name,
-                "실현매출": rev,
-                "매출원가": cogs,
-                "판매수수료": comm,
-                "입출고비": inout,
-                "배송비": delivery,
-                "반품비": ret,
-                "광고전이익": rev - cogs - comm - inout - delivery - ret,
-            }
+                "실현매출": 0.0,
+                "매출원가": 0.0,
+                "판매수수료": 0.0,
+                "입출고비": 0.0,
+                "배송비": 0.0,
+                "반품비": 0.0,
+                "광고비": 0.0,
+                "이익": 0.0,
+            },
         )
-    view = pd_obj.DataFrame(rows)
+        if not x["상품명"] and name:
+            x["상품명"] = name
+        x["실현매출"] += rev
+        x["매출원가"] += cogs
+        x["판매수수료"] += comm
+        x["입출고비"] += inout
+        x["배송비"] += delivery
+        x["반품비"] += ret
+
+    # Include advertised options even when they had no settlement sales row.
+    master_by_oid = {p.get("oid", ""): p.get("name", "") for p in by_id.values() if p.get("oid")}
+    for oid, ad in ad_by_oid.items():
+        if oid not in rows_by_oid:
+            item = ad_items.get(oid) or {}
+            rows_by_oid[oid] = {
+                "옵션ID": oid,
+                "상품명": master_by_oid.get(oid) or str(item.get("product_name") or f"광고집행 옵션 {oid}"),
+                "실현매출": 0.0,
+                "매출원가": 0.0,
+                "판매수수료": 0.0,
+                "입출고비": 0.0,
+                "배송비": 0.0,
+                "반품비": 0.0,
+                "광고비": 0.0,
+                "이익": 0.0,
+            }
+
+    for oid, x in rows_by_oid.items():
+        ad = abs(_num(ad_by_oid.get(oid, 0.0)))
+        x["광고비"] = ad
+        x["이익"] = (
+            _num(x["실현매출"])
+            - abs(_num(x["매출원가"]))
+            - abs(_num(x["판매수수료"]))
+            - abs(_num(x["입출고비"]))
+            - abs(_num(x["배송비"]))
+            - abs(_num(x["반품비"]))
+            - ad
+        )
+
+    view = pd_obj.DataFrame(list(rows_by_oid.values()))
     q = st_obj.text_input(
         "상품 검색", placeholder="상품명 또는 옵션ID 입력", key="confirmed_pnl_search_v0912"
     )
     view = _search_filter(view, q)
-    money_cols = ["실현매출", "매출원가", "판매수수료", "입출고비", "배송비", "반품비", "광고전이익"]
+    money_cols = ["실현매출", "매출원가", "판매수수료", "입출고비", "배송비", "반품비", "광고비", "이익"]
     show = view.copy()
     for col in money_cols:
         if col in show.columns:
             show[col] = show[col].map(_fmt_money)
     st_obj.dataframe(show, use_container_width=True, hide_index=True, height=min(700, max(220, 38 * (len(show) + 1))))
-    st_obj.caption("상품별 광고비가 월 정산서에서 직접 귀속되지 않는 경우 상품표는 광고전이익으로 표시하고, 최종 광고비와 최종이익은 상단 월 합계에 반영합니다.")
+    if billable_ad_total > 0 and ad_report_total > 0:
+        st_obj.caption(
+            f"상품별 광고비는 광고성과보고서의 옵션ID별 광고비 비율로 월 청구가능 광고비 "
+            f"{_fmt_money(billable_ad_total)}를 배분했습니다. 이익은 광고비까지 차감한 확정이익입니다."
+        )
+    elif billable_ad_total > 0:
+        st_obj.warning(
+            "월 청구가능 광고비는 있으나 해당 월 광고성과보고서가 없어 상품별 광고비를 배분하지 못했습니다. "
+            "상품별 광고비는 0원으로 표시되며, 상단 최종이익에는 월 광고비 총액이 반영되어 있습니다."
+        )
+    else:
+        st_obj.caption("이익은 상품별 광고비까지 차감한 확정이익입니다.")
 
 
 def render_variance_page(st_obj, pd_obj, core, db_path=None):
