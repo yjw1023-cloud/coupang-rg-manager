@@ -1,4 +1,4 @@
-"""RG Manager v0.9.289 — Coupang label work-instruction workbook generator.
+"""RG Manager v0.9.290 — Coupang label work-instruction workbook generator.
 
 User uploads the edited China purchasing/order workbook. The page extracts the
 rows, links them to ERP RG/BOM products, lets the user correct option IDs / label
@@ -212,6 +212,17 @@ def _load_erp(core) -> tuple[list[dict], dict[str, dict]]:
     return finished, by_oid
 
 
+def _product_choices(core) -> tuple[list[str], dict[str, str]]:
+    finished, _by_oid = _load_erp(core)
+    choices = [""]
+    choice_to_oid: dict[str, str] = {}
+    for p in sorted(finished, key=lambda x: (x.get("name") or "", x.get("option_id") or "")):
+        label = f"{p['option_id']} | {p['name']}"
+        choices.append(label)
+        choice_to_oid[label] = p["option_id"]
+    return choices, choice_to_oid
+
+
 def _rank_for_source(source_name: str, finished: list[dict]) -> list[tuple[float, dict, float]]:
     ranked = []
     for p in finished:
@@ -252,6 +263,7 @@ def prepare_rows(core, source_rows: list[dict]) -> list[dict]:
             "주문번호": src["order_no"],
             "발주상품명": src["source_name"],
             "발주수량": src["purchase_qty"],
+            "쿠팡상품 선택": f"{oid} | {rg_name}" if oid and rg_name else "",
             "옵션ID": oid,
             "쿠팡등록상품명": rg_name,
             "바코드": barcode,
@@ -267,14 +279,16 @@ def prepare_rows(core, source_rows: list[dict]) -> list[dict]:
 
 def _resolve_editor_rows(core, edited_rows: list[dict], prepared_rows: list[dict]) -> tuple[list[dict], list[str]]:
     _finished, by_oid = _load_erp(core)
+    _choices, choice_to_oid = _product_choices(core)
     source_map = {int(r["원본행"]): r for r in prepared_rows}
     result, errors = [], []
     for row in edited_rows:
         if not bool(row.get("포함", True)):
             continue
-        oid = _oid(row.get("옵션ID"))
+        selected = _text(row.get("쿠팡상품 선택"))
+        oid = choice_to_oid.get(selected) or _oid(row.get("옵션ID"))
         if not oid or oid not in by_oid:
-            errors.append(f"{_text(row.get('발주상품명'))}: ERP에 등록된 쿠팡 옵션ID를 입력해 주세요.")
+            errors.append(f"{_text(row.get('발주상품명'))}: '쿠팡상품 선택'에서 올바른 상품을 선택해 주세요.")
             continue
         product = by_oid[oid]
         barcode = _text(row.get("바코드")) or _text(product.get("barcode"))
@@ -418,7 +432,7 @@ def render_page(st, core):
     uploaded = st.file_uploader(
         "편집 완료한 중국 구매대행 발주서 Excel",
         type=["xlsx"],
-        key="coupang_label_instruction_v09289_upload",
+        key="coupang_label_instruction_v09290_upload",
     )
     if uploaded is None:
         return
@@ -436,9 +450,10 @@ def render_page(st, core):
     c2.metric("자동 매칭", f"{auto_count:,}개")
     c3.metric("확인 필요", f"{len(prepared)-auto_count:,}개")
 
+    choices, _choice_to_oid = _product_choices(core)
     frame = pd.DataFrame([{k: v for k, v in r.items() if k != "image_bytes"} for r in prepared])
     columns = [
-        "포함", "원본행", "주문번호", "발주상품명", "발주수량", "옵션ID",
+        "포함", "원본행", "주문번호", "발주상품명", "발주수량", "쿠팡상품 선택", "옵션ID",
         "쿠팡등록상품명", "바코드", "BOM구성수량", "라벨수량", "작업요청사항", "추천후보", "상태",
     ]
     frame = frame[[c for c in columns if c in frame.columns]]
@@ -448,14 +463,20 @@ def render_page(st, core):
         hide_index=True,
         num_rows="fixed",
         height=min(760, max(300, 38 * (min(len(frame), 17) + 1))),
-        key="coupang_label_instruction_v09289_editor",
-        disabled=["원본행", "발주상품명", "발주수량", "추천후보", "상태", "BOM구성수량"],
+        key="coupang_label_instruction_v09290_editor",
+        disabled=["원본행", "발주상품명", "발주수량", "옵션ID", "쿠팡등록상품명", "바코드", "추천후보", "상태", "BOM구성수량"],
         column_config={
             "포함": st.column_config.CheckboxColumn("포함", width="small"),
+            "쿠팡상품 선택": st.column_config.SelectboxColumn(
+                "쿠팡상품 선택",
+                options=choices,
+                width="large",
+                help="자동 매칭이 틀리면 이 칸을 눌러 올바른 ERP 로켓그로스 상품을 선택하세요.",
+            ),
             "원본행": st.column_config.NumberColumn("원본행", width="small"),
             "발주상품명": st.column_config.TextColumn("발주상품명", width="large"),
             "발주수량": st.column_config.NumberColumn("발주수량", width="small"),
-            "옵션ID": st.column_config.TextColumn("쿠팡 옵션ID", width="medium", help="자동 매칭이 틀리면 ERP에 등록된 옵션ID로 수정하세요."),
+            "옵션ID": st.column_config.TextColumn("쿠팡 옵션ID", width="medium"),
             "쿠팡등록상품명": st.column_config.TextColumn("쿠팡 등록상품명", width="large"),
             "바코드": st.column_config.TextColumn("바코드", width="medium"),
             "BOM구성수량": st.column_config.NumberColumn("구성수량", width="small"),
@@ -467,26 +488,46 @@ def render_page(st, core):
     )
 
     rows, errors = _resolve_editor_rows(core, _records(edited), prepared)
+
+    st.divider()
+    st.subheader("작업지시서 출력")
     if errors:
-        st.warning("출력 전에 확인이 필요한 항목이 있습니다.")
+        st.warning("아래 확인 필요 항목을 먼저 수정하면 출력 버튼이 활성화됩니다.")
         for msg in errors[:12]:
             st.caption("• " + msg)
+        st.button(
+            "쿠팡 라벨 작업지시서 만들기",
+            disabled=True,
+            use_container_width=True,
+            key="coupang_label_instruction_v09290_generate_disabled",
+        )
         return
 
     st.success(f"출력 준비 완료: {len(rows):,}개 품목 / 라벨 {sum(r['label_qty'] for r in rows):,}장")
-    try:
-        xlsx = build_instruction_xlsx(rows)
-    except Exception as exc:
-        st.error(f"작업지시서 생성 실패: {exc}")
+    if st.button(
+        "쿠팡 라벨 작업지시서 만들기",
+        type="primary",
+        use_container_width=True,
+        key="coupang_label_instruction_v09290_generate",
+    ):
+        try:
+            st.session_state["coupang_label_instruction_v09290_file"] = build_instruction_xlsx(rows)
+        except Exception as exc:
+            st.error(f"작업지시서 생성 실패: {exc}")
+            return
+
+    xlsx = st.session_state.get("coupang_label_instruction_v09290_file")
+    if not xlsx:
+        st.caption("위 버튼을 누르면 Excel 파일을 만든 뒤 다운로드 버튼이 나타납니다.")
         return
 
     base = re.sub(r"\.[Xx][Ll][Ss][Xx]$", "", getattr(uploaded, "name", "발주서"))
     st.download_button(
-        "쿠팡 라벨 작업지시 Excel 다운로드",
+        "Excel 다운로드",
         data=xlsx,
         file_name=f"{base}_쿠팡라벨작업지시.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         type="primary",
         use_container_width=True,
-        key="coupang_label_instruction_v09289_download",
+        key="coupang_label_instruction_v09290_download",
     )
