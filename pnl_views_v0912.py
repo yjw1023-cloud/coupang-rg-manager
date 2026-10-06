@@ -572,6 +572,15 @@ def render_confirmed_page(st_obj, pd_obj, core, db_path=None):
         if _oid(oid)
     }
 
+    # Gross sales quantity comes from the same imported sales-stat source used
+    # by the monthly provisional P&L, keyed by Coupang option ID.
+    qty_by_oid = {}
+    try:
+        import sales_quantity_v0965 as _sales_qty
+        qty_by_oid, _qty_meta = _sales_qty.month_counts(core, db, month)
+    except Exception:
+        qty_by_oid = {}
+
     by_id, _ = _product_master(core, db)
     rows_by_oid = {}
     for _, r in mdf.iterrows():
@@ -597,6 +606,7 @@ def render_confirmed_page(st_obj, pd_obj, core, db_path=None):
             {
                 "옵션ID": oid,
                 "상품명": name,
+                "판매수량": 0.0,
                 "실현매출": 0.0,
                 "매출원가": 0.0,
                 "판매수수료": 0.0,
@@ -609,6 +619,7 @@ def render_confirmed_page(st_obj, pd_obj, core, db_path=None):
         )
         if not x["상품명"] and name:
             x["상품명"] = name
+        x["판매수량"] = _num((qty_by_oid.get(oid) or {}).get("sales_qty"))
         x["실현매출"] += rev
         x["매출원가"] += cogs
         x["판매수수료"] += comm
@@ -624,6 +635,7 @@ def render_confirmed_page(st_obj, pd_obj, core, db_path=None):
             rows_by_oid[oid] = {
                 "옵션ID": oid,
                 "상품명": master_by_oid.get(oid) or str(item.get("product_name") or f"광고집행 옵션 {oid}"),
+                "판매수량": _num((qty_by_oid.get(oid) or {}).get("sales_qty")),
                 "실현매출": 0.0,
                 "매출원가": 0.0,
                 "판매수수료": 0.0,
@@ -647,6 +659,26 @@ def render_confirmed_page(st_obj, pd_obj, core, db_path=None):
             - ad
         )
 
+    # Quantity-only products are also useful to see even if settlement/ad rows
+    # are absent, so include them with zero financials.
+    for oid, qinfo in qty_by_oid.items():
+        oid = _oid(oid)
+        if not oid or oid in rows_by_oid:
+            continue
+        rows_by_oid[oid] = {
+            "옵션ID": oid,
+            "상품명": master_by_oid.get(oid) or "",
+            "판매수량": _num(qinfo.get("sales_qty")),
+            "실현매출": 0.0,
+            "매출원가": 0.0,
+            "판매수수료": 0.0,
+            "입출고비": 0.0,
+            "배송비": 0.0,
+            "반품비": 0.0,
+            "광고비": abs(_num(ad_by_oid.get(oid, 0.0))),
+            "이익": -abs(_num(ad_by_oid.get(oid, 0.0))),
+        }
+
     view = pd_obj.DataFrame(list(rows_by_oid.values()))
     q = st_obj.text_input(
         "상품 검색", placeholder="상품명 또는 옵션ID 입력", key="confirmed_pnl_search_v0912"
@@ -654,6 +686,8 @@ def render_confirmed_page(st_obj, pd_obj, core, db_path=None):
     view = _search_filter(view, q)
     money_cols = ["실현매출", "매출원가", "판매수수료", "입출고비", "배송비", "반품비", "광고비", "이익"]
     show = view.copy()
+    if "판매수량" in show.columns:
+        show["판매수량"] = show["판매수량"].map(_fmt_qty)
     for col in money_cols:
         if col in show.columns:
             show[col] = show[col].map(_fmt_money)
