@@ -47,6 +47,7 @@ with _RG_IMPORT_LOCK:
         "purchase_new_item_persist_v09136",
         "requested_product_seed_v09133",
         "rubber_glove_seed_v09161",
+        "rubber_glove_xl_seed_v09296",
         "coupang_api_sync_v09140",
         "goal_excel_upload_v0984",
         "sales_analysis_v09186",
@@ -204,6 +205,11 @@ REQUESTED_PRODUCT_SEED_V09133_RESULT = requested_product_seed_v09133.apply(core)
 # updater refresh does not require a full Python restart.
 rubber_glove_seed_v09161 = _original_import_module("rubber_glove_seed_v09161")
 RUBBER_GLOVE_SEED_V09161_RESULT = rubber_glove_seed_v09161.apply(core)
+
+# v0.9.296: register the XL rubber-glove RG finished product only.
+# The XL raw material has not been imported yet, so BOM/cost remain intentionally unset.
+rubber_glove_xl_seed_v09296 = _original_import_module("rubber_glove_xl_seed_v09296")
+RUBBER_GLOVE_XL_SEED_V09296_RESULT = rubber_glove_xl_seed_v09296.apply(core)
 
 # v0.9.44 dedicated item deletion / manual return-option cleanup page.
 item_delete_ui_v0944 = _original_import_module("item_delete_ui_v0944")
