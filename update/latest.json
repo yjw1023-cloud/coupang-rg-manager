@@ -1,6 +1,6 @@
 {
-  "version": "0.9.295",
-  "message": "쿠팡 라벨 작업지시 Excel의 B열 '옵션'을 수정했습니다. 이제 중국 발주서의 짧은 상품명이 아니라 쿠팡에 등록된 풀 상품명과 옵션명을 합쳐 표시합니다. rg_barcode_master의 product_name/option_name을 우선 사용하고, ERP 완제품명이 더 완전한 경우 그 이름을 사용합니다.",
+  "version": "0.9.296",
+  "message": "고무장갑 XL(특대) 옵션 96150451576을 ERP 완제품으로 등록하도록 추가했습니다. 기존 S/M/L과 같은 RG 완제품 형식으로 등록되며, XL 원재료는 아직 수입 전이므로 BOM과 원가는 만들지 않고 비워둡니다.",
   "files": [
     "VERSION.txt",
     "app.py",
@@ -31,6 +31,7 @@
     "product_visibility_v0995.py",
     "return_discount_v099.py",
     "return_sale_confirm_v09195.py",
-    "coupang_label_instruction_v09289.py"
+    "coupang_label_instruction_v09289.py",
+    "rubber_glove_xl_seed_v09296.py"
   ]
 }
