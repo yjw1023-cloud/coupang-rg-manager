@@ -1,6 +1,6 @@
 {
-  "version": "0.9.311",
-  "message": "업데이터 오류 수정: apply_update 내부의 지역 importlib 선언 때문에 GitHub 경로에서 importlib이 미할당 상태가 되어 업데이트가 실패하던 문제를 제거했습니다. 확정손익의 판매수량·광고비·광고비 차감 후 이익 수정본도 포함됩니다.",
+  "version": "0.9.320",
+  "message": "확정손익 수정 패키지를 각 파일의 Git blob SHA에 고정했습니다. 업데이트 중 GitHub branch/CDN이 서로 다른 시점을 보여도 혼합 버전을 설치하지 않으며, 판매수량·광고비·광고비 차감 후 이익이 포함된 정확한 파일만 설치합니다.",
   "files": [
     "VERSION.txt",
     "app.py",
@@ -8,5 +8,13 @@
     "update_check_v09246.py",
     "provisional_ad_report_v0956.py",
     "sales_quantity_v0965.py"
-  ]
+  ],
+  "blob_sha": {
+    "VERSION.txt": "0d457f7cf2bd78a92222d276001c952b02c783be",
+    "app.py": "b23c0b64438bea0a79cb621fee25528459ae7862",
+    "pnl_views_v0912.py": "39d136adf97ba8501d3492f23bed5c6ac214a809",
+    "update_check_v09246.py": "18885db549ddbdfd6a0e2332442c813b46bdeb61",
+    "provisional_ad_report_v0956.py": "1a28b7b20bd1aa9d10b467321c93d2a3f6328475",
+    "sales_quantity_v0965.py": "8a2d3b44bf86d5ef0fdae3bf70dc0cb1583c9439"
+  }
 }
