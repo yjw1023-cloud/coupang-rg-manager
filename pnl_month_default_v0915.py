@@ -175,6 +175,7 @@ def render_grouped_sidebar(st_obj, options, default_page=None):
     simple_margin = importlib.import_module("simple_margin_v09205")
     rg_product_bom = importlib.import_module("rg_product_bom_v09234")
     rg_barcode_page = importlib.import_module("rg_barcode_page_v09235")
+    label_instruction = importlib.import_module("coupang_label_instruction_v09289")
     growth = importlib.import_module("new_product_growth_v09274")
 
     # The grouped sidebar otherwise classifies unknown pages as Data/Admin.
@@ -185,6 +186,7 @@ def render_grouped_sidebar(st_obj, options, default_page=None):
     margin_label = str(simple_margin.PAGE_LABEL)
     rg_bom_label = str(rg_product_bom.PAGE_LABEL)
     barcode_label = str(rg_barcode_page.PAGE_LABEL)
+    label_instruction_label = str(label_instruction.PAGE_LABEL)
     growth_label = str(growth.PAGE_TEXT)
     groups = getattr(m, "_GROUPS", None)
     if isinstance(groups, list):
@@ -239,6 +241,20 @@ def render_grouped_sidebar(st_obj, options, default_page=None):
                     items.insert(insert_at, barcode_label)
                 break
 
+        # 쿠팡 라벨 작업지시는 재고·생산 업무 흐름에 둔다.
+        for title, items in groups:
+            if label_instruction_label in items and str(title) != "📦 재고·생산":
+                items[:] = [x for x in items if x != label_instruction_label]
+        for title, items in groups:
+            if str(title) == "📦 재고·생산":
+                if label_instruction_label not in items:
+                    insert_at = len(items)
+                    for idx, label in enumerate(items):
+                        if str(label) == barcode_label or "바코드" in str(label):
+                            insert_at = idx + 1
+                    items.insert(insert_at, label_instruction_label)
+                break
+
         # RG 신규상품 등록은 매입/상품 업무 흐름에 둔다.
         for title, items in groups:
             if rg_bom_label in items and str(title) != "🛒 매입·상품":
@@ -255,7 +271,7 @@ def render_grouped_sidebar(st_obj, options, default_page=None):
                 break
 
     runtime_options = [str(x) for x in list(options or [])]
-    for label in (overview.PAGE_LABEL, goals.PAGE_LABEL, sales_label, growth_label, margin_label, rg_bom_label, barcode_label):
+    for label in (overview.PAGE_LABEL, goals.PAGE_LABEL, sales_label, growth_label, margin_label, rg_bom_label, barcode_label, label_instruction_label):
         if label not in runtime_options:
             runtime_options.append(label)
 
@@ -284,6 +300,12 @@ def render_grouped_sidebar(st_obj, options, default_page=None):
         except Exception as exc:
             st_obj.error(f"바코드 인쇄 화면을 여는 중 오류가 발생했습니다: {exc}")
         return "__RG_BARCODE_PRINT_RENDERED__"
+    if current == label_instruction_label:
+        try:
+            label_instruction.render_page(st_obj, importlib.import_module("core"))
+        except Exception as exc:
+            st_obj.error(f"쿠팡 라벨 작업지시 화면을 여는 중 오류가 발생했습니다: {exc}")
+        return "__COUPANG_LABEL_INSTRUCTION_RENDERED__"
     return current
 
 
