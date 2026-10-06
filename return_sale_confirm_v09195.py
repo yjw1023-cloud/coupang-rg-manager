@@ -233,16 +233,35 @@ def list_pending(core, db=None) -> list[dict]:
     aliases = _alias_ids(core, db)
     normals = _normal_overrides(core, db)
     with core._conn(db) as c:
+        managed_rows = c.execute(
+            """SELECT DISTINCT CAST(p.option_id AS TEXT) AS option_id
+               FROM products p
+               WHERE p.item_type='finished'
+                 AND p.option_id IS NOT NULL
+                 AND EXISTS(
+                     SELECT 1 FROM bom_items b WHERE b.parent_product_id=p.id
+                 )"""
+        ).fetchall()
+        managed = {
+            _oid(r["option_id"]) for r in managed_rows if _oid(r["option_id"])
+        }
         rows = c.execute(
             f"""SELECT discount_option_id,discount_name,qty,net_sales_amount,
                        amount_known,reason,candidates_json,created_at,updated_at
                 FROM {_PENDING_TABLE}
                 ORDER BY updated_at DESC, discount_option_id"""
         ).fetchall()
+        # Old versions may already have staged a valid RG/BOM product as a
+        # return-resale candidate. Remove those stale warnings immediately.
+        for oid in managed:
+            c.execute(
+                f"DELETE FROM {_PENDING_TABLE} WHERE discount_option_id=?",
+                (oid,),
+            )
     out = []
     for r in rows:
         oid = _oid(r["discount_option_id"])
-        if not oid or oid in aliases or oid in normals:
+        if not oid or oid in aliases or oid in normals or oid in managed:
             continue
         try:
             candidates = json.loads(str(r["candidates_json"] or "[]"))
