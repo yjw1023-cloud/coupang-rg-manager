@@ -1,18 +1,20 @@
 {
-  "version": "0.9.320",
-  "message": "확정손익 수정 패키지를 각 파일의 Git blob SHA에 고정했습니다. 업데이트 중 GitHub branch/CDN이 서로 다른 시점을 보여도 혼합 버전을 설치하지 않으며, 판매수량·광고비·광고비 차감 후 이익이 포함된 정확한 파일만 설치합니다.",
+  "version": "0.9.321",
+  "message": "확정손익 화면을 기존 pnl_views_v0912.py에서 분리해 새 파일 pnl_views_v09321.py로 로딩하도록 변경했습니다. 기존 모듈은 새 모듈을 불러오는 호환 shim으로 바꿨고, 판매수량·광고비·광고비 차감 후 이익 표시가 새 모듈에 고정됩니다.",
   "files": [
     "VERSION.txt",
     "app.py",
     "pnl_views_v0912.py",
+    "pnl_views_v09321.py",
     "update_check_v09246.py",
     "provisional_ad_report_v0956.py",
     "sales_quantity_v0965.py"
   ],
   "blob_sha": {
-    "VERSION.txt": "0d457f7cf2bd78a92222d276001c952b02c783be",
-    "app.py": "b23c0b64438bea0a79cb621fee25528459ae7862",
-    "pnl_views_v0912.py": "39d136adf97ba8501d3492f23bed5c6ac214a809",
+    "VERSION.txt": "a21982d982083438d374eb8ecba3ce51112bc5f9",
+    "app.py": "95717a06ed28ffe018dd51371b705753d3ea8a8a",
+    "pnl_views_v0912.py": "dcc2b75d29e08b6301eb9e2469e58aa0f375ad6d",
+    "pnl_views_v09321.py": "39d136adf97ba8501d3492f23bed5c6ac214a809",
     "update_check_v09246.py": "18885db549ddbdfd6a0e2332442c813b46bdeb61",
     "provisional_ad_report_v0956.py": "1a28b7b20bd1aa9d10b467321c93d2a3f6328475",
     "sales_quantity_v0965.py": "8a2d3b44bf86d5ef0fdae3bf70dc0cb1583c9439"
