@@ -65,29 +65,13 @@ def _git_blob_sha(data: bytes) -> str:
 
 
 def _fetch_file(path: str, expected_blob_sha: str | None = None) -> bytes:
-    # When the manifest provides a Git blob SHA, fetch that immutable blob
-    # directly. This prevents a mixed-version update when branch/CDN snapshots
-    # briefly disagree after a release.
+    # Raw GitHub is the primary update transport. It is not subject to the
+    # unauthenticated REST API rate limit that previously broke update apply.
+    data = _fetch_raw(path)
     expected = str(expected_blob_sha or "").strip()
-    if expected:
-        obj = _request_json(f"https://api.github.com/repos/{REPO}/git/blobs/{expected}")
-        content = obj.get("content")
-        if not content:
-            raise RuntimeError(f"GitHub blob content missing: {path}")
-        data = base64.b64decode(content)
-        if _git_blob_sha(data) != expected:
-            raise RuntimeError(f"GitHub blob SHA verification failed: {path}")
-        return data
-
-    # Legacy fallback for manifests without pinned blob SHAs.
-    try:
-        obj = _request_json(f"{API_ROOT}/{path}?ref=main")
-        content = obj.get("content")
-        if content:
-            return base64.b64decode(content)
-    except Exception:
-        pass
-    return _fetch_raw(path)
+    if expected and _git_blob_sha(data) != expected:
+        raise RuntimeError(f"GitHub raw file SHA verification failed: {path}")
+    return data
 
 
 def _fetch_manifest_via_commit():
@@ -106,62 +90,25 @@ def _fetch_manifest_via_commit():
 
 
 def fetch_manifest(root=None):
-    """Read several independent GitHub paths and keep the newest manifest.
-
-    GitHub can briefly expose different branch snapshots through ref, contents,
-    and raw endpoints immediately after a commit. One click therefore checks all
-    available paths (with short retries) instead of trusting the first response.
-    """
-    candidates = []
+    """Fetch the update manifest without depending on GitHub REST API quota."""
     errors = []
-
     for attempt in range(3):
-        readers = (
-            _fetch_manifest_via_commit,
-            lambda: base64.b64decode(
-                _request_json(f"{API_ROOT}/update/latest.json?ref=main").get("content") or b""
-            ),
-            lambda: _fetch_raw("update/latest.json"),
-        )
-        for reader in readers:
-            try:
-                raw = reader()
-                if not raw:
-                    continue
-                manifest = json.loads(raw.decode("utf-8"))
-                if not isinstance(manifest, dict) or not manifest.get("version"):
-                    continue
-                files = manifest.get("files")
-                if not isinstance(files, list) or not files:
-                    continue
+        try:
+            raw = _fetch_raw("update/latest.json")
+            manifest = json.loads(raw.decode("utf-8"))
+            if (
+                isinstance(manifest, dict)
+                and manifest.get("version")
+                and isinstance(manifest.get("files"), list)
+                and manifest.get("files")
+            ):
                 manifest = dict(manifest)
                 manifest["_source"] = "github"
-                candidates.append(manifest)
-            except Exception as exc:
-                errors.append(str(exc))
-        if candidates:
-            newest = max(
-                candidates,
-                key=lambda m: (
-                    _version_tuple(m.get("version")),
-                    1 if str(m.get("_source") or "") == "github" else 0,
-                ),
-            )
-            # A second pass catches the short propagation window without making
-            # the user click repeatedly.
-            if attempt >= 1:
-                return newest
+                return manifest
+        except Exception as exc:
+            errors.append(str(exc))
         if attempt < 2:
             time.sleep(0.8)
-
-    if candidates:
-        return max(
-            candidates,
-            key=lambda m: (
-                _version_tuple(m.get("version")),
-                1 if str(m.get("_source") or "") == "github" else 0,
-            ),
-        )
     raise RuntimeError(
         "GitHub에서 최신 업데이트 정보를 확인하지 못했습니다."
         + (f" ({errors[-1]})" if errors else "")
