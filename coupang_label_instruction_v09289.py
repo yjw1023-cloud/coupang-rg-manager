@@ -1,4 +1,4 @@
-"""RG Manager v0.9.290 — Coupang label work-instruction workbook generator.
+"""RG Manager v0.9.291 — Coupang label work-instruction workbook generator.
 
 User uploads the edited China purchasing/order workbook. The page extracts the
 rows, links them to ERP RG/BOM products, lets the user correct option IDs / label
@@ -279,16 +279,14 @@ def prepare_rows(core, source_rows: list[dict]) -> list[dict]:
 
 def _resolve_editor_rows(core, edited_rows: list[dict], prepared_rows: list[dict]) -> tuple[list[dict], list[str]]:
     _finished, by_oid = _load_erp(core)
-    _choices, choice_to_oid = _product_choices(core)
     source_map = {int(r["원본행"]): r for r in prepared_rows}
     result, errors = [], []
     for row in edited_rows:
         if not bool(row.get("포함", True)):
             continue
-        selected = _text(row.get("쿠팡상품 선택"))
-        oid = choice_to_oid.get(selected) or _oid(row.get("옵션ID"))
+        oid = _oid(row.get("옵션ID"))
         if not oid or oid not in by_oid:
-            errors.append(f"{_text(row.get('발주상품명'))}: '쿠팡상품 선택'에서 올바른 상품을 선택해 주세요.")
+            errors.append(f"{_text(row.get('발주상품명'))}: 위 '쿠팡 상품 매칭'에서 올바른 상품을 선택해 주세요.")
             continue
         product = by_oid[oid]
         barcode = _text(row.get("바코드")) or _text(product.get("barcode"))
@@ -432,7 +430,7 @@ def render_page(st, core):
     uploaded = st.file_uploader(
         "편집 완료한 중국 구매대행 발주서 Excel",
         type=["xlsx"],
-        key="coupang_label_instruction_v09290_upload",
+        key="coupang_label_instruction_v09291_upload",
     )
     if uploaded is None:
         return
@@ -450,29 +448,87 @@ def render_page(st, core):
     c2.metric("자동 매칭", f"{auto_count:,}개")
     c3.metric("확인 필요", f"{len(prepared)-auto_count:,}개")
 
-    choices, _choice_to_oid = _product_choices(core)
-    frame = pd.DataFrame([{k: v for k, v in r.items() if k != "image_bytes"} for r in prepared])
+    choices, choice_to_oid = _product_choices(core)
+    _finished, by_oid = _load_erp(core)
+
+    st.subheader("쿠팡 상품 매칭")
+    st.caption(
+        "각 발주상품 오른쪽 선택상자를 눌러 연결할 쿠팡 상품을 직접 바꿀 수 있습니다. "
+        "상품명 일부를 입력하면 목록을 빠르게 검색할 수 있습니다."
+    )
+
+    selected_rows = []
+    for item in prepared:
+        source_row = int(item["원본행"])
+        default_choice = _text(item.get("쿠팡상품 선택"))
+        try:
+            default_index = choices.index(default_choice) if default_choice in choices else 0
+        except Exception:
+            default_index = 0
+
+        col_name, col_select = st.columns([1.05, 2.2], vertical_alignment="center")
+        col_name.markdown(
+            f"**{item['발주상품명']}**  \\n"
+            f"발주수량 {item['발주수량']:g} · 원본행 {source_row}"
+        )
+        selected_choice = col_select.selectbox(
+            f"{item['발주상품명']} 쿠팡상품",
+            options=choices,
+            index=default_index,
+            key=f"coupang_label_instruction_v09291_match_{source_row}",
+            label_visibility="collapsed",
+            placeholder="쿠팡 상품을 선택하세요",
+        )
+
+        row = dict(item)
+        row["쿠팡상품 선택"] = selected_choice or ""
+        oid = choice_to_oid.get(selected_choice or "", "")
+        if oid and oid in by_oid:
+            product = by_oid[oid]
+            row["옵션ID"] = oid
+            row["쿠팡등록상품명"] = _text(product.get("name"))
+            row["바코드"] = _text(product.get("barcode"))
+            # Recalculate BOM 구성/라벨수량 from the selected product and source item.
+            best_qty = 1.0
+            best_score = 0.0
+            for comp in product.get("components") or []:
+                score = _similarity(item["발주상품명"], _text(comp.get("component_name")))
+                if score > best_score:
+                    best_score = score
+                    best_qty = max(1.0, _num(comp.get("qty_per")) or 1.0)
+            row["BOM구성수량"] = best_qty
+            label_qty = _num(item["발주수량"]) / best_qty if best_qty > 0 else _num(item["발주수량"])
+            if abs(label_qty - round(label_qty)) < 1e-8:
+                label_qty = int(round(label_qty))
+            row["라벨수량"] = label_qty
+            row["상태"] = "선택 완료"
+        else:
+            row["옵션ID"] = ""
+            row["쿠팡등록상품명"] = ""
+            row["바코드"] = ""
+            row["상태"] = "옵션ID 확인 필요"
+        selected_rows.append(row)
+
+    st.divider()
+    st.subheader("출력 내용 확인 및 수정")
+    st.caption("상품 매칭 결과가 아래에 즉시 반영됩니다. 라벨수량과 작업요청사항은 여기서 수정할 수 있습니다.")
+
+    frame = pd.DataFrame([{k: v for k, v in r.items() if k != "image_bytes"} for r in selected_rows])
     columns = [
-        "포함", "원본행", "주문번호", "발주상품명", "발주수량", "쿠팡상품 선택", "옵션ID",
-        "쿠팡등록상품명", "바코드", "BOM구성수량", "라벨수량", "작업요청사항", "추천후보", "상태",
+        "포함", "원본행", "주문번호", "발주상품명", "발주수량", "옵션ID",
+        "쿠팡등록상품명", "바코드", "BOM구성수량", "라벨수량", "작업요청사항", "상태",
     ]
-    frame = frame[[c for c in columns if c in frame.columns]]
+    frame = frame[[col for col in columns if col in frame.columns]]
     edited = st.data_editor(
         frame,
         use_container_width=True,
         hide_index=True,
         num_rows="fixed",
         height=min(760, max(300, 38 * (min(len(frame), 17) + 1))),
-        key="coupang_label_instruction_v09290_editor",
-        disabled=["원본행", "발주상품명", "발주수량", "옵션ID", "쿠팡등록상품명", "바코드", "추천후보", "상태", "BOM구성수량"],
+        key="coupang_label_instruction_v09291_editor",
+        disabled=["원본행", "발주상품명", "발주수량", "옵션ID", "쿠팡등록상품명", "바코드", "상태", "BOM구성수량"],
         column_config={
             "포함": st.column_config.CheckboxColumn("포함", width="small"),
-            "쿠팡상품 선택": st.column_config.SelectboxColumn(
-                "쿠팡상품 선택",
-                options=choices,
-                width="large",
-                help="자동 매칭이 틀리면 이 칸을 눌러 올바른 ERP 로켓그로스 상품을 선택하세요.",
-            ),
             "원본행": st.column_config.NumberColumn("원본행", width="small"),
             "발주상품명": st.column_config.TextColumn("발주상품명", width="large"),
             "발주수량": st.column_config.NumberColumn("발주수량", width="small"),
@@ -482,7 +538,6 @@ def render_page(st, core):
             "BOM구성수량": st.column_config.NumberColumn("구성수량", width="small"),
             "라벨수량": st.column_config.NumberColumn("라벨수량", min_value=1, step=1, width="small"),
             "작업요청사항": st.column_config.TextColumn("작업요청사항", width="large"),
-            "추천후보": st.column_config.TextColumn("추천후보", width="large"),
             "상태": st.column_config.TextColumn("상태", width="small"),
         },
     )
@@ -499,7 +554,7 @@ def render_page(st, core):
             "쿠팡 라벨 작업지시서 만들기",
             disabled=True,
             use_container_width=True,
-            key="coupang_label_instruction_v09290_generate_disabled",
+            key="coupang_label_instruction_v09291_generate_disabled",
         )
         return
 
@@ -508,15 +563,15 @@ def render_page(st, core):
         "쿠팡 라벨 작업지시서 만들기",
         type="primary",
         use_container_width=True,
-        key="coupang_label_instruction_v09290_generate",
+        key="coupang_label_instruction_v09291_generate",
     ):
         try:
-            st.session_state["coupang_label_instruction_v09290_file"] = build_instruction_xlsx(rows)
+            st.session_state["coupang_label_instruction_v09291_file"] = build_instruction_xlsx(rows)
         except Exception as exc:
             st.error(f"작업지시서 생성 실패: {exc}")
             return
 
-    xlsx = st.session_state.get("coupang_label_instruction_v09290_file")
+    xlsx = st.session_state.get("coupang_label_instruction_v09291_file")
     if not xlsx:
         st.caption("위 버튼을 누르면 Excel 파일을 만든 뒤 다운로드 버튼이 나타납니다.")
         return
@@ -529,5 +584,5 @@ def render_page(st, core):
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         type="primary",
         use_container_width=True,
-        key="coupang_label_instruction_v09290_download",
+        key="coupang_label_instruction_v09291_download",
     )
