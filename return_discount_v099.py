@@ -148,7 +148,13 @@ def _ensure_schema(core, db):
 
 def _load_products(core, db):
     with core._conn(db) as c:
-        rows = c.execute("SELECT id,item_code,option_id,name,unit_cost,active FROM products").fetchall()
+        rows = c.execute(
+            """SELECT p.id,p.item_code,p.option_id,p.name,p.unit_cost,p.active,p.item_type,
+                      CASE WHEN EXISTS(
+                          SELECT 1 FROM bom_items b WHERE b.parent_product_id=p.id
+                      ) THEN 1 ELSE 0 END AS has_bom
+               FROM products p"""
+        ).fetchall()
     return [{
         "id": int(r["id"]),
         "item_code": str(r["item_code"] or ""),
@@ -157,10 +163,18 @@ def _load_products(core, db):
         "name_key": _name_key(r["name"]),
         "unit_cost": _num(r["unit_cost"]),
         "active": int(r["active"] or 0),
+        "item_type": str(r["item_type"] or ""),
+        "has_bom": bool(r["has_bom"]),
     } for r in rows]
 
 
 def _placeholder(p):
+    # RG상품/BOM 등록 메뉴에서 확정 등록된 완제품은 item_code가 CP-옵션ID이고
+    # 완제품 원가는 BOM에서 계산되므로 products.unit_cost가 0일 수 있다.
+    # 이 정상 RG 완제품을 반품 할인판매용 임시 placeholder로 오인하지 않는다.
+    if str(p.get("item_type") or "") == "finished" and bool(p.get("has_bom")):
+        return False
+
     oid = p.get("option_id", "")
     code = p.get("item_code", "")
     return bool(
