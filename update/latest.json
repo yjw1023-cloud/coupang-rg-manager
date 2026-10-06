@@ -1,6 +1,6 @@
 {
-  "version": "0.9.322",
-  "message": "업데이트 적용 시 GitHub REST API rate limit(403)에 걸리던 문제를 제거했습니다. 최신 버전 확인과 파일 다운로드를 raw.githubusercontent.com 경로로 처리합니다. 확정손익은 새 모듈 pnl_views_v09321.py를 사용하며 판매수량·광고비·광고비 차감 후 이익을 표시합니다.",
+  "version": "0.9.323",
+  "message": "322에서 발생한 시작 오류를 수정했습니다. pnl_views_v0912.py를 shim이 아니라 전체 구현으로 복구해 _ensure_schema 등 기존 패치가 기대하는 내부 함수까지 모두 유지합니다. 확정손익의 판매수량·광고비·광고비 차감 후 이익 수정도 그대로 포함됩니다.",
   "files": [
     "VERSION.txt",
     "app.py",
