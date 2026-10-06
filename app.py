@@ -36,6 +36,7 @@ with _RG_IMPORT_LOCK:
     for _rg_mod in (
         "pnl_month_default_v0915",
         "pnl_views_v0912",
+        "pnl_views_v09321",
         "pnl_month_v0959",
         "pnl_month_v0960",
         "pnl_month_v0961",
