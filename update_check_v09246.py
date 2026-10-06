@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import ast
 import base64
+import hashlib
 import urllib.error
 import json
 import os
@@ -59,10 +60,26 @@ def _fetch_raw(path: str) -> bytes:
         return resp.read()
 
 
-def _fetch_file(path: str) -> bytes:
-    # Prefer the GitHub Contents API when available, but automatically fall back
-    # to raw.githubusercontent.com when the unauthenticated API rate limit is
-    # exhausted (HTTP 403) or the API is otherwise temporarily unavailable.
+def _git_blob_sha(data: bytes) -> str:
+    return hashlib.sha1(b"blob " + str(len(data)).encode("ascii") + b"\0" + data).hexdigest()
+
+
+def _fetch_file(path: str, expected_blob_sha: str | None = None) -> bytes:
+    # When the manifest provides a Git blob SHA, fetch that immutable blob
+    # directly. This prevents a mixed-version update when branch/CDN snapshots
+    # briefly disagree after a release.
+    expected = str(expected_blob_sha or "").strip()
+    if expected:
+        obj = _request_json(f"https://api.github.com/repos/{REPO}/git/blobs/{expected}")
+        content = obj.get("content")
+        if not content:
+            raise RuntimeError(f"GitHub blob content missing: {path}")
+        data = base64.b64decode(content)
+        if _git_blob_sha(data) != expected:
+            raise RuntimeError(f"GitHub blob SHA verification failed: {path}")
+        return data
+
+    # Legacy fallback for manifests without pinned blob SHAs.
     try:
         obj = _request_json(f"{API_ROOT}/{path}?ref=main")
         content = obj.get("content")
@@ -181,6 +198,7 @@ def _safe_target(root: Path, rel: str) -> Path:
 
 def apply_update(root: Path, manifest):
     files = [str(x) for x in manifest.get("files") or []]
+    blob_map = dict(manifest.get("blob_sha") or {})
     staging = Path(tempfile.mkdtemp(prefix="rg_update_", dir=str(root)))
     backup = root / "_code_backup"
     backup.mkdir(parents=True, exist_ok=True)
@@ -193,7 +211,10 @@ def apply_update(root: Path, manifest):
                 drive = importlib.import_module("drive_update_fallback_v09286")
                 payload = drive.read_file(root, rel)
             else:
-                payload = _fetch_file(rel)
+                expected_blob = str(blob_map.get(rel) or "").strip()
+                if blob_map and not expected_blob:
+                    raise RuntimeError(f"업데이트 무결성 정보가 없습니다: {rel}")
+                payload = _fetch_file(rel, expected_blob or None)
             staged = staging / rel
             staged.parent.mkdir(parents=True, exist_ok=True)
             staged.write_bytes(payload)
