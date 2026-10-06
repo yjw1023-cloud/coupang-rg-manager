@@ -190,7 +190,6 @@ def apply_update(root: Path, manifest):
         for rel in files:
             target = _safe_target(root, rel)
             if source == "drive":
-                import importlib
                 drive = importlib.import_module("drive_update_fallback_v09286")
                 payload = drive.read_file(root, rel)
             else:
@@ -250,7 +249,7 @@ def render(st, root):
     clicked = st.button("최신 버전 확인", use_container_width=True, key="rg_direct_update_check_v09246")
     if clicked:
         try:
-            with st.spinner("GitHub와 Google Drive에서 최신 버전을 확인하고 있습니다..."):
+            with st.spinner("GitHub에서 최신 버전을 확인하고 있습니다..."):
                 manifest = fetch_manifest(root)
             st.session_state[_STATE] = manifest
         except Exception as exc:
