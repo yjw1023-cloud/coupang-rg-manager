@@ -1,6 +1,6 @@
 {
-  "version": "0.9.287",
-  "message": "10월 잠정손익에서 잘못된 피아노커버 행 전체를 화이트 PEVA 테이블보(96089460574)로 이전해 수량·매출·비용·손익을 함께 복구합니다. 피아노커버 마스터는 이름만 바꾸지 않고 실제 비활성+숨김 처리하며, 화이트 테이블보는 숨김 해제합니다. 업데이트 확인은 GitHub와 Google Drive 폴백을 지원합니다.",
+  "version": "0.9.288",
+  "message": "판매통계 첫 판매 시 이미 ERP의 RG상품/BOM 등록으로 확정된 정상 신상품을 반품 재판매로 오인하던 문제를 수정했습니다. item_code가 CP-옵션ID이고 unit_cost가 0이어도 BOM이 연결된 finished 상품은 정상 RG 상품으로 처리하며, 이전 버전에서 잘못 생성된 반품 재판매 확인 알림도 자동 정리합니다.",
   "files": [
     "VERSION.txt",
     "app.py",
@@ -28,6 +28,8 @@
     "tablecloth_white_repair_v09285.py",
     "drive_update_fallback_v09286.py",
     "sales_quantity_v0965.py",
-    "product_visibility_v0995.py"
+    "product_visibility_v0995.py",
+    "return_discount_v099.py",
+    "return_sale_confirm_v09195.py"
   ]
 }
