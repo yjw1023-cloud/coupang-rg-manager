@@ -98,16 +98,6 @@ def fetch_manifest(root=None):
     candidates = []
     errors = []
 
-    if root is not None:
-        try:
-            import importlib
-            drive = importlib.import_module("drive_update_fallback_v09286")
-            dm = drive.manifest(root)
-            if dm:
-                candidates.append(dm)
-        except Exception as exc:
-            errors.append("Drive: " + str(exc))
-
     for attempt in range(3):
         readers = (
             _fetch_manifest_via_commit,
@@ -222,6 +212,9 @@ def apply_update(root: Path, manifest):
             tmp = target.with_suffix(target.suffix + ".tmp")
             shutil.copy2(staged, tmp)
             os.replace(tmp, target)
+            # Verify that the bytes on disk are exactly the bytes downloaded.
+            if target.read_bytes() != staged.read_bytes():
+                raise RuntimeError(f"업데이트 파일 검증 실패: {_rel}")
 
         # Streamlit reruns do not guarantee that already-imported Python modules
         # are reloaded from the newly written source files. Reload every updated
