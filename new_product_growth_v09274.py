@@ -82,6 +82,74 @@ def _ensure_schema(core, db):
 
 
 
+def _growth_option_evidence(c, oid: str) -> str | None:
+    """Earliest observed order/sales/ad period for an option, regardless of product_id."""
+    dates = []
+    if _exists(c, "sales_stats") and _exists(c, "imports"):
+        cols = _cols(c, "sales_stats")
+        if {"option_id", "import_id"}.issubset(cols):
+            rows = c.execute(
+                """SELECT s.option_id, MIN(i.period_start) AS d
+                   FROM sales_stats s JOIN imports i ON i.id=s.import_id
+                   WHERE i.data_type='sales_stats' AND i.period_start IS NOT NULL
+                   GROUP BY s.option_id"""
+            ).fetchall()
+            dates.extend(str(r["d"])[:10] for r in rows if _oid(r["option_id"]) == oid and r["d"])
+    if _exists(c, "ad_performance") and _exists(c, "imports"):
+        cols = _cols(c, "ad_performance")
+        if {"option_id", "import_id"}.issubset(cols):
+            rows = c.execute(
+                """SELECT a.option_id, MIN(i.period_start) AS d
+                   FROM ad_performance a JOIN imports i ON i.id=a.import_id
+                   WHERE i.data_type='ad_performance' AND i.period_start IS NOT NULL
+                   GROUP BY a.option_id"""
+            ).fetchall()
+            dates.extend(str(r["d"])[:10] for r in rows if _oid(r["option_id"]) == oid and r["d"])
+    if _exists(c, "coupang_rg_order_items"):
+        cols = _cols(c, "coupang_rg_order_items")
+        if {"option_id", "paid_date"}.issubset(cols):
+            rows = c.execute(
+                "SELECT option_id,MIN(paid_date) d FROM coupang_rg_order_items WHERE paid_date IS NOT NULL GROUP BY option_id"
+            ).fetchall()
+            dates.extend(str(r["d"])[:10] for r in rows if _oid(r["option_id"]) == oid and r["d"])
+    return min(dates) if dates else None
+
+
+def _growth_return_or_placeholder(c, row) -> bool:
+    pid = int(row["id"])
+    oid = _oid(row["option_id"])
+    code = _oid(row["item_code"])
+    if not oid or (code == oid and _num(row["unit_cost"]) <= 0):
+        return True
+    if _exists(c, "return_alias_user_confirmations"):
+        aliases = c.execute("SELECT discount_option_id FROM return_alias_user_confirmations").fetchall()
+        if any(_oid(x["discount_option_id"]) == oid for x in aliases):
+            return True
+    if _exists(c, "system_hidden_products"):
+        if c.execute("SELECT 1 FROM system_hidden_products WHERE product_id=?", (pid,)).fetchone():
+            return True
+    return False
+
+
+def _cleanup_growth_auto_entries(core, db) -> int:
+    """Delete only demonstrably invalid *automatic* entries; leave manual settings untouched."""
+    removed = 0
+    with core._conn(db) as c:
+        rows = c.execute(
+            """SELECT g.product_id,g.launch_date,g.memo,p.id,p.option_id,p.item_code,p.unit_cost
+               FROM product_growth_management g JOIN products p ON p.id=g.product_id
+               WHERE g.memo='자동등록'"""
+        ).fetchall()
+        for r in rows:
+            oid = _oid(r["option_id"])
+            first = _growth_option_evidence(c, oid) if oid else None
+            invalid = _growth_return_or_placeholder(c, r) or bool(first and first < str(r["launch_date"])[:10])
+            if invalid:
+                c.execute("DELETE FROM product_growth_management WHERE product_id=?", (int(r["product_id"]),))
+                removed += 1
+    return removed
+
+
 def _sync_new_products_after_baseline(core, db) -> dict:
     """Seed today's baseline once, then auto-enroll every newly registered finished product.
 
@@ -97,7 +165,7 @@ def _sync_new_products_after_baseline(core, db) -> dict:
     today = date.today().isoformat()
     with core._conn(db) as c:
         products = c.execute(
-            """SELECT id
+            """SELECT id,item_code,option_id,unit_cost
                FROM products
                WHERE item_type='finished'
                  AND COALESCE(active,1)=1
@@ -118,9 +186,10 @@ def _sync_new_products_after_baseline(core, db) -> dict:
             int(r["product_id"])
             for r in c.execute("SELECT product_id FROM product_growth_seen").fetchall()
         }
-        new_ids = [pid for pid in pids if pid not in seen]
+        new_rows = [r for r in products if int(r['id']) not in seen]
         added = 0
-        for pid in new_ids:
+        for row in new_rows:
+            pid = int(row['id'])
             c.execute(
                 "INSERT OR IGNORE INTO product_growth_seen(product_id,first_seen_at) VALUES(?,?)",
                 (pid, now),
@@ -128,7 +197,10 @@ def _sync_new_products_after_baseline(core, db) -> dict:
             exists = c.execute(
                 "SELECT 1 FROM product_growth_management WHERE product_id=?", (pid,)
             ).fetchone()
-            if exists:
+            if exists or _growth_return_or_placeholder(c, row):
+                continue
+            first = _growth_option_evidence(c, _oid(row['option_id']))
+            if first and first < today:
                 continue
             c.execute(
                 """INSERT INTO product_growth_management
@@ -807,4 +879,5 @@ def apply(core=None):
     if core is not None:
         _ensure_schema(core, core.DEFAULT_DB)
         sync = _sync_new_products_after_baseline(core, core.DEFAULT_DB)
+        sync["invalid_auto_removed"] = _cleanup_growth_auto_entries(core, core.DEFAULT_DB)
     return {"ok": True, "page": PAGE_TEXT, **sync}
