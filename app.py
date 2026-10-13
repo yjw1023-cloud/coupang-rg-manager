@@ -174,6 +174,10 @@ LEGACY_REPAIR_RESULT = repair.apply(core.DEFAULT_DB)
 inventory_ui = _original_import_module("inventory_ui_v084")
 inventory_ui.apply()
 
+# v0.9.324: API inventory is read-only; only reviewed manual RG stock reconciliation writes ledger adjustments.
+rg_inventory_reconcile_v09324 = _original_import_module("rg_inventory_reconcile_v09324")
+RG_RECONCILE_V09324_STATUS = rg_inventory_reconcile_v09324.apply(core, coupang_api_sync_v09140, inventory_ui)
+
 # v0.8.5 production routing baseline.
 production_patch = _original_import_module("production_v085")
 production_patch.apply(core)
@@ -464,6 +468,7 @@ source = source.replace(
     'source = sales_analysis_v09186.patch_source(source)\n'
     'source = provisional_pnl_ui_v0913.patch_source(source)\n'
     'source = coupang_api_sync_v09140.patch_source(source)\n'
+    'source = rg_inventory_reconcile_v09324.patch_source(source)\n'
     'source = pnl_month_default_v0915.patch_source(source)\nsource = update_check_v09246.patch_source(source)\n' + loader_exec,
     1,
 )
@@ -489,6 +494,7 @@ globals()["provisional_pnl_ui_v0913"] = provisional_pnl_ui_v0913
 globals()["pnl_month_default_v0914"] = pnl_month_default_v0914
 globals()["pnl_month_default_v0915"] = pnl_month_default_v0915
 globals()["coupang_api_sync_v09140"] = coupang_api_sync_v09140
+globals()["rg_inventory_reconcile_v09324"] = rg_inventory_reconcile_v09324
 globals()["bom_candidate_filter_v0927"] = bom_candidate_filter_v0927
 globals()["update_check_v09246"] = update_check_v09246
 globals()["AUTO_PRODUCTION_V09106_RESULT"] = AUTO_PRODUCTION_V09106_RESULT
