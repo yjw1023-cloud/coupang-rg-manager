@@ -225,7 +225,14 @@ def commit(core, pending, db=None):
 
 def render_page(st_obj, pd_obj, core, api, db=None):
     db = db or core.DEFAULT_DB
+    if st_obj.session_state.pop("_rg_reconcile_clear_v09324", False):
+        for key in list(st_obj.session_state):
+            if str(key).startswith("rg_reconcile_editor_v09324_") or key == "rg_reconcile_ack_v09324":
+                st_obj.session_state.pop(key, None)
     st_obj.header("로켓그로스 재고 대사")
+    completed = st_obj.session_state.pop("_rg_reconcile_completed_v09324", None)
+    if completed:
+        st_obj.success(f"ERP 재고 대사 {completed['count']:,}개 상품 반영 완료 · 조정번호 {completed['batch_id']}")
     st_obj.caption("쿠팡 API는 주문 가능한 수량을 보여줍니다. 입고중·판매불가 재고 등으로 물리적 재고와 다를 수 있습니다. API 조회만으로 ERP 장부재고는 바뀌지 않습니다.")
     try:
         api.ensure_schema(core, db)
@@ -292,6 +299,7 @@ def render_page(st_obj, pd_obj, core, api, db=None):
                 st_obj.session_state.pop(_PENDING,None)
                 st_obj.info("선택한 상품에 변경할 수량이 없습니다.")
             else:
+                st_obj.session_state["rg_reconcile_ack_v09324"] = False
                 st_obj.session_state[_PENDING]={
                     "token":uuid.uuid4().hex,"run_id":info["run_id"],
                     "synced_at":info["synced_at"],"changes":changes,
@@ -315,7 +323,8 @@ def render_page(st_obj, pd_obj, core, api, db=None):
                 try:
                     outcome=commit(core,pending,db)
                     st_obj.session_state.pop(_PENDING,None)
-                    st_obj.success(f"ERP 장부재고 {outcome['count']:,}개 상품 조정 완료 · 조정번호 {outcome['batch_id']}")
+                    st_obj.session_state["_rg_reconcile_clear_v09324"] = True
+                    st_obj.session_state["_rg_reconcile_completed_v09324"] = outcome
                     st_obj.rerun()
                 except Exception as exc:
                     st_obj.error(f"ERP 반영 중단 (변경 없음): {exc}")
