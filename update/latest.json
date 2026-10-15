@@ -1,19 +1,8 @@
 {
-  "version": "0.9.324",
-  "message": "로켓그로스 재고 대사 메뉴를 추가했습니다. 쿠팡 재고 API 조회는 ERP 장부를 변경하지 않으며, 사용자 검토·최종 확정한 수량만 조정 이력으로 반영합니다. 반품·미매칭 제외 및 중복·동시변경 방지 기능을 포함합니다.",
+  "version": "0.9.333",
+  "message": "매입상품 자동매칭 개선: 비활성 상태의 기존 JDS 기초재고 품목도 구매이력과 자체창고 재고이력이 있으면 후보에 표시하고, 접착식/점착식 및 포스트잇/메모지 표현을 동일하게 인식합니다. 기존 품목/재고 데이터는 변경하지 않습니다.",
   "files": [
     "VERSION.txt",
-    "app.py",
-    "rg_inventory_reconcile_v09324.py",
-    "inventory_api_separation_v09149.py",
-    "sidebar_groups_v0917.py",
-    "coupang_api_sync_v09140.py",
-    "inventory_ui_v084.py",
-    "pnl_views_v0912.py",
-    "pnl_views_v09321.py",
-    "update_check_v09246.py",
-    "provisional_ad_report_v0956.py",
-    "sales_quantity_v0965.py",
-    "CHANGELOG.md"
+    "purchase_match_ui_v091.py"
   ]
 }
