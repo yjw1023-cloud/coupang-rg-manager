@@ -12,8 +12,8 @@ into the new-item registration workflow without first finding an empty match.
 """
 from __future__ import annotations
 
-import importlib
 import re
+import sys
 from typing import Any
 
 import purchase_match_ui_v090 as base
@@ -27,7 +27,10 @@ _NEW_ITEM_SENTINEL = "__RG_PURCHASE_NEW_ITEM__"
 # A previously purchased JDS item can be archived (active=0) while remaining
 # the correct self-warehouse input material for later purchase orders/BOMs.
 # Do not reactivate it globally or include retired Coupang listing IDs here.
-_ORIGINAL_SELF_PRODUCTS = base._self_warehouse_products
+_ORIGINAL_SELF_PRODUCTS = getattr(base, "_rg_self_warehouse_products_original_v09333", None)
+if _ORIGINAL_SELF_PRODUCTS is None:
+    _ORIGINAL_SELF_PRODUCTS = base._self_warehouse_products
+    base._rg_self_warehouse_products_original_v09333 = _ORIGINAL_SELF_PRODUCTS
 
 
 def _self_warehouse_products_with_history(core_module, db_path) -> list[dict[str, Any]]:
@@ -78,7 +81,11 @@ def _self_warehouse_products_with_history(core_module, db_path) -> list[dict[str
 def _enable_purchase_name_synonyms() -> None:
     # Resolve procurement descriptions like '접착식 나뭇잎 포스트잇'
     # to previously registered '점착식 나뭇잎 메모지' without altering the DB.
-    purchase = importlib.import_module("purchase_v06")
+    # app.py intercepts importlib.import_module("purchase_v06") and reapplies the
+    # UI patch, so using importlib here would recursively re-enter apply().
+    purchase = sys.modules.get("purchase_v06")
+    if purchase is None:
+        return
     purchase._PURCHASE_WORD_SYNONYMS.update({
         "접착식": "점착식",
         "포스트잇": "메모지",
