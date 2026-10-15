@@ -12,6 +12,7 @@ into the new-item registration workflow without first finding an empty match.
 """
 from __future__ import annotations
 
+import importlib
 import re
 from typing import Any
 
@@ -20,6 +21,68 @@ import purchase_match_ui_v090 as base
 _APPLIED = False
 _NEW_ITEM_CHOICE = "＋ 신규상품 등록"
 _NEW_ITEM_SENTINEL = "__RG_PURCHASE_NEW_ITEM__"
+
+
+
+# A previously purchased JDS item can be archived (active=0) while remaining
+# the correct self-warehouse input material for later purchase orders/BOMs.
+# Do not reactivate it globally or include retired Coupang listing IDs here.
+_ORIGINAL_SELF_PRODUCTS = base._self_warehouse_products
+
+
+def _self_warehouse_products_with_history(core_module, db_path) -> list[dict[str, Any]]:
+    available = _ORIGINAL_SELF_PRODUCTS(core_module, db_path)
+    existing_ids = {int(p["product_id"]) for p in available}
+    with core_module._conn(db_path) as con:
+        archived = con.execute(
+            """
+            SELECT p.id, p.item_code, p.name, p.option_name,
+                   COALESCE((
+                       SELECT SUM(t.qty_delta)
+                       FROM inventory_txns t
+                       JOIN warehouses w ON w.id=t.warehouse_id
+                       WHERE t.product_id=p.id AND w.name='자체창고'
+                   ),0) AS own_stock
+            FROM products p
+            WHERE p.active=0
+              AND UPPER(p.item_code) LIKE 'JDS%'
+              AND EXISTS (SELECT 1 FROM purchase_lines pl WHERE pl.product_id=p.id)
+              AND EXISTS (
+                  SELECT 1 FROM inventory_txns t
+                  JOIN warehouses w ON w.id=t.warehouse_id
+                  WHERE t.product_id=p.id AND w.name='자체창고'
+              )
+            ORDER BY p.name, p.item_code
+            """
+        ).fetchall()
+    for row in archived:
+        pid = int(row["id"])
+        if pid in existing_ids:
+            continue
+        name = str(row["name"] or "").strip()
+        opt = str(row["option_name"] or "").strip()
+        code = str(row["item_code"] or "").strip()
+        title = f"{name} [{opt}]" if opt and opt != name else name
+        stock = float(row["own_stock"] or 0)
+        available.append({
+            "product_id": pid,
+            "item_code": code,
+            "name": name,
+            "option_name": opt,
+            "own_stock": stock,
+            "label": f"{title} | {code} | 자체재고 {base._fmt_qty(stock)}",
+        })
+    return available
+
+
+def _enable_purchase_name_synonyms() -> None:
+    # Resolve procurement descriptions like '접착식 나뭇잎 포스트잇'
+    # to previously registered '점착식 나뭇잎 메모지' without altering the DB.
+    purchase = importlib.import_module("purchase_v06")
+    purchase._PURCHASE_WORD_SYNONYMS.update({
+        "접착식": "점착식",
+        "포스트잇": "메모지",
+    })
 
 
 def _product_title(product: dict[str, Any]) -> str:
@@ -491,5 +554,7 @@ def apply():
     global _APPLIED
     if _APPLIED:
         return
+    base._self_warehouse_products = _self_warehouse_products_with_history
     base._render_review_table = _render_review_table
+    _enable_purchase_name_synonyms()
     _APPLIED = True
