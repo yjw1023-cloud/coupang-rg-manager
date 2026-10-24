@@ -307,54 +307,15 @@ def _patch_return_management_excel_only(return_module):
 
 
 def _patch_sales_quantity_excel_only(sales_quantity_module):
+    """Keep the authoritative monthly gross/net reader, which is Excel-only.
+
+    v0.9.150 previously replaced month_counts with a second SQL query choosing
+    shadow sales_qty/cancel_qty before original gross_qty. That reintroduced the
+    49-unit difference as new bundle options were uploaded. The canonical
+    sales_quantity_v0965.month_counts already excludes API/order tables.
+    """
     if getattr(sales_quantity_module, "_rg_excel_only_qty_v09150", False):
         return
-
-    def month_counts(core, db, month):
-        start, end = sales_quantity_module._month_bounds(month)
-        core.init_db(db)
-        with core._conn(db) as con:
-            sc = sales_quantity_module._cols(con, "sales_stats")
-            ic = sales_quantity_module._cols(con, "imports")
-            pc = sales_quantity_module._cols(con, "products")
-            if not {"product_id", "import_id"}.issubset(sc) or not {"id", "period_start", "period_end"}.issubset(ic):
-                return {}, {"exact": False, "reason": "판매통계 수량 구조 없음", "source": "sales_stats_excel"}
-            if not {"id", "option_id", "item_code"}.issubset(pc):
-                return {}, {"exact": False, "reason": "상품 옵션ID 구조 없음", "source": "sales_stats_excel"}
-            net_col = sales_quantity_module._pick(sc, ("net_qty", "net_sales_qty", "순판매수량", "순판매상품수"))
-            gross_col = sales_quantity_module._pick(sc, ("sales_qty", "sold_qty", "gross_qty", "gross_sales_qty", "order_qty", "판매수량", "판매상품수", "주문수량"))
-            cancel_col = sales_quantity_module._pick(sc, ("cancel_qty", "cancelled_qty", "canceled_qty", "cancel_count", "취소수량", "취소상품수", "취소건수"))
-            if not (net_col or gross_col):
-                return {}, {"exact": False, "reason": "판매수량 컬럼 없음", "source": "sales_stats_excel"}
-            q = sales_quantity_module._q
-            gross_expr = f"SUM(CASE WHEN COALESCE(s.{q(gross_col)},0)>0 THEN COALESCE(s.{q(gross_col)},0) ELSE 0 END)" if gross_col else "0"
-            cancel_expr = f"SUM(ABS(COALESCE(s.{q(cancel_col)},0)))" if cancel_col else "0"
-            net_expr = f"SUM(COALESCE(s.{q(net_col)},0))" if net_col else "0"
-            rows = con.execute(f"""SELECT s.product_id,p.option_id,p.item_code,{gross_expr} AS gross_qty,{cancel_expr} AS cancel_qty,{net_expr} AS net_qty
-                    FROM sales_stats s JOIN products p ON p.id=s.product_id JOIN imports i ON i.id=s.import_id
-                    WHERE i.data_type='sales_stats' AND i.period_start>=? AND i.period_end<=?
-                    GROUP BY s.product_id,p.option_id,p.item_code""", (start, end)).fetchall()
-        out = {}
-        for r in rows:
-            oid = sales_quantity_module._oid(r["option_id"]) or sales_quantity_module._oid(r["item_code"])
-            if not oid:
-                continue
-            gross = sales_quantity_module._num(r["gross_qty"])
-            cancel = abs(sales_quantity_module._num(r["cancel_qty"]))
-            net = sales_quantity_module._num(r["net_qty"])
-            if gross_col is None and net_col is not None and cancel_col is not None:
-                gross = max(0.0, net + cancel)
-            elif gross_col is None and net_col is not None:
-                gross = max(0.0, net)
-                cancel = max(0.0, -net)
-            if cancel_col is None and gross_col is not None and net_col is not None:
-                cancel = max(0.0, gross - net)
-            if net_col is None:
-                net = gross - cancel
-            out[oid] = {"product_id": int(r["product_id"]), "sales_qty": gross, "cancel_qty": cancel, "withdrawal_qty": 0.0, "net_qty": net}
-        return out, {"exact": bool(gross_col or (net_col and cancel_col)), "gross_col": gross_col, "cancel_col": cancel_col, "net_col": net_col, "rows": len(out), "source": "sales_stats_excel"}
-
-    sales_quantity_module.month_counts = month_counts
     sales_quantity_module._rg_excel_only_qty_v09150 = True
 
 
