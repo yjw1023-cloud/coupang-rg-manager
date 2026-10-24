@@ -177,7 +177,7 @@ def month_counts(core, db, month: str):
             gross = max(0.0, net)
             cancel = max(0.0, -net)
 
-        if cancel_col is None and gross_col is not None and net_col is not None:
+        if not source_gross and cancel_col is None and gross_col is not None and net_col is not None:
             cancel = max(0.0, gross - net)
         if net_col is None:
             net = gross - cancel
