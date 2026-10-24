@@ -279,6 +279,56 @@ def enrich_import(base, core, db, import_id: int, parsed):
     if not parsed:
         return result
 
+    # v0.9.338: original sales_stats rows contain the imported quantity in
+    # manufactured-item units and retain EACH source option_id, including RG
+    # bundle options. The legacy enrichment wrongly aggregated by product_id
+    # and wrote the whole count into the first row only. Prefer precise rowid
+    # updates, and never modify net_qty, monetary figures, inventory or COGS.
+    with core._conn(db) as c:
+        cols = base._cols(c, "sales_stats")
+        required = {"import_id", "option_id", "gross_qty", "net_qty",
+                    "sales_qty", "cancel_qty"}
+        if required.issubset(cols):
+            rows = c.execute(
+                """SELECT rowid AS _rg_rowid, option_id, gross_qty, net_qty
+                   FROM sales_stats WHERE import_id=? ORDER BY rowid""",
+                (int(import_id),),
+            ).fetchall()
+            if rows:
+                prepared = []
+                source_options = set()
+                for r in rows:
+                    gross = float(r["gross_qty"] or 0)
+                    net = float(r["net_qty"] or 0)
+                    if not (math.isfinite(gross) and math.isfinite(net)) or gross < -1e-9:
+                        raise ValueError(
+                            "원본 판매/순판매수량이 올바르지 않아 수량 보조필드 저장을 중단했습니다."
+                        )
+                    oid = base._oid(r["option_id"])
+                    if oid:
+                        source_options.add(oid)
+                    # If net > gross, there was a return withdrawal; preserve
+                    # the authoritative net, and let the monthly UI calculate
+                    # the withdrawal explicitly from original source columns.
+                    cancel = max(0.0, gross - net)
+                    prepared.append((max(0.0, gross), cancel, int(r["_rg_rowid"])))
+
+                # Validate the entire import before updating any row.
+                source_parsed = {base._oid(p.get("option_id"))
+                                 for p in parsed if base._oid(p.get("option_id"))}
+                result["matched_options"] = len(source_parsed & source_options)
+                result["unmatched_options"] = len(source_parsed - source_options)
+                for gross, cancel, rowid in prepared:
+                    c.execute(
+                        "UPDATE sales_stats SET sales_qty=?,cancel_qty=? WHERE rowid=?",
+                        (gross, cancel, rowid),
+                    )
+                    result["sales_qty"] += gross
+                    result["cancel_qty"] += cancel
+                result["source"] = "sales_stats_original_per_option"
+                result["written_rows"] = len(prepared)
+                return result
+
     with core._conn(db) as c:
         pcols = base._cols(c, "products")
         if not {"id", "option_id"}.issubset(pcols):
