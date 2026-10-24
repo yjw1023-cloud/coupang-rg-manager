@@ -47,6 +47,7 @@ def apply(ui_module: Any):
 
         gross = _sum(ui_module, df, "판매수량")
         cancel = _sum(ui_module, df, "취소수량") if "취소수량" in cols else 0.0
+        withdrawal = _sum(ui_module, df, "반품철회수량") if "반품철회수량" in cols else 0.0
 
         if "순판매수량" in cols:
             net = _sum(ui_module, df, "순판매수량")
@@ -58,13 +59,14 @@ def apply(ui_module: Any):
             net = gross
             verifiable = False
 
-        gap = (gross - cancel) - net if verifiable else 0.0
+        gap = (gross - cancel + withdrawal) - net if verifiable else 0.0
 
         # Financial values in provisional P&L use signed net quantity, so the
         # summary quantity must use the same basis.
         s["qty"] = net
         s["gross_qty"] = gross
         s["cancel_qty"] = cancel
+        s["withdrawal_qty"] = withdrawal
         s["net_qty"] = net
         s["qty_gap"] = gap
         s["qty_verifiable"] = verifiable
@@ -77,10 +79,12 @@ def apply(ui_module: Any):
             gross_text = ui_module._qty(float(s.get("gross_qty", s.get("qty", 0)) or 0))
             cancel_text = ui_module._qty(float(s.get("cancel_qty", 0) or 0))
             net_text = ui_module._qty(float(s.get("net_qty", s.get("qty", 0)) or 0))
+            withdrawal_text = ui_module._qty(float(s.get("withdrawal_qty", 0) or 0))
         except Exception:
             gross_text = str(s.get("gross_qty", ""))
             cancel_text = str(s.get("cancel_qty", ""))
             net_text = str(s.get("net_qty", ""))
+            withdrawal_text = str(s.get("withdrawal_qty", ""))
 
         out = out.replace("<span>판매수량</span>", "<span>순판매수량</span>", 1)
         out = out.replace(
@@ -94,7 +98,8 @@ def apply(ui_module: Any):
             warning = (
                 '<div style="margin-top:10px;padding:9px 11px;border:1px solid #fecaca;'
                 'background:#fff1f2;border-radius:10px;color:#b91c1c;font-size:12px;font-weight:700;">'
-                f'수량 검산 오류: 총 판매 {gross_text} - 취소/환불 {cancel_text} ≠ 순판매 {net_text} '
+                f'수량 검산 오류: 총 판매 {gross_text} - 취소/환불 {cancel_text} '
+                f'+ 반품철회 {withdrawal_text} ≠ 순판매 {net_text} '
                 f'(차이 {gap:,.1f}개). 판매통계 원본을 확인하세요.'
                 '</div>'
             )
