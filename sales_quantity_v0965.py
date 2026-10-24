@@ -100,8 +100,14 @@ def month_counts(core, db, month: str):
             return {}, {"exact": False, "reason": "상품 옵션ID 구조 없음", "source": "sales_stats"}
 
         net_col = _pick(sc, ("net_qty", "net_sales_qty", "순판매수량", "순판매상품수"))
-        gross_col = _pick(sc, (
-            "sales_qty", "sold_qty", "gross_qty", "gross_sales_qty", "order_qty",
+        # The importer's gross_qty/net_qty are recorded on EACH option row in
+        # manufactured-item units. sales_qty/cancel_qty are later presentation
+        # shadows: historical imports placed a whole product's quantity on
+        # one parent row and left bundle rows at zero, so they cannot be used
+        # as the primary source for monthly quantity reconciliation.
+        source_gross = "gross_qty" in sc and net_col is not None
+        gross_col = "gross_qty" if source_gross else _pick(sc, (
+            "sales_qty", "sold_qty", "gross_sales_qty", "order_qty",
             "판매수량", "판매상품수", "주문수량",
         ))
         cancel_col = _pick(sc, (
@@ -116,15 +122,25 @@ def month_counts(core, db, month: str):
             f"SUM(CASE WHEN COALESCE(s.{_q(gross_col)},0)>0 THEN COALESCE(s.{_q(gross_col)},0) ELSE 0 END)"
             if gross_col else "0"
         )
-        cancel_expr = (
-            f"SUM(ABS(COALESCE(s.{_q(cancel_col)},0)))" if cancel_col else "0"
-        )
+        if source_gross:
+            g = f"COALESCE(s.{_q(gross_col)},0)"
+            n = f"COALESCE(s.{_q(net_col)},0)"
+            # Compare each import/option row BEFORE grouping. Doing this after
+            # a product-level aggregation would hide a refund on another row.
+            cancel_expr = f"SUM(CASE WHEN {g}>{n} THEN {g}-{n} ELSE 0 END)"
+            withdrawal_expr = f"SUM(CASE WHEN {n}>{g} THEN {n}-{g} ELSE 0 END)"
+        else:
+            cancel_expr = (
+                f"SUM(ABS(COALESCE(s.{_q(cancel_col)},0)))" if cancel_col else "0"
+            )
+            withdrawal_expr = "0"
         net_expr = f"SUM(COALESCE(s.{_q(net_col)},0))" if net_col else "0"
 
         rows = con.execute(
             f"""SELECT s.product_id,p.option_id,p.item_code,
                        {gross_expr} AS gross_qty,
                        {cancel_expr} AS cancel_qty,
+                       {withdrawal_expr} AS withdrawal_qty,
                        {net_expr} AS net_qty
                 FROM sales_stats s
                 JOIN products p ON p.id=s.product_id
@@ -143,6 +159,7 @@ def month_counts(core, db, month: str):
             continue
         gross = _num(r["gross_qty"])
         cancel = abs(_num(r["cancel_qty"]))
+        withdrawal = max(0.0, _num(r["withdrawal_qty"]))
         net = _num(r["net_qty"])
 
         # Historical imports created before sales_qty/cancel_qty enrichment can
@@ -152,6 +169,7 @@ def month_counts(core, db, month: str):
         # quantity retained by the ERP, so reconstruct gross sales from it.
         if net_col is not None and abs(gross) <= 1e-12 and net > 1e-12:
             gross = max(0.0, net + cancel)
+            withdrawal = 0.0
             legacy_fallback_rows += 1
         elif gross_col is None and net_col is not None and cancel_col is not None:
             gross = max(0.0, net + cancel)
@@ -164,20 +182,27 @@ def month_counts(core, db, month: str):
         if net_col is None:
             net = gross - cancel
 
-        out[oid] = {
-            "product_id": int(r["product_id"]),
-            "sales_qty": gross,
-            "cancel_qty": cancel,
-            "withdrawal_qty": 0.0,
-            "net_qty": net,
-        }
+        if oid not in out:
+            out[oid] = {
+                "product_id": int(r["product_id"]),
+                "sales_qty": 0.0,
+                "cancel_qty": 0.0,
+                "withdrawal_qty": 0.0,
+                "net_qty": 0.0,
+            }
+        out[oid]["sales_qty"] += gross
+        out[oid]["cancel_qty"] += cancel
+        out[oid]["withdrawal_qty"] += withdrawal
+        out[oid]["net_qty"] += net
 
-    exact = bool(gross_col or (net_col and cancel_col)) and legacy_fallback_rows == 0
+    exact = bool(source_gross or gross_col or (net_col and cancel_col)) and legacy_fallback_rows == 0
     return out, {
         "exact": exact,
         "sales_exact": exact,
-        "returns_exact": bool(cancel_col),
-        "source": "sales_stats_legacy_net_fallback" if legacy_fallback_rows else "sales_stats",
+        "returns_exact": bool(source_gross or cancel_col),
+        "source": ("sales_stats_legacy_net_fallback" if legacy_fallback_rows
+                   else "sales_stats_original_gross_net" if source_gross
+                   else "sales_stats"),
         "gross_col": gross_col,
         "cancel_col": cancel_col,
         "net_col": net_col,
