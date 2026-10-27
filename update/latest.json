@@ -1,18 +1,14 @@
 {
-  "version": "0.9.338",
-  "message": "잠정손익 수량검산 재발 방지: 판매통계 원본 옵션별 총판매/순판매수량을 우선 집계하고 번들 수량누락을 수정합니다. 신규 판매통계 수량 보조필드는 옵션 행별로 저장하며 손익·재고·정산 수치는 변경하지 않습니다.",
+  "version": "0.9.339",
+  "message": "반품 재판매 원상품 확인 개선: 현재 ERP 완제품을 실시간으로 다시 추천하고 기존 후보 누락 시에도 상품명 검색으로 원상품을 선택할 수 있습니다. 사용자 확정 전에는 판매·재고를 합산하지 않습니다.",
   "files": [
     "VERSION.txt",
-    "sales_quantity_v0965.py",
-    "sales_stats_returns_v09150.py",
-    "sales_stats_quantity_guard_v09153.py",
-    "provisional_summary_qty_v09120.py"
+    "app.py",
+    "return_sale_confirm_v09195.py"
   ],
   "blob_sha": {
-    "VERSION.txt": "5683260770c5ca5d8c21dace18449961f3d3f4a3",
-    "sales_quantity_v0965.py": "c7fa3678cb93735e2568fe88161bdab5dee35195",
-    "sales_stats_returns_v09150.py": "8dbde92872f5f3ccb31e17cf2556798b75906d9e",
-    "sales_stats_quantity_guard_v09153.py": "a963798b75323d41a0289b085051221c3690331d",
-    "provisional_summary_qty_v09120.py": "fbb2472ac243094ad484121c64b260baae964dd4"
+    "VERSION.txt": "a5d984c02a6eacbdb07467de169c461087786188",
+    "app.py": "0e98ae2a3420a02296c11f7831177e405f2db29f",
+    "return_sale_confirm_v09195.py": "a4a9720bd4200e3b095dbdc06a4fbbc1c0324a62"
   }
 }
