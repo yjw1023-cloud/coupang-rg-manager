@@ -44,6 +44,7 @@ with _RG_IMPORT_LOCK:
         "recent_input_unify_v09112",
         "return_discount_v099",
         "return_sale_match_v0944",
+        "return_sale_confirm_v09195",
         "return_sale_alias_v09157",
         "purchase_match_ui_v091",
         "purchase_new_item_persist_v09136",
@@ -316,6 +317,11 @@ return_discount_v099.apply(core)
 # return aliases + discounted price can map a return-resale option to its original.
 return_sale_match_v0944 = _original_import_module("return_sale_match_v0944")
 return_sale_match_v0944.apply(return_discount_v099, core)
+
+# v0.9.339: always render fresh ERP original-product recommendations for
+# ambiguous return resale options; keep matching confirmation user-driven.
+return_sale_confirm_v09195 = _original_import_module("return_sale_confirm_v09195")
+RETURN_SALE_CONFIRM_V09195_STATUS = return_sale_confirm_v09195.apply(return_discount_v099, core)
 
 # v0.9.11 moving weighted-average cost + 10.8% commission fallback.
 pnl_cost_commission_v0911 = _original_import_module("pnl_cost_commission_v0911")
