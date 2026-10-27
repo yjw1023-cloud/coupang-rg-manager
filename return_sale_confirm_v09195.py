@@ -73,29 +73,36 @@ def _normal_overrides(core, db) -> set[str]:
 
 
 def _candidate_rows(rd, matcher, core, db, row: dict, parsed: list[dict]) -> list[dict]:
+    """Rank live ERP finished products for HUMAN review (never auto-confirm).
+
+    Keep this deliberately broader than the strict auto-matcher: registered RG
+    products may have zero product.unit_cost because their cost comes from BOM,
+    and a bundle annotation can make the strict quantity matcher return zero.
+    """
+    from difflib import SequenceMatcher
+    import re
+
     child_oid = _oid(row.get("option_id"))
     child_name = str(row.get("name") or "")
     child_price = matcher._row_unit_price(row)
-
     products = rd._load_products(core, db)
     aliases = rd._alias_map(core, db)
-    alias_oids = set(str(x) for x in aliases)
+    alias_oids = {_oid(x) for x in aliases}
     normal_ids = matcher._normal_registry_ids(core, db)
     known_returns = matcher._known_return_option_ids()
     parsed_by_oid = {_oid(x.get("option_id")): x for x in parsed}
 
+    def normalized(value):
+        return re.sub(r"[^0-9a-z가-힣]+", "", str(value or "").lower())
+
     scored = []
     for p in products:
         poid = _oid(p.get("option_id"))
-        if not poid or poid == child_oid:
+        if not poid or poid == child_oid or poid in alias_oids or poid in known_returns:
             continue
-        if poid in alias_oids or poid in known_returns:
+        # Never offer raw materials as returned-product originals.
+        if str(p.get("item_type") or "") != "finished" and poid not in normal_ids:
             continue
-        try:
-            if rd._placeholder(p):
-                continue
-        except Exception:
-            pass
 
         same_file = parsed_by_oid.get(poid)
         candidate_name = (
@@ -103,41 +110,49 @@ def _candidate_rows(rd, matcher, core, db, row: dict, parsed: list[dict]) -> lis
             if same_file and same_file.get("name")
             else str(p.get("name") or "")
         )
-        score = float(matcher._name_score(child_name, candidate_name) or 0.0)
-        if score < 0.45:
+        strict_score = float(matcher._name_score(child_name, candidate_name) or 0.0)
+        a, b = normalized(child_name), normalized(candidate_name)
+        # The strict matcher may score 0 when package/bundle quantities differ.
+        # For display-only recommendations use a second, tolerant name ranking.
+        fallback_score = SequenceMatcher(None, a, b).ratio() if a and b else 0.0
+        if min(len(a), len(b)) >= 6 and (a in b or b in a):
+            fallback_score = max(fallback_score, 0.92)
+        score = max(strict_score, fallback_score)
+        if score < 0.20:
             continue
 
-        ref_price = matcher._row_unit_price(same_file) if same_file else None
-        if not ref_price:
-            ref_price = matcher._historical_price(rd, core, db, int(p["id"]))
-
-        discounted = bool(
-            child_price is not None
-            and ref_price is not None
-            and child_price < float(ref_price) * 0.995
-        )
-        scored.append(
-            {
-                "parent_product_id": int(p["id"]),
-                "parent_option_id": poid,
-                "parent_name": str(p.get("name") or candidate_name),
-                "score": round(score, 4),
-                "reference_price": float(ref_price) if ref_price else None,
-                "discounted": discounted,
-                "registered_normal": poid in normal_ids,
-                "active": int(p.get("active") or 0),
-            }
-        )
+        scored.append({
+            "parent_product_id": int(p["id"]),
+            "parent_option_id": poid,
+            "parent_name": str(p.get("name") or candidate_name),
+            "score": round(score, 4),
+            "reference_price": None,
+            "discounted": False,
+            "registered_normal": poid in normal_ids,
+            "active": int(p.get("active") or 0),
+            "strict_quantity_conflict": bool(strict_score < 0.10 and fallback_score >= 0.20),
+        })
 
     scored.sort(
         key=lambda x: (
-            1 if x.get("registered_normal") else 0,
             float(x.get("score") or 0),
-            1 if x.get("discounted") else 0,
+            1 if x.get("registered_normal") else 0,
             1 if x.get("active") else 0,
         ),
         reverse=True,
     )
+    # Query historical prices for only the displayed shortlist, not every SKU.
+    for c in scored[:8]:
+        poid = c["parent_option_id"]
+        same_file = parsed_by_oid.get(poid)
+        ref_price = matcher._row_unit_price(same_file) if same_file else None
+        if not ref_price:
+            ref_price = matcher._historical_price(rd, core, db, c["parent_product_id"])
+        c["reference_price"] = float(ref_price) if ref_price else None
+        c["discounted"] = bool(
+            child_price is not None and ref_price is not None
+            and child_price < float(ref_price) * 0.995
+        )
     return scored[:8]
 
 
@@ -464,26 +479,42 @@ def render_pending(st_obj=st, core=None, db=None, location: str = "page") -> int
         return len(rows)
     _RUN_RENDERED = True
 
+    import return_discount_v099 as rd
+    import return_sale_match_v0944 as matcher
+
     st_obj.warning(
-        f"⚠️ 반품 재판매 원상품 확인이 필요한 옵션이 {len(rows)}개 있습니다. "
-        "자동으로 합치지 않았습니다. 아래에서 원상품을 확인해 주세요."
+        f"반품 재판매 원상품 확인이 필요한 옵션이 {len(rows)}개 있습니다. "
+        "ERP 원상품을 추천하되 자동으로 합치지 않습니다. 원상품을 직접 확인해 주세요."
     )
 
     for item in rows:
         oid = item["option_id"]
         key_base = f"rg_return_confirm_{oid}"
-        candidates = item.get("candidates") or []
         amount = item.get("amount") if item.get("amount_known") else 0.0
         qty = abs(_num(item.get("qty")))
         unit_price = amount / qty if amount and qty > 1e-12 else 0.0
+        row = {
+            "option_id": oid,
+            "name": item.get("name") or "",
+            "qty": item.get("qty"),
+            "amount": item.get("amount"),
+            "amount_known": item.get("amount_known"),
+        }
+        # Recompute against the LIVE ERP product master on every UI visit.
+        # The candidates_json stored when an import failed may be stale/empty.
+        try:
+            candidates = _candidate_rows(rd, matcher, core, db, row, [row])
+        except Exception as exc:
+            candidates = item.get("candidates") or []
+            st_obj.caption(f"실시간 원상품 추천을 갱신하지 못했습니다: {exc}")
 
         with st_obj.container(border=True):
             st_obj.markdown(
-                f"**확인할 옵션:** `{oid}` · {item.get('name') or '(상품명 없음)'}"
+                f"**확인할 옵션:** " + str(oid) + " · " + (item.get("name") or "(상품명 없음)")
             )
             st_obj.caption(
                 f"판매수량 {qty:g}개 · 판매단가 {_format_price(unit_price)} · "
-                f"판정: {item.get('reason') or '사용자 확인 필요'}"
+                "원상품 확정 전에는 판매/재고를 합산하지 않습니다."
             )
 
             labels = []
@@ -491,57 +522,92 @@ def render_pending(st_obj=st, core=None, db=None, location: str = "page") -> int
             for c in candidates:
                 score = float(c.get("score") or 0)
                 ref = _format_price(c.get("reference_price"))
+                caution = " · 수량 구성 확인" if c.get("strict_quantity_conflict") else ""
                 label = (
-                    f"{c.get('parent_option_id')} | {c.get('parent_name')} "
-                    f"| 유사도 {score:.2f} | 정상판매가 {ref}"
+                    f"{c.get('parent_name')} [옵션 {c.get('parent_option_id')}] "
+                    f"· 유사도 {score:.0%} · 정상판매가 {ref}{caution}"
                 )
                 labels.append(label)
                 by_label[label] = c
 
-            selected_label = None
-            if labels:
+            methods = ["추천 후보 중 선택", "ERP 상품명으로 직접 검색"] if labels else ["ERP 상품명으로 직접 검색"]
+            mode = st_obj.radio(
+                "원상품 선택 방법", methods, horizontal=True,
+                key=f"{key_base}_mode",
+            )
+            parent_oid = ""
+            if mode == "추천 후보 중 선택":
                 selected_label = st_obj.selectbox(
-                    "원상품 후보",
-                    labels,
+                    "유사한 원상품 추천 (최대 8개)", labels,
                     key=f"{key_base}_candidate",
                 )
-
-            manual_parent = st_obj.text_input(
-                "다른 원상품을 지정하려면 옵션ID 입력",
-                value="",
-                key=f"{key_base}_manual_parent",
-                placeholder="예: 94185578349",
-            ).strip()
+                parent_oid = _oid(by_label[selected_label].get("parent_option_id"))
+            else:
+                words = str(item.get("name") or "").split()
+                default_query = " ".join(words[:2])
+                query = st_obj.text_input(
+                    "ERP 원상품 검색 (상품명 일부 입력)",
+                    value=default_query,
+                    key=f"{key_base}_search",
+                ).strip()
+                products = rd._load_products(core, db)
+                aliases = {_oid(x) for x in rd._alias_map(core, db)}
+                returns = matcher._known_return_option_ids()
+                normals = matcher._normal_registry_ids(core, db)
+                matched = []
+                terms = [s.lower() for s in query.split() if s.strip()]
+                for p in products:
+                    poid = _oid(p.get("option_id"))
+                    if not poid or poid == oid or poid in aliases or poid in returns:
+                        continue
+                    if str(p.get("item_type") or "") != "finished" and poid not in normals:
+                        continue
+                    pname = str(p.get("name") or "")
+                    if terms and not all(t in pname.lower() for t in terms):
+                        continue
+                    score = float(matcher._name_score(row["name"], pname) or 0)
+                    matched.append((score, pname, poid))
+                matched.sort(key=lambda x: (x[0], x[1]), reverse=True)
+                if matched:
+                    options = [f"{name} [옵션 {poid}]" for _, name, poid in matched[:80]]
+                    lookup = {f"{name} [옵션 {poid}]": poid for _, name, poid in matched[:80]}
+                    selection = st_obj.selectbox(
+                        "검색 결과에서 원상품 선택", options,
+                        key=f"{key_base}_search_result",
+                    )
+                    parent_oid = lookup[selection]
+                else:
+                    st_obj.info("일치하는 원상품이 없습니다. 검색어를 줄이거나 다른 상품명으로 검색해 주세요.")
 
             col1, col2 = st_obj.columns(2)
             if col1.button(
-                "선택 상품의 반품재판매입니다",
+                "선택한 원상품에 반품 재판매 연결",
                 key=f"{key_base}_alias",
                 use_container_width=True,
                 type="primary",
             ):
-                parent_oid = manual_parent
-                if not parent_oid and selected_label:
-                    parent_oid = str(by_label[selected_label].get("parent_option_id") or "")
                 if not parent_oid:
-                    st_obj.error("합산할 원상품을 선택하거나 옵션ID를 입력해 주세요.")
+                    st_obj.error("ERP에서 원상품을 선택해 주세요.")
                 else:
-                    result = confirm_alias(core, oid, parent_oid, db)
-                    st_obj.success(
-                        f"{oid} → {result['parent_option_id']} 연결을 저장했습니다. "
-                        f"기존 판매자료 {result['repaired_imports']}건도 재처리했습니다."
-                    )
-                    st_obj.rerun()
+                    try:
+                        result = confirm_alias(core, oid, parent_oid, db)
+                    except Exception as exc:
+                        st_obj.error(f"원상품 연결을 저장하지 못했습니다: {exc}")
+                    else:
+                        st_obj.success(
+                            f"{oid} → {result['parent_option_id']} 연결을 저장했습니다. "
+                            f"기존 판매자료 {result['repaired_imports']}건도 재처리했습니다."
+                        )
+                        st_obj.rerun()
 
             if col2.button(
-                "정상 신상품입니다",
+                "반품이 아닌 정상 신상품입니다",
                 key=f"{key_base}_normal",
                 use_container_width=True,
             ):
                 confirm_normal(core, oid, db)
                 st_obj.success(f"{oid}를 정상 신상품으로 저장했습니다.")
                 st_obj.rerun()
-
     return len(rows)
 
 
